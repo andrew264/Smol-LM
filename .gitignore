@@ -1,0 +1,22 @@
+# intellij stuff
+.idea/
+
+# python stuff
+__pycache__/
+*.pyc
+.ipynb_checkpoints
+
+# virtualenv
+local-env
+
+# training data
+data/
+
+# model weights
+weights/
+
+# logs
+logs/
+
+# testing stuff (not sure if this is needed)
+notebooks/

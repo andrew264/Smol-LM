@@ -1,0 +1,8 @@
+sentencepiece
+tqdm
+ftfy
+tensorflow
+keras
+tensorboard_plugin_profile
+numpy
+tensorboard
