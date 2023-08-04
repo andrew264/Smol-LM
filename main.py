@@ -38,6 +38,17 @@ def _generator(seq_len: int, path: str) -> tuple[tf.Tensor, tf.Tensor]:
             yield batch[:-1], batch[1:]
 
 
+def _get_total_steps(path: str) -> int:
+    files = glob.glob(path, recursive=True)
+    total_steps = 0
+    for file_path in files:
+        binary_data = tf.io.read_file(file_path)
+        m = tf.io.decode_raw(binary_data, tf.uint16)
+        num_batches: tf.Tensor = tf.shape(m)[0] // max_seq_len
+        total_steps += num_batches.numpy()
+    return total_steps
+
+
 if __name__ == '__main__':
     if os.path.exists('./logs/'):
         # remove old logs
@@ -56,10 +67,9 @@ if __name__ == '__main__':
                .shuffle(buffer_size=10000)
                .batch(batch_size=batch_size, drop_remainder=True)
                .prefetch(tf.data.experimental.AUTOTUNE))
-    # total_steps = sum(1 for _ in dataset)
-    # print(f"Total Steps:- {total_steps}")
-    # print(f"Batch Size:- {batch_size}")
-    # print(f"Total Iteration:- {total_steps * batch_size}")
+    total_steps = _get_total_steps(dataset_path) // batch_size
+    print(f"Total Steps:- {total_steps}")
+    print(f"Batch Size:- {batch_size}")
 
     # create graph for tensorboard
     # tf.summary.trace_on(graph=True, profiler=True)
@@ -74,7 +84,7 @@ if __name__ == '__main__':
     weight_decay = 0.1
     clipnorm = 1.0
     lr_schedule = CosineDecay(initial_learning_rate=initial_learning_rate,
-                              decay_steps=1000000,
+                              decay_steps=total_steps - warmup_steps,
                               warmup_target=final_learning_rate,
                               warmup_steps=warmup_steps)
     optimizer = tf.keras.optimizers.AdamW(learning_rate=lr_schedule,
@@ -106,7 +116,7 @@ if __name__ == '__main__':
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir='./logs/',
                                                           histogram_freq=1)
     print("Training Started.")
-    model.fit(x=dataset, epochs=1, verbose=1,
+    model.fit(x=dataset, epochs=1, verbose=1, steps_per_epoch=total_steps,
               callbacks=[checkpoint, tensorboard_callback])
     model.save_weights('./weights/weights.hdf5')
     print("Training Done.")
