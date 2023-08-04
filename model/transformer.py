@@ -11,14 +11,11 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tf.Tenso
     """
     Precomputes rotary positional embeddings to be used with `apply_rotary_emb`.
 
-    Args:
-        dim (int): The number of features in the input tensor.
-        end (int): The sequence length for which to compute the embeddings.
-        theta (float, optional): A scaling factor for the embeddings. Default is 10000.0.
+    :param dim: (int): The dimensionality of the embeddings.
+    :param end: (int): The maximum sequence length.
+    :param theta: (float, optional): The theta value used for the embeddings.
 
-    Returns:
-        tf.Tensor: Precomputed rotary positional embeddings of shape (end, dim/2).
-                   The tensor contains complex values of data type `complex64`.
+    :return: (tf.Tensor): The precomputed embeddings of dtype=tf.complex64
     """
     freqs = 1.0 / (theta ** (tf.range(0, dim, 2, dtype=tf.float32) / dim))
     t = tf.range(end, dtype=tf.float32)
