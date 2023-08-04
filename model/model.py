@@ -7,29 +7,6 @@ import tqdm
 from model.transformer import Transformer
 
 
-def top_k_logits(logits: tf.Tensor, k: Optional[int]) -> tf.Tensor:
-    """
-    Masks logits such that only the top-k logits remain.
-
-    Args:
-        logits (tf.Tensor): Logits tensor of shape (batch_size, vocab_size).
-        k (int): The number of logits to keep.
-
-    Returns:
-        tf.Tensor: The masked logits tensor, with shape (batch_size, vocab_size).
-    """
-    if k == 0:
-        return logits
-
-    values, _ = tf.nn.top_k(logits, k=k)
-    min_values = values[:, -1, tf.newaxis]
-    return tf.where(
-        logits < min_values,
-        tf.ones_like(logits, dtype=logits.dtype) * -1e10,
-        logits,
-    )
-
-
 class SmolLM(tf.keras.Model):
     """
     SmolLM model.
@@ -218,9 +195,9 @@ class SmolLM(tf.keras.Model):
                 logits = logits / temperature
 
                 if top_k is not None:
-                    _, indices = tf.math.top_k(logits, k=top_k)
-                    min_values = tf.reduce_min(indices, axis=-1, keepdims=True)
-                    logits = tf.where(logits < min_values, tf.constant(-float('inf'), dtype=logits.dtype), logits)
+                    values, indices = tf.math.top_k(logits, k=top_k)
+                    min_value = tf.reduce_min(values, axis=-1, keepdims=True)
+                    logits = tf.where(logits < min_value, tf.ones_like(logits) * -1e10, logits)
 
                 probs = tf.nn.softmax(logits, axis=-1)
                 idx_next = tfp.distributions.Categorical(probs=probs).sample()

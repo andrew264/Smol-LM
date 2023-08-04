@@ -30,7 +30,7 @@ if __name__ == '__main__':
             break
         tokenized = tokenizer.encode([context], bos=True, eos=False)
         generated_seq = model.generate(tf.constant(tokenized, dtype=tf.int32), max_gen_len=150,
-                                       temperature=temperature, top_k=None)
+                                       temperature=temperature, top_k=8)
         generated_seq = tokenizer.decode(generated_seq[0].numpy().tolist())
         print("Generated Sequence: ", generated_seq)
     print("kthxbye")
