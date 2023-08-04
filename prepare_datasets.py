@@ -12,13 +12,14 @@ import tqdm
 from model import Tokenizer
 from utils import yield_lines, clean_text
 
-BPE_MODEL_PATH = "./data/bpe_model.model"
+BPE_MODEL_PATH = "./weights/tokenizer.model"
 PROCESSED = "./data/processed/"
 SCRAPPED_DATA = "./data/scrapped/"
 TOKENS_PER_FILE = 2 ** 24  # 16M tokens per file
-BOS_ID = 2
 TOTAL_TOKENS = 0
 tokenizer = Tokenizer(BPE_MODEL_PATH)
+
+BOS_ID = tokenizer.bos_id
 
 
 def save_to_file(_tok: list[int]):
@@ -44,7 +45,12 @@ if __name__ == '__main__':
     if os.path.exists(PROCESSED):
         import shutil
 
-        shutil.rmtree(PROCESSED)
+        # ask for confirmation
+        if input("Processed data already exists. Delete? (y/n): ").lower() == 'y':
+            shutil.rmtree(PROCESSED)
+            print("Deleted old data.")
+        else:
+            exit(0)
     os.makedirs(PROCESSED)
 
     # glob all scrapped text data

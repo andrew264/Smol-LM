@@ -10,7 +10,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 if __name__ == '__main__':
     model_path = './weights/weights.hdf5'
-    vocab = './data/bpe_model.model'
+    vocab = './weights/tokenizer.model'
     seq_len = 1024
     temperature = 1.0
     params = json.load(open('./weights/config.json', 'r'))
@@ -23,7 +23,7 @@ if __name__ == '__main__':
     else:
         print("No weights found. Exiting.")
     model.summary()
-    tokenizer = Tokenizer('./data/bpe_model.model')
+    tokenizer = Tokenizer(vocab)
     while True:
         context = input("Enter context: ") or None
         if not context:
