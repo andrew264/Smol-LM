@@ -21,8 +21,9 @@ print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
 max_seq_len = 1024
 vocab_size = 32000
-batch_size = 4
+batch_size = 8
 dataset_path = './data/processed/*.bin'
+logdir = r'./logs/'
 
 
 def _generator(seq_len: int, path: str) -> tuple[tf.Tensor, tf.Tensor]:
@@ -50,11 +51,11 @@ def _get_total_steps(path: str) -> int:
 
 
 if __name__ == '__main__':
-    if os.path.exists('./logs/'):
+    if os.path.exists(logdir):
         # remove old logs
         import shutil
 
-        shutil.rmtree('./logs/')
+        shutil.rmtree(logdir)
         print("Removed old logs.")
 
     dataset = tf.data.Dataset.from_generator(_generator,
@@ -112,11 +113,9 @@ if __name__ == '__main__':
     checkpoint = tf.keras.callbacks.ModelCheckpoint('./weights/weights.hdf5',
                                                     save_weights_only=True,
                                                     verbose=1,
-                                                    save_freq=1000)
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir='./logs/',
-                                                          histogram_freq=1)
+                                                    save_freq=1500)
     print("Training Started.")
     model.fit(x=dataset, epochs=1, verbose=1, steps_per_epoch=total_steps,
-              callbacks=[checkpoint, tensorboard_callback])
+              callbacks=[checkpoint])
     model.save_weights('./weights/weights.hdf5')
     print("Training Done.")

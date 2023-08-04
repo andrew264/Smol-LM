@@ -49,12 +49,6 @@ class SmolLM(tf.keras.Model):
         self.perplexity_tracker = tf.keras.metrics.Mean(name="perplexity")
         self.accuracy_tracker = tf.keras.metrics.Mean(name="accuracy")
 
-        train_summary_path = "./logs/train/"
-        test_summary_path = "./logs/test/"
-
-        self.train_summary_writer = tf.summary.create_file_writer(train_summary_path)
-        self.test_summary_writer = tf.summary.create_file_writer(test_summary_path)
-
     def call(self, tokens: tf.Tensor, **kwargs) -> tf.Tensor:
         """
         Calls the model.
@@ -139,11 +133,6 @@ class SmolLM(tf.keras.Model):
         accuracy = self.get_padded_accuracy(y, y_pred)
         self.accuracy_tracker.update_state(accuracy)
 
-        # with self.train_summary_writer.as_default():
-        #     tf.summary.scalar('loss', loss, step=self.optimizer.iterations)
-        #     tf.summary.scalar('perplexity', perplexity, step=self.optimizer.iterations)
-        #     tf.summary.scalar('accuracy', accuracy, step=self.optimizer.iterations)
-        #     tf.summary.scalar('learning_rate', self.optimizer.lr, step=self.optimizer.iterations)
 
         return {"loss": self.loss_tracker.result(),
                 "perplexity": self.perplexity_tracker.result(),
@@ -161,10 +150,6 @@ class SmolLM(tf.keras.Model):
         accuracy = self.get_padded_accuracy(y, logits)
         self.accuracy_tracker.update_state(accuracy)
 
-        # with self.test_summary_writer.as_default():
-        #     tf.summary.scalar('loss', loss, step=self.optimizer.iterations)
-        #     tf.summary.scalar('perplexity', perplexity, step=self.optimizer.iterations)
-        #     tf.summary.scalar('accuracy', accuracy, step=self.optimizer.iterations)
 
         return {"loss": self.loss_tracker.result(),
                 "perplexity": self.perplexity_tracker.result(),
