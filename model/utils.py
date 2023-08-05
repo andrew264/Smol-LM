@@ -47,7 +47,7 @@ class GradientAccumulator:
         self._accum_steps = None
 
     @property
-    def step(self):
+    def step(self) -> tf.Tensor:
         """Number of accumulated steps."""
         if self._accum_steps is None:
             self._accum_steps = tf.Variable(
@@ -59,7 +59,7 @@ class GradientAccumulator:
         return self._accum_steps.value()
 
     @property
-    def gradients(self):
+    def gradients(self) -> List[tf.Tensor]:
         """The accumulated gradients on the current replica."""
         if not self._gradients:
             raise ValueError(

@@ -137,8 +137,9 @@ class SmolLM(tf.keras.Model):
         else:
             self._gradient_accumulator(gradients)
             if self._gradient_accumulator.step == self.num_accumulation:
-                gradients = self._gradient_accumulator.gradients
-                self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+                averaged_gradients = [gradient / tf.cast(self.num_accumulation, dtype=gradient.dtype) for gradient in
+                                      self._gradient_accumulator.gradients]
+                self.optimizer.apply_gradients(zip(averaged_gradients, self.trainable_variables))
                 self._gradient_accumulator.reset()
 
         y_pred = tf.nn.softmax(logits)
