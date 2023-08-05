@@ -5,6 +5,7 @@ import tensorflow_probability as tfp
 import tqdm
 
 from model.transformer import Transformer
+from model.utils import GradientAccumulator
 
 
 class SmolLM(tf.keras.Model):
@@ -20,15 +21,17 @@ class SmolLM(tf.keras.Model):
         max_seq_len (int): The maximum sequence length.
         multiple_of (int): The multiple of the sequence length.
         ffn_dim_multiplier (float, optional): A multiplier for the feed-forward dimensionality.
-                                                Default is None, which sets the multiplier to 4.0.
+                                               Default is None, which sets the multiplier to 4.0.
         norm_eps (float, optional): A small value used for numerical stability when normalizing.
                                     Default is 1e-5.
+        num_accumulation (int): The number of gradient accumulation steps.
+                                 Default is 4.
     """
 
     def __init__(self, dim: int = 768, n_layers: int = 8, n_heads: int = 8,
                  vocab_size: int = 32000, max_batch_size: int = 1, max_seq_len: int = 1024,
                  multiple_of: int = 256, ffn_dim_multiplier: Optional[float] = None,
-                 norm_eps: float = 1e-05, **kwargs):
+                 norm_eps: float = 1e-05, num_accumulation: int = 4, **kwargs):
         super(SmolLM, self).__init__(**kwargs)
         self.dim = dim
         self.n_layers = n_layers
@@ -48,6 +51,9 @@ class SmolLM(tf.keras.Model):
         self.loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction='none')
         self.perplexity_tracker = tf.keras.metrics.Mean(name="perplexity")
         self.accuracy_tracker = tf.keras.metrics.Mean(name="accuracy")
+        self._gradient_accumulator = GradientAccumulator()
+        self._gradient_accumulator.reset()
+        self.num_accumulation = num_accumulation
 
     def call(self, tokens: tf.Tensor, **kwargs) -> tf.Tensor:
         """
@@ -83,8 +89,8 @@ class SmolLM(tf.keras.Model):
         model.load_weights(path)
         return model
 
-    @staticmethod
-    def get_padded_accuracy(labels, logits):
+    @tf.function
+    def get_padded_accuracy(self, labels, logits):
         with tf.name_scope("padded_accuracy"):
             pred = tf.argmax(logits, axis=-1)
             labels = tf.cast(labels, dtype=pred.dtype)
@@ -97,11 +103,12 @@ class SmolLM(tf.keras.Model):
             accuracy = tf.reduce_sum(match) / tf.reduce_sum(mask)
             return accuracy
 
-    @staticmethod
-    def get_perplexity(cross_entropy):
-        perplexity = tf.exp(cross_entropy)
-        return perplexity
+    @tf.function
+    def get_perplexity(self, cross_entropy):
+        with tf.name_scope("perplexity"):
+            return tf.exp(cross_entropy)
 
+    @tf.function
     def get_loss(self, real, pred):
         with tf.name_scope("loss"):
             mask = real != 0
@@ -123,8 +130,16 @@ class SmolLM(tf.keras.Model):
             logits = self(x, training=True)
             loss = self.get_loss(y, logits)
 
-        gradients = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        gradients = tape.gradient(loss, self.trainable_variables)\
+
+        if self.num_accumulation == 1:
+            self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        else:
+            self._gradient_accumulator(gradients)
+            if self._gradient_accumulator.step == self.num_accumulation:
+                gradients = self._gradient_accumulator.gradients
+                self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+                self._gradient_accumulator.reset()
 
         y_pred = tf.nn.softmax(logits)
         self.loss_tracker.update_state(loss)
@@ -134,9 +149,7 @@ class SmolLM(tf.keras.Model):
         self.accuracy_tracker.update_state(accuracy)
 
 
-        return {"loss": self.loss_tracker.result(),
-                "perplexity": self.perplexity_tracker.result(),
-                "accuracy": self.accuracy_tracker.result()}
+        return {m.name: m.result() for m in self.metrics}
 
     @tf.function
     def test_step(self, data):
@@ -151,9 +164,7 @@ class SmolLM(tf.keras.Model):
         self.accuracy_tracker.update_state(accuracy)
 
 
-        return {"loss": self.loss_tracker.result(),
-                "perplexity": self.perplexity_tracker.result(),
-                "accuracy": self.accuracy_tracker.result()}
+        return {m.name: m.result() for m in self.metrics}
 
     def generate(self, idx: List[List[int]], max_gen_len: int,
                  temperature: float = 0.6, top_k: Optional[int] = None) -> List[List[int]]:

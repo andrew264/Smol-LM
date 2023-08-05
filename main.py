@@ -21,7 +21,7 @@ print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
 max_seq_len = 1024
 vocab_size = 32000
-batch_size = 8
+batch_size = 4
 dataset_path = './data/processed/*.bin'
 logdir = r'./logs/'
 
