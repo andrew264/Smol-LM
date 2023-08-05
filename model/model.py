@@ -130,8 +130,8 @@ class SmolLM(tf.keras.Model):
             logits = self(x, training=True)
             loss = self.get_loss(y, logits)
 
-        gradients = tape.gradient(loss, self.trainable_variables)\
-
+        gradients = tape.gradient(loss, self.trainable_variables)
+        
         if self.num_accumulation == 1:
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         else:
@@ -143,11 +143,9 @@ class SmolLM(tf.keras.Model):
 
         y_pred = tf.nn.softmax(logits)
         self.loss_tracker.update_state(loss)
-        perplexity = self.get_perplexity(loss)
-        self.perplexity_tracker.update_state(perplexity)
+        self.perplexity_tracker.update_state(self.get_perplexity(loss))
         accuracy = self.get_padded_accuracy(y, y_pred)
         self.accuracy_tracker.update_state(accuracy)
-
 
         return {m.name: m.result() for m in self.metrics}
 
@@ -158,11 +156,9 @@ class SmolLM(tf.keras.Model):
         loss = self.get_loss(y, logits)
 
         self.loss_tracker.update_state(loss)
-        perplexity = self.get_perplexity(loss)
-        self.perplexity_tracker.update_state(perplexity)
+        self.perplexity_tracker.update_state(self.get_perplexity(loss))
         accuracy = self.get_padded_accuracy(y, logits)
         self.accuracy_tracker.update_state(accuracy)
-
 
         return {m.name: m.result() for m in self.metrics}
 

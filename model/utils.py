@@ -26,6 +26,7 @@ def shape_list(tensor: Union[tf.Tensor, np.ndarray]) -> List[int]:
 
     return [dynamic[i] if s is None else s for i, s in enumerate(static)]
 
+
 # https://github.com/OpenNMT/OpenNMT-tf/blob/6f3b952ebb973dec31250a806bf0f56ff730d0b5/opennmt/optimizers/utils.py#L77
 class GradientAccumulator:
     """Gradient accumulation utility.

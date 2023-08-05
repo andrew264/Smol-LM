@@ -94,7 +94,7 @@ if __name__ == '__main__':
                                           epsilon=epsilon,
                                           weight_decay=weight_decay,
                                           clipnorm=clipnorm)
-    model.compile(optimizer=optimizer)
+    model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len - 1))
     model.summary()
 
