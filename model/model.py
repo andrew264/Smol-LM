@@ -131,7 +131,7 @@ class SmolLM(tf.keras.Model):
             loss = self.get_loss(y, logits)
 
         gradients = tape.gradient(loss, self.trainable_variables)
-        
+
         if self.num_accumulation == 1:
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         else:
