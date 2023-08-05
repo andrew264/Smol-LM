@@ -40,13 +40,3 @@ class FeedForward(tf.keras.layers.Layer):
         :return: (tf.Tensor): The output tensor of shape (batch_size, seq_len, dim).
         """
         return self.w2(self.act(self.w1(x)) * self.w3(x))
-
-    def get_config(self):
-        config = super().get_config().copy()
-        config.update({
-            'dim': self.dim,
-            'hidden_dim': self.hidden_dim,
-            'multiple_of': self.multiple_of,
-            'ffn_dim_multiplier': self.ffn_dim_multiplier,
-        })
-        return config

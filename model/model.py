@@ -92,7 +92,7 @@ class SmolLM(tf.keras.Model):
         model.load_weights(path)
         return model
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def get_padded_accuracy(self, labels, logits):
         with tf.name_scope("padded_accuracy"):
             pred = tf.argmax(logits, axis=-1)
@@ -106,12 +106,12 @@ class SmolLM(tf.keras.Model):
             accuracy = tf.reduce_sum(match) / tf.reduce_sum(mask)
             return accuracy
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def get_perplexity(self, cross_entropy):
         with tf.name_scope("perplexity"):
             return tf.exp(cross_entropy)
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def get_loss(self, real, pred):
         with tf.name_scope("loss"):
             mask = real != 0
@@ -126,7 +126,7 @@ class SmolLM(tf.keras.Model):
     def metrics(self):
         return [self.loss_tracker, self.perplexity_tracker, self.accuracy_tracker]
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def train_step(self, data):
         x, y = data
         with tf.GradientTape() as tape:
@@ -153,7 +153,7 @@ class SmolLM(tf.keras.Model):
 
         return {m.name: m.result() for m in self.metrics}
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def test_step(self, data):
         x, y = data
         logits = self(x, training=False)
