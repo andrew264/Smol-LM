@@ -14,6 +14,8 @@ class TransformerBlock(tf.keras.layers.Layer):
     Args:
         dim (int): The number of features in the input tensor.
         n_heads (int): The number of attention heads.
+        hidden_dim (int): The number of features in the hidden layer. Default is None, which sets the hidden dimension
+                            to 4 * dim. This is the same as the original implementation.
         max_batch_size (int): The maximum batch size.
         max_seq_len (int): The maximum sequence length.
         multiple_of (int): The dimension of the feed forward layer must be a multiple of this value.
@@ -23,7 +25,7 @@ class TransformerBlock(tf.keras.layers.Layer):
                             Default is 1e-5.
     """
 
-    def __init__(self, dim: int, n_heads: int,
+    def __init__(self, dim: int, n_heads: int, hidden_dim: Optional[int],
                  max_batch_size: int, max_seq_len: int,
                  multiple_of: int, ffn_dim_multiplier: Optional[float], norm_eps: float, **kwargs):
         super(TransformerBlock, self).__init__(**kwargs)
@@ -34,11 +36,14 @@ class TransformerBlock(tf.keras.layers.Layer):
         self.norm_eps = norm_eps
 
         self.head_dim = dim // n_heads
+        self.hidden_dim = hidden_dim if hidden_dim is not None else 4 * dim
 
         self.attention = Attention(n_heads=n_heads, dim=dim,
                                    max_batch_size=max_batch_size, max_seq_len=max_seq_len,
                                    **kwargs)
-        self.feed_forward = FeedForward(dim, dim, multiple_of, ffn_dim_multiplier, **kwargs)
+
+        self.feed_forward = FeedForward(dim=dim, hidden_dim=4*dim,
+                                        multiple_of=multiple_of, ffn_dim_multiplier=ffn_dim_multiplier, **kwargs)
         self.attention_norm = RMSNorm(eps=norm_eps)
         self.ffn_norm = RMSNorm(eps=norm_eps)
 

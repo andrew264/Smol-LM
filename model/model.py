@@ -16,6 +16,7 @@ class SmolLM(tf.keras.Model):
         dim (int): The model dimensionality.
         n_layers (int): The number of layers.
         n_heads (int): The number of heads.
+        hidden_dim (int): The hidden dimensionality of the feed-forward layer.
         vocab_size (int): The vocabulary size.
         max_batch_size (int): The maximum batch size.
         max_seq_len (int): The maximum sequence length.
@@ -28,7 +29,7 @@ class SmolLM(tf.keras.Model):
                                  Default is 4.
     """
 
-    def __init__(self, dim: int = 768, n_layers: int = 8, n_heads: int = 8,
+    def __init__(self, dim: int = 768, n_layers: int = 12, n_heads: int = 12, hidden_dim: Optional[int] = None,
                  vocab_size: int = 32000, max_batch_size: int = 1, max_seq_len: int = 1024,
                  multiple_of: int = 256, ffn_dim_multiplier: Optional[float] = None,
                  norm_eps: float = 1e-05, num_accumulation: int = 4, **kwargs):
@@ -41,8 +42,9 @@ class SmolLM(tf.keras.Model):
         self.multiple_of = multiple_of
         self.ffn_dim_multiplier = ffn_dim_multiplier
         self.norm_eps = norm_eps
+        self.hidden_dim = hidden_dim
 
-        self.transformer = Transformer(dim=dim, n_layers=n_layers, n_heads=n_heads,
+        self.transformer = Transformer(dim=dim, n_layers=n_layers, n_heads=n_heads, hidden_dim=hidden_dim,
                                        vocab_size=vocab_size, max_seq_len=max_seq_len, max_batch_size=max_batch_size,
                                        multiple_of=multiple_of, ffn_dim_multiplier=ffn_dim_multiplier,
                                        norm_eps=norm_eps)
@@ -71,6 +73,7 @@ class SmolLM(tf.keras.Model):
             "dim": self.dim,
             "n_layers": self.n_layers,
             "n_heads": self.n_heads,
+            "hidden_dim": self.hidden_dim,
             "vocab_size": self.vocab_size,
             "max_seq_len": self.max_seq_len,
             "multiple_of": self.multiple_of,

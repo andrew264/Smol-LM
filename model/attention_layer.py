@@ -5,7 +5,8 @@ import tensorflow as tf
 from model.utils import shape_list
 
 
-def repeat_kv(x: tf.Tensor, n_rep: int) -> tf.Tensor:
+@tf.function
+def repeat_kv(x: tf.Tensor, n_rep: int = 1) -> tf.Tensor:
     """
     Repeats each element of the tensor multiple times along the specified axis.
 
@@ -29,6 +30,7 @@ def repeat_kv(x: tf.Tensor, n_rep: int) -> tf.Tensor:
     )
 
 
+@tf.function
 def reshape_for_broadcast(freqs_cis: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
     """
     Reshapes the tensor of precomputed rotary positional embeddings to match the shape of the input tensor.
@@ -48,6 +50,7 @@ def reshape_for_broadcast(freqs_cis: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
     return tf.reshape(freqs_cis, shape)
 
 
+@tf.function
 def apply_rotary_emb(xq: tf.Tensor, xk: tf.Tensor, freqs_cis: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     """
     Applies rotary positional embeddings to the input tensors.

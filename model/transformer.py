@@ -7,6 +7,7 @@ from model.norm import RMSNorm
 from model.utils import shape_list
 
 
+@tf.function
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tf.Tensor:
     """
     Precomputes rotary positional embeddings to be used with `apply_rotary_emb`.
@@ -32,6 +33,7 @@ class Transformer(tf.keras.layers.Layer):
         dim (int): The dimension of the model.
         n_layers (int): The number of layers in the model.
         n_heads (int): The number of attention heads.
+        hidden_dim (int): The number of features in the hidden layer.
         vocab_size (int): The size of the vocabulary.
         max_seq_len (int): The maximum sequence length.
         max_batch_size (int): The maximum batch size.
@@ -43,7 +45,7 @@ class Transformer(tf.keras.layers.Layer):
 
     """
 
-    def __init__(self, dim: int, n_layers: int, n_heads: int,
+    def __init__(self, dim: int, n_layers: int, n_heads: int, hidden_dim: Optional[int],
                  vocab_size: int, max_seq_len: int, max_batch_size: int,
                  multiple_of: int, ffn_dim_multiplier: Optional[float],
                  norm_eps: float, **kwargs):
@@ -53,10 +55,11 @@ class Transformer(tf.keras.layers.Layer):
         self.n_heads = n_heads
         self.vocab_size = vocab_size
         self.max_seq_len = max_seq_len
+        self.hidden_dim = hidden_dim
 
         self.token_emb = tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=dim)
         self.layers = [
-            TransformerBlock(dim=dim, n_heads=n_heads, multiple_of=multiple_of,
+            TransformerBlock(dim=dim, n_heads=n_heads, hidden_dim=hidden_dim, multiple_of=multiple_of,
                              max_batch_size=max_batch_size, max_seq_len=max_seq_len,
                              ffn_dim_multiplier=ffn_dim_multiplier, norm_eps=norm_eps)
             for _ in range(n_layers)
@@ -65,6 +68,21 @@ class Transformer(tf.keras.layers.Layer):
         self.output_layer = tf.keras.layers.Dense(vocab_size, use_bias=False, name="output_layer", dtype=tf.float32)
 
         self.freqs_cis = precompute_freqs_cis(dim=dim // n_heads, end=max_seq_len * 2)
+
+    @tf.function
+    def create_mask(self, seq_len: int) -> tf.Tensor:
+        """
+        Creates a mask to be used for the attention layer.
+        :param seq_len: (int) The length of the sequence.
+        :return: (tf.Tensor) The mask of shape (1, 1, seq_len, seq_len).
+        """
+        mask = tf.fill((1, 1, seq_len, seq_len), float('-inf'))
+        # Set upper triangle to float("-inf")
+        mask = tf.linalg.band_part(mask, 0, -1)
+        # Set diagonal to 0
+        diag = tf.fill((1, 1, seq_len), 0.0)
+        mask = tf.cast(tf.linalg.set_diag(mask, diag), dtype=self.dtype_policy.compute_dtype)
+        return mask
 
     def call(self, tokens: tf.Tensor, **kwargs):
         """
@@ -77,13 +95,7 @@ class Transformer(tf.keras.layers.Layer):
 
         h = self.token_emb(tokens)
         freqs_cis = self.freqs_cis[:seq_len]
-
-        mask = tf.fill((1, 1, seq_len, seq_len), float('-inf'))
-        # Set upper triangle to float("-inf")
-        mask = tf.linalg.band_part(mask, 0, -1)
-        # Set diagonal to 0
-        diag = tf.fill((1, 1, seq_len), 0.0)
-        mask = tf.cast(tf.linalg.set_diag(mask, diag), dtype=self.dtype_policy.compute_dtype)
+        mask = self.create_mask(seq_len=seq_len)
 
         for layer in self.layers:
             h = layer(x=h, freqs_cis=freqs_cis, mask=mask)
