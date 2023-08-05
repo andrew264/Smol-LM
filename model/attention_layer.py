@@ -139,7 +139,7 @@ class Attention(tf.keras.layers.Layer):
         xk = tf.einsum('bsnh->bnsh', xk, name='key_transpose')
         xv = tf.einsum('bsnh->bnsh', xv, name='value_transpose')
 
-        scores = (tf.matmul(xq, tf.einsum('bnsh->bnhs', xk, name='key_transpose_2')) /
+        scores = (tf.matmul(xq, xk, transpose_b=True) /
                   tf.math.sqrt(tf.cast(self.head_dim, dtype=xq.dtype)))  # [batch_size, n_heads, seq_len, seq_len]
 
         if mask is not None:

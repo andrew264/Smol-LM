@@ -42,7 +42,7 @@ class TransformerBlock(tf.keras.layers.Layer):
                                    max_batch_size=max_batch_size, max_seq_len=max_seq_len,
                                    **kwargs)
 
-        self.feed_forward = FeedForward(dim=dim, hidden_dim=4*dim,
+        self.feed_forward = FeedForward(dim=dim, hidden_dim=4 * dim,
                                         multiple_of=multiple_of, ffn_dim_multiplier=ffn_dim_multiplier, **kwargs)
         self.attention_norm = RMSNorm(eps=norm_eps)
         self.ffn_norm = RMSNorm(eps=norm_eps)
