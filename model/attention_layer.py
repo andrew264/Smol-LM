@@ -47,7 +47,7 @@ def reshape_for_broadcast(freqs_cis: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
     assert 0 <= 1 < ndim
     assert freqs_cis.shape == (x.shape[1], x.shape[-1])  # [sequence_length, num_features]
     shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
-    return tf.reshape(freqs_cis, shape)
+    return tf.reshape(freqs_cis, shape, name='freqs_cis_reshaped')
 
 
 @tf.function
@@ -69,11 +69,11 @@ def apply_rotary_emb(xq: tf.Tensor, xk: tf.Tensor, freqs_cis: tf.Tensor) -> Tupl
                                     The input tensors with rotary positional embeddings applied.
     """
     dtype = xq.dtype
-    xq = tf.cast(xq, dtype=tf.float32)
-    xk = tf.cast(xk, dtype=tf.float32)
+    xq = tf.cast(xq, dtype=tf.float32, name='xq_cast')
+    xk = tf.cast(xk, dtype=tf.float32, name='xk_cast')
 
-    xq_complex = tf.complex(xq[..., ::2], xq[..., 1::2])
-    xk_complex = tf.complex(xk[..., ::2], xk[..., 1::2])
+    xq_complex = tf.complex(xq[..., ::2], xq[..., 1::2], name='xq_complex')
+    xk_complex = tf.complex(xk[..., ::2], xk[..., 1::2], name='xk_complex')
 
     freqs_cis = reshape_for_broadcast(freqs_cis, xq_complex)
 
@@ -86,7 +86,7 @@ def apply_rotary_emb(xq: tf.Tensor, xk: tf.Tensor, freqs_cis: tf.Tensor) -> Tupl
     xk_out = tf.reshape(xk_out, shape=xk.shape)
     xq_out = tf.reshape(xq_out, shape=xq.shape)
 
-    return tf.cast(xq_out, dtype=dtype), tf.cast(xk_out, dtype=dtype)
+    return tf.cast(xq_out, dtype=dtype, name='xq_out_cast'), tf.cast(xk_out, dtype=dtype, name='xk_out_cast')
 
 
 class Attention(tf.keras.layers.Layer):
@@ -139,11 +139,12 @@ class Attention(tf.keras.layers.Layer):
         xk = tf.einsum('bsnh->bnsh', xk, name='key_transpose')
         xv = tf.einsum('bsnh->bnsh', xv, name='value_transpose')
 
-        scores = (tf.matmul(xq, xk, transpose_b=True) /
-                  tf.math.sqrt(tf.cast(self.head_dim, dtype=xq.dtype)))  # [batch_size, n_heads, seq_len, seq_len]
+        scores = tf.matmul(xq, xk, transpose_b=True)
+        scores /= tf.math.sqrt(tf.cast(self.head_dim, dtype=xq.dtype))
 
         if mask is not None:
             scores = scores + mask[:, :, :seq_len, :seq_len]  # [batch_size, n_heads, seq_len, seq_len]
+
         scores = tf.nn.softmax(scores + 1e-9, axis=-1, name="attention_scores")
         output = tf.matmul(scores, xv)  # [batch_size, n_heads, seq_len, head_dim]
 

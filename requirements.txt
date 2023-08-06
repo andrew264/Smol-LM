@@ -6,3 +6,4 @@ keras
 tensorboard_plugin_profile
 numpy
 tensorboard
+tensorflow_probability

@@ -4,6 +4,7 @@ import os
 
 # suppress tf warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
 
 import tensorflow as tf
 from keras.optimizers.schedules import CosineDecay

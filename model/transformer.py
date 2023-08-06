@@ -49,7 +49,7 @@ class Transformer(tf.keras.layers.Layer):
                  vocab_size: int, max_seq_len: int, max_batch_size: int,
                  multiple_of: int, ffn_dim_multiplier: Optional[float],
                  norm_eps: float, **kwargs):
-        super(Transformer, self).__init__(**kwargs)
+        super(Transformer, self).__init__(**kwargs, name="transformer")
         self.dim = dim
         self.n_layers = n_layers
         self.n_heads = n_heads
@@ -61,8 +61,8 @@ class Transformer(tf.keras.layers.Layer):
         self.layers = [
             TransformerBlock(dim=dim, n_heads=n_heads, hidden_dim=hidden_dim, multiple_of=multiple_of,
                              max_batch_size=max_batch_size, max_seq_len=max_seq_len,
-                             ffn_dim_multiplier=ffn_dim_multiplier, norm_eps=norm_eps)
-            for _ in range(n_layers)
+                             ffn_dim_multiplier=ffn_dim_multiplier, norm_eps=norm_eps, name=f"block_{i}")
+            for i in range(n_layers)
         ]
         self.norm = RMSNorm(eps=norm_eps)
         self.output_layer = tf.keras.layers.Dense(vocab_size, use_bias=False, name="output_layer", dtype=tf.float32)
