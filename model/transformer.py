@@ -69,7 +69,6 @@ class Transformer(tf.keras.layers.Layer):
 
         self.freqs_cis = precompute_freqs_cis(dim=dim // n_heads, end=max_seq_len * 2)
 
-    @tf.function(jit_compile=True)
     def create_mask(self, seq_len: int) -> tf.Tensor:
         """
         Creates a mask to be used for the attention layer.
