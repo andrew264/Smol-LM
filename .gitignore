@@ -1,5 +1,6 @@
 # intellij stuff
 .idea/
+.run/
 
 # python stuff
 __pycache__/
