@@ -68,7 +68,8 @@ if __name__ == '__main__':
     dataset = (dataset
                .shuffle(buffer_size=10000)
                .batch(batch_size=batch_size, drop_remainder=True)
-               .prefetch(tf.data.experimental.AUTOTUNE))
+               .prefetch(tf.data.experimental.AUTOTUNE)
+               .repeat())
     total_steps = _get_total_steps(dataset_path) // batch_size
     print(f"Total Steps:- {total_steps}")
     print(f"Batch Size:- {batch_size}")
@@ -76,7 +77,7 @@ if __name__ == '__main__':
     # create graph for tensorboard
     # tf.summary.trace_on(graph=True, profiler=True)
 
-    model = SmolLM(max_batch_size=batch_size)
+    model = SmolLM(max_batch_size=batch_size, num_accumulation=8)
     warmup_steps = 5000
     initial_learning_rate = 6e-4
     final_learning_rate = 0.1 * initial_learning_rate
@@ -94,10 +95,13 @@ if __name__ == '__main__':
                                           beta_2=beta_2,
                                           epsilon=epsilon,
                                           weight_decay=weight_decay,
-                                          clipnorm=clipnorm)
+                                          clipvalue=clipnorm,)
     model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len))
     model.summary()
+
+    # force enable eager execution
+    # tf.config.run_functions_eagerly(True)
 
     if not os.path.exists('./weights/'):
         os.makedirs('./weights/')

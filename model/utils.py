@@ -58,6 +58,20 @@ class GradientAccumulator:
             )
         return self._accum_steps.value()
 
+    @staticmethod
+    def flat_gradients(grads_or_idx_slices: tf.Tensor) -> tf.Tensor:
+        """
+        Convert gradients if it's tf.IndexedSlices.
+        When computing gradients for operation concerning `tf.gather`, the type of gradients
+        """
+        if type(grads_or_idx_slices) == tf.IndexedSlices:
+            return tf.scatter_nd(
+                tf.expand_dims(grads_or_idx_slices.indices, 1),
+                grads_or_idx_slices.values,
+                grads_or_idx_slices.dense_shape
+            )
+        return grads_or_idx_slices
+
     @property
     def gradients(self) -> List[tf.Tensor]:
         """The accumulated gradients on the current replica."""
@@ -88,7 +102,7 @@ class GradientAccumulator:
             )
 
         for accum_gradient, gradient in zip(self._gradients, gradients):
-            accum_gradient.assign_add(gradient, read_value=False)
+            accum_gradient.assign_add(self.flat_gradients(gradient), read_value=False)
         self._accum_steps.assign_add(1)
 
     def reset(self):
