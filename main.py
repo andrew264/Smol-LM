@@ -32,9 +32,9 @@ def _generator(seq_len: int, path: str) -> tuple[tf.Tensor, tf.Tensor]:
     for file_path in files:
         binary_data = tf.io.read_file(file_path)
         m = tf.io.decode_raw(binary_data, tf.uint16)
-        num_batches = tf.shape(m)[0] // seq_len
-        m = m[:num_batches * seq_len]  # Truncate to have an even number of batches
-        m = tf.reshape(m, [num_batches, seq_len])
+        num_batches = tf.shape(m)[0] // (seq_len + 1)
+        m = m[:num_batches * (seq_len + 1)]  # Truncate to have an even number of batches
+        m = tf.reshape(m, [num_batches, seq_len + 1])
         for i in range(num_batches):
             batch = m[i]
             yield batch[:-1], batch[1:]
@@ -46,7 +46,7 @@ def _get_total_steps(path: str) -> int:
     for file_path in files:
         binary_data = tf.io.read_file(file_path)
         m = tf.io.decode_raw(binary_data, tf.uint16)
-        num_batches: tf.Tensor = tf.shape(m)[0] // max_seq_len
+        num_batches: tf.Tensor = tf.shape(m)[0] // (max_seq_len + 1)
         total_steps += num_batches.numpy()
     return total_steps
 
@@ -61,8 +61,8 @@ if __name__ == '__main__':
 
     dataset = tf.data.Dataset.from_generator(_generator,
                                              output_signature=(
-                                                 tf.TensorSpec(shape=(max_seq_len - 1,), dtype=tf.int32),
-                                                 tf.TensorSpec(shape=(max_seq_len - 1,), dtype=tf.int32)
+                                                 tf.TensorSpec(shape=(max_seq_len,), dtype=tf.int32),
+                                                 tf.TensorSpec(shape=(max_seq_len,), dtype=tf.int32)
                                              ),
                                              args=(max_seq_len, dataset_path))
     dataset = (dataset
@@ -96,7 +96,7 @@ if __name__ == '__main__':
                                           weight_decay=weight_decay,
                                           clipnorm=clipnorm)
     model.compile(optimizer=optimizer, jit_compile=True)
-    model.build(input_shape=(batch_size, max_seq_len - 1))
+    model.build(input_shape=(batch_size, max_seq_len))
     model.summary()
 
     if not os.path.exists('./weights/'):
