@@ -75,13 +75,9 @@ class Transformer(tf.keras.layers.Layer):
         :param seq_len: (int) The length of the sequence.
         :return: (tf.Tensor) The mask of shape (1, 1, seq_len, seq_len).
         """
-        mask = tf.fill((1, 1, seq_len, seq_len), float('-inf'))
-        # Set upper triangle to float("-inf")
-        mask = tf.linalg.band_part(mask, 0, -1)
-        # Set diagonal to 0
-        diag = tf.fill((1, 1, seq_len), 0.0)
-        mask = tf.cast(tf.linalg.set_diag(mask, diag), dtype=self.dtype_policy.compute_dtype)
-        return mask
+        return tf.experimental.numpy.triu(
+            tf.ones((1, 1, seq_len, seq_len,), dtype=self.dtype_policy.compute_dtype) * float('-inf'),
+            k=1)
 
     def call(self, tokens: tf.Tensor, **kwargs):
         """
