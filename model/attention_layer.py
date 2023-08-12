@@ -108,6 +108,35 @@ class Attention(tf.keras.layers.Layer):
 
         return tf.cast(xq_out, dtype=dtype, name='xq_out_cast'), tf.cast(xk_out, dtype=dtype, name='xk_out_cast')
 
+    @staticmethod
+    def scaled_dot_product_attention(q: tf.Tensor, k: tf.Tensor, v: tf.Tensor,
+                                     mask: Optional[tf.Tensor] = None,) -> tf.Tensor:
+        """
+        Applies scaled dot product attention to the input tensors.
+
+        Args:
+            q (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, head_dim).
+                            The query tensor.
+            k (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, head_dim).
+                            The key tensor.
+            v (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, head_dim).
+                            The value tensor.
+            mask (Optional[tf.Tensor]): Input tensor of shape (1, 1, sequence_length, sequence_length).
+                                            The attention mask.
+
+        Returns:
+            tf.Tensor: The output tensor of shape (batch_size, sequence_length, num_heads, head_dim).
+        """
+        scale = 1 / shape_list(q)[-1] ** 0.5
+        seq_len = shape_list(q)[2]
+        q = tf.multiply(q, scale, name='q_scaled')
+        attn = tf.matmul(q, k, transpose_b=True,)  # [batch_size, n_heads, seq_len, seq_len]
+        if mask is not None:
+            attn = attn + mask[:, :, :seq_len, :seq_len]
+        attn = tf.nn.softmax(attn, axis=-1, name="attention_scores")
+        out = tf.matmul(attn, v, name='attention_output')
+        return tf.transpose(out, perm=[0, 2, 1, 3], name='attention_output_transposed')
+
     def call(self, x: tf.Tensor, freqs_cis: tf.Tensor,
              mask: Optional[tf.Tensor] = None, **kwargs):
         """
@@ -135,16 +164,8 @@ class Attention(tf.keras.layers.Layer):
         xk = tf.transpose(xk, perm=[0, 2, 1, 3], name='key_transpose')
         xv = tf.transpose(xv, perm=[0, 2, 1, 3], name='value_transpose')
 
-        scores = tf.matmul(xq, xk, transpose_b=True)
-        scores /= tf.math.sqrt(tf.cast(self.head_dim, dtype=xq.dtype))
+        output = self.scaled_dot_product_attention(xq, xk, xv, mask)
 
-        if mask is not None:
-            scores = scores + mask[:, :, :seq_len, :seq_len]  # [batch_size, n_heads, seq_len, seq_len]
-
-        scores = tf.nn.softmax(scores + 1e-9, axis=-1, name="attention_scores")
-        output = tf.matmul(scores, xv)  # [batch_size, n_heads, seq_len, head_dim]
-
-        output = tf.transpose(output, perm=[0, 2, 1, 3],  name='output_transpose')  # [batch_size, seq_len, n_heads, head_dim]
         bsz, seq_len, n_heads, head_dim = shape_list(output)
         output = tf.reshape(output, [bsz, seq_len, -1])
 
