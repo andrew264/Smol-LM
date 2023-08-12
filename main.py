@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import random
 
 # suppress tf warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -29,6 +30,7 @@ logdir = r'./logs/'
 
 def _generator(seq_len: int, path: str) -> tuple[tf.Tensor, tf.Tensor]:
     files = glob.glob(path, recursive=True)
+    random.shuffle(files)
     for file_path in files:
         binary_data = tf.io.read_file(file_path)
         m = tf.io.decode_raw(binary_data, tf.uint16)
