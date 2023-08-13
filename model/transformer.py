@@ -69,15 +69,16 @@ class Transformer(tf.keras.layers.Layer):
 
         self.freqs_cis = precompute_freqs_cis(dim=dim // n_heads, end=max_seq_len * 2)
 
-    def create_mask(self, seq_len: int) -> tf.Tensor:
+    @staticmethod
+    def create_mask(seq_len: int) -> tf.Tensor:
         """
         Creates a mask to be used for the attention layer.
         :param seq_len: (int) The length of the sequence.
         :return: (tf.Tensor) The mask of shape (1, 1, seq_len, seq_len).
         """
-        return tf.experimental.numpy.triu(
-            tf.ones((1, 1, seq_len, seq_len,), dtype=self.dtype_policy.compute_dtype) * float('-inf'),
-            k=1)
+        return tf.linalg.band_part(  # creates a lower triangular matrix
+            tf.ones((1, 1, seq_len, seq_len), dtype=tf.bool), -1, 0
+        )
 
     def call(self, tokens: tf.Tensor, **kwargs):
         """

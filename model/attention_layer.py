@@ -28,6 +28,8 @@ class Attention(tf.keras.layers.Layer):
         self.value = tf.keras.layers.Dense(dim, use_bias=False)
         self.combine_heads = tf.keras.layers.Dense(dim, use_bias=False)
 
+        self._softmax = tf.keras.layers.Softmax(axis=-1)
+
     @staticmethod
     def repeat_kv(x: tf.Tensor, n_rep: int = 1) -> tf.Tensor:
         """
@@ -108,9 +110,8 @@ class Attention(tf.keras.layers.Layer):
 
         return tf.cast(xq_out, dtype=dtype, name='xq_out_cast'), tf.cast(xk_out, dtype=dtype, name='xk_out_cast')
 
-    @staticmethod
-    def scaled_dot_product_attention(q: tf.Tensor, k: tf.Tensor, v: tf.Tensor,
-                                     mask: Optional[tf.Tensor] = None,) -> tf.Tensor:
+    def scaled_dot_product_attention(self, q: tf.Tensor, k: tf.Tensor, v: tf.Tensor,
+                                     mask: Optional[tf.Tensor] = None, ) -> tf.Tensor:
         """
         Applies scaled dot product attention to the input tensors.
 
@@ -130,10 +131,8 @@ class Attention(tf.keras.layers.Layer):
         scale = 1 / shape_list(q)[-1] ** 0.5
         seq_len = shape_list(q)[2]
         q = tf.multiply(q, scale, name='q_scaled')
-        attn = tf.matmul(q, k, transpose_b=True,)  # [batch_size, n_heads, seq_len, seq_len]
-        if mask is not None:
-            attn = attn + mask[:, :, :seq_len, :seq_len]
-        attn = tf.nn.softmax(attn, axis=-1, name="attention_scores")
+        attn = tf.matmul(q, k, transpose_b=True, )  # [batch_size, n_heads, seq_len, seq_len]
+        attn = self._softmax(inputs=attn, mask=mask,)
         out = tf.matmul(attn, v, name='attention_output')
         return tf.transpose(out, perm=[0, 2, 1, 3], name='attention_output_transposed')
 
