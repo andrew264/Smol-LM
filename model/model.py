@@ -5,7 +5,17 @@ import tensorflow_probability as tfp
 import tqdm
 
 from model.transformer import Transformer
-from model.utils import GradientAccumulator
+from model.utils import GradientAccumulator, shape_list
+
+
+def scatter_values_on_batch_indices(values, batch_indices):
+    shape = shape_list(batch_indices)
+    # broadcast batch dim to shape
+    broad_casted_batch_dims = tf.reshape(tf.broadcast_to(tf.expand_dims(tf.range(shape[0]), axis=-1), shape), [1, -1])
+    # transform batch_indices to pair_indices
+    pair_indices = tf.transpose(tf.concat([broad_casted_batch_dims, tf.reshape(batch_indices, [1, -1])], 0))
+    # scatter values to pair indices
+    return tf.scatter_nd(pair_indices, tf.reshape(values, [-1]), shape)
 
 
 class SmolLM(tf.keras.Model):
@@ -167,15 +177,19 @@ class SmolLM(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics}
 
     def generate(self, idx: List[List[int]], max_gen_len: int,
-                 temperature: float = 0.6, top_k: Optional[int] = None) -> List[List[int]]:
+                 temperature: float = 0.6, top_k: int = 0, top_p: float = 0.0
+                 ) -> List[List[int]]:
         """
         Generates text from a prompt.
+
+        From: https://github.com/huggingface/transformers/blob/fe3c8ab1af558b95f67f5fafc0c55f09fd2b09db/src/transformers/generation/tf_utils.py#L3059
 
         Params:
         :param idx: A list of lists of integers. Each list of integers is a prompt.
         :param max_gen_len: The maximum length of the generated text.
         :param temperature: The temperature to use when sampling from the softmax distribution.
         :param top_k: The number of top tokens to consider when sampling from the softmax distribution.
+        :param top_p: The cumulative probability of top tokens to consider when sampling from the softmax distribution.
         :return: A list of lists of integers. Each list of integers is a generated text.
         """
         for _ in tqdm.tqdm(range(max_gen_len)):
@@ -185,18 +199,27 @@ class SmolLM(tf.keras.Model):
             logits = self(idx_cond)
             logits = logits[:, -1, :]
 
-            if temperature == 0.0:
-                _, idx_next = tf.math.top_k(logits, k=1)
-            else:
+            if temperature > 0.0:
                 logits = logits / temperature
 
-                if top_k is not None:
-                    values, indices = tf.math.top_k(logits, k=top_k)
-                    min_value = tf.reduce_min(values, axis=-1, keepdims=True)
-                    logits = tf.where(logits < min_value, tf.ones_like(logits) * -1e10, logits)
+            if top_k > 0:
+                top_k = min(top_k, self.vocab_size)
+                indices_to_remove = logits < tf.math.top_k(logits, top_k)[0][..., -1, None]
+                logits = tf.where(indices_to_remove, tf.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
 
-                probs = tf.nn.softmax(logits, axis=-1)
-                idx_next = tfp.distributions.Categorical(probs=probs).sample()
-            idx = tf.concat((idx, idx_next[:, tf.newaxis]), axis=1)
+            if 0.0 < top_p < 1.0:
+                sorted_indices = tf.argsort(logits, direction='DESCENDING')
+                sorted_logits = tf.gather(logits, sorted_indices, axis=-1, batch_dims=1)
+
+                cumulative_probs = tf.cumsum(tf.nn.softmax(sorted_logits, axis=-1), axis=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove = tf.concat([tf.zeros_like(sorted_indices_to_remove[..., :1]),
+                                                      sorted_indices_to_remove[..., :-1]], axis=-1)
+                indices_to_remove = scatter_values_on_batch_indices(sorted_indices_to_remove, sorted_indices)
+                logits = tf.where(indices_to_remove, tf.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
+
+            probs = tf.nn.softmax(logits, axis=-1)
+            idx_next = tfp.distributions.Categorical(probs=probs).sample()
+            idx = tf.concat([idx, idx_next[:, tf.newaxis]], axis=1)
 
         return idx

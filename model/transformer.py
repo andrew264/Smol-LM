@@ -86,7 +86,10 @@ class Transformer(tf.keras.layers.Layer):
         :param tokens: (tf.Tensor) The input tokens of shape (batch_size, seq_len).
         :return: (tf.Tensor) The output logits of shape (batch_size, seq_len, vocab_size).
         """
-        batch_size, seq_len = shape_list(tokens)
+        shape = shape_list(tokens)
+        if len(shape) == 1:
+            tokens = tf.expand_dims(tokens, 0)
+        seq_len = shape_list(tokens)[1]
 
         h = self.token_emb(tokens)
         freqs_cis = self.freqs_cis[:seq_len]
