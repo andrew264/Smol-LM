@@ -3,7 +3,6 @@
 ## A small language model for text generation based on LLAMA-2 in Tensorflow 2.0
 
 This is a small language model for text generation based on LLAMA.<br>
-I am just playing around with it and trying to understand how it works.<br>
 use LLaMA-2's tokenizer. <br>
 
 ### Changes made
