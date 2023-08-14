@@ -39,13 +39,11 @@ class TransformerBlock(tf.keras.layers.Layer):
         self.hidden_dim = hidden_dim if hidden_dim is not None else 4 * dim
 
         self.attention = Attention(n_heads=n_heads, dim=dim,
-                                   max_batch_size=max_batch_size, max_seq_len=max_seq_len,
-                                   **kwargs)
+                                   max_batch_size=max_batch_size, max_seq_len=max_seq_len, name='attention')
 
         self.feed_forward = FeedForward(dim=dim, hidden_dim=4 * dim,
-                                        multiple_of=multiple_of, ffn_dim_multiplier=ffn_dim_multiplier, **kwargs)
-        self.attention_norm = RMSNorm(eps=norm_eps)
-        self.ffn_norm = RMSNorm(eps=norm_eps)
+                                        multiple_of=multiple_of, ffn_dim_multiplier=ffn_dim_multiplier, name='ffn')
+        self.norm = RMSNorm(eps=norm_eps, name='rms_norm')
 
     def call(self, x: tf.Tensor, freqs_cis: tf.Tensor, mask: Optional[tf.Tensor], **kwargs):
         """
@@ -58,6 +56,6 @@ class TransformerBlock(tf.keras.layers.Layer):
 
         :return: The output tensor of shape (batch_size, seq_len, dim).
         """
-        h = x + self.attention(x=self.attention_norm(x), freqs_cis=freqs_cis, mask=mask)
-        out = h + self.feed_forward(self.ffn_norm(h))
+        h = x + self.attention(x=self.norm(x), freqs_cis=freqs_cis, mask=mask)
+        out = h + self.feed_forward(self.norm(h))
         return out

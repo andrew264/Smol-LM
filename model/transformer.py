@@ -61,10 +61,10 @@ class Transformer(tf.keras.layers.Layer):
         self.layers = [
             TransformerBlock(dim=dim, n_heads=n_heads, hidden_dim=hidden_dim, multiple_of=multiple_of,
                              max_batch_size=max_batch_size, max_seq_len=max_seq_len,
-                             ffn_dim_multiplier=ffn_dim_multiplier, norm_eps=norm_eps, name=f"block_{i}")
+                             ffn_dim_multiplier=ffn_dim_multiplier, norm_eps=norm_eps, name=f"tf_block_{i}")
             for i in range(n_layers)
         ]
-        self.norm = RMSNorm(eps=norm_eps)
+        self.norm = RMSNorm(eps=norm_eps, name='final_norm')
         self.output_layer = tf.keras.layers.Dense(vocab_size, use_bias=False, name="output_layer", dtype=tf.float32)
 
         self.freqs_cis = precompute_freqs_cis(dim=dim // n_heads, end=max_seq_len * 2)
@@ -77,7 +77,8 @@ class Transformer(tf.keras.layers.Layer):
         :return: (tf.Tensor) The mask of shape (1, 1, seq_len, seq_len).
         """
         return tf.linalg.band_part(  # creates a lower triangular matrix
-            tf.ones((1, 1, seq_len, seq_len), dtype=tf.bool), -1, 0
+            tf.ones((1, 1, seq_len, seq_len), dtype=tf.bool), -1, 0,
+            name="mask"
         )
 
     def call(self, tokens: tf.Tensor, **kwargs):

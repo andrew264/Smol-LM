@@ -23,10 +23,10 @@ class Attention(tf.keras.layers.Layer):
         self.max_batch_size = max_batch_size
         self.max_seq_len = max_seq_len
 
-        self.query = tf.keras.layers.Dense(dim, use_bias=False)
-        self.key = tf.keras.layers.Dense(dim, use_bias=False)
-        self.value = tf.keras.layers.Dense(dim, use_bias=False)
-        self.combine_heads = tf.keras.layers.Dense(dim, use_bias=False)
+        self.query = tf.keras.layers.Dense(dim, use_bias=False, name='query_dense')
+        self.key = tf.keras.layers.Dense(dim, use_bias=False, name='key_dense')
+        self.value = tf.keras.layers.Dense(dim, use_bias=False, name='value_dense')
+        self.combine_heads = tf.keras.layers.Dense(dim, use_bias=False, name='combine_heads')
 
         self._softmax = tf.keras.layers.Softmax(axis=-1)
 
@@ -90,25 +90,26 @@ class Attention(tf.keras.layers.Layer):
                                         (batch_size, sequence_length, num_features).
                                         The input tensors with rotary positional embeddings applied.
         """
-        dtype = xq.dtype
-        xq = tf.cast(xq, dtype=tf.float32, name='xq_cast')
-        xk = tf.cast(xk, dtype=tf.float32, name='xk_cast')
+        with tf.name_scope('apply_rotary_emb'):
+            dtype = xq.dtype
+            xq = tf.cast(xq, dtype=tf.float32, name='xq_cast')
+            xk = tf.cast(xk, dtype=tf.float32, name='xk_cast')
 
-        xq_complex = tf.complex(xq[..., ::2], xq[..., 1::2], name='xq_complex')
-        xk_complex = tf.complex(xk[..., ::2], xk[..., 1::2], name='xk_complex')
+            xq_complex = tf.complex(xq[..., ::2], xq[..., 1::2], name='xq_complex')
+            xk_complex = tf.complex(xk[..., ::2], xk[..., 1::2], name='xk_complex')
 
-        freqs_cis = self.reshape_for_broadcast(freqs_cis, xq_complex)
+            freqs_cis = self.reshape_for_broadcast(freqs_cis, xq_complex)
 
-        xq_out = xq_complex * freqs_cis
-        xk_out = xk_complex * freqs_cis
+            xq_out = xq_complex * freqs_cis
+            xk_out = xk_complex * freqs_cis
 
-        xq_out = tf.stack([tf.math.real(xq_out), tf.math.imag(xq_out)], axis=-1)
-        xk_out = tf.stack([tf.math.real(xk_out), tf.math.imag(xk_out)], axis=-1)
+            xq_out = tf.stack([tf.math.real(xq_out), tf.math.imag(xq_out)], axis=-1)
+            xk_out = tf.stack([tf.math.real(xk_out), tf.math.imag(xk_out)], axis=-1)
 
-        xk_out = tf.reshape(xk_out, shape=xk.shape)
-        xq_out = tf.reshape(xq_out, shape=xq.shape)
+            xk_out = tf.reshape(xk_out, shape=xk.shape)
+            xq_out = tf.reshape(xq_out, shape=xq.shape)
 
-        return tf.cast(xq_out, dtype=dtype, name='xq_out_cast'), tf.cast(xk_out, dtype=dtype, name='xk_out_cast')
+            return tf.cast(xq_out, dtype=dtype, name='xq_out_cast'), tf.cast(xk_out, dtype=dtype, name='xk_out_cast')
 
     def scaled_dot_product_attention(self, q: tf.Tensor, k: tf.Tensor, v: tf.Tensor,
                                      mask: Optional[tf.Tensor] = None, ) -> tf.Tensor:
@@ -128,13 +129,13 @@ class Attention(tf.keras.layers.Layer):
         Returns:
             tf.Tensor: The output tensor of shape (batch_size, sequence_length, num_heads, head_dim).
         """
-        scale = 1 / shape_list(q)[-1] ** 0.5
-        seq_len = shape_list(q)[2]
-        q = tf.multiply(q, scale, name='q_scaled')
-        attn = tf.matmul(q, k, transpose_b=True, )  # [batch_size, n_heads, seq_len, seq_len]
-        attn = self._softmax(inputs=attn, mask=mask,)
-        out = tf.matmul(attn, v, name='attention_output')
-        return tf.transpose(out, perm=[0, 2, 1, 3], name='attention_output_transposed')
+        with tf.name_scope('scaled_dot_product_attention'):
+            scale = 1 / shape_list(q)[-1] ** 0.5
+            q = tf.multiply(q, scale, name='q_scaled')
+            attn = tf.matmul(q, k, transpose_b=True, )  # [batch_size, n_heads, seq_len, seq_len]
+            attn = self._softmax(inputs=attn, mask=mask,)
+            out = tf.matmul(attn, v, name='attention_output')
+            return tf.transpose(out, perm=[0, 2, 1, 3], name='attention_output_transposed')
 
     def call(self, x: tf.Tensor, freqs_cis: tf.Tensor,
              mask: Optional[tf.Tensor] = None, **kwargs):
@@ -146,7 +147,7 @@ class Attention(tf.keras.layers.Layer):
         :return: The output tensor of shape (batch_size, sequence_length, num_features).
         """
 
-        batch_size, seq_len, dim = shape_list(x)
+        batch_size, seq_len, _ = shape_list(x)
 
         xq, xk, xv = self.query(x), self.key(x), self.value(x)  # [batch_size, seq_len, dim]
 
@@ -165,8 +166,7 @@ class Attention(tf.keras.layers.Layer):
 
         output = self.scaled_dot_product_attention(xq, xk, xv, mask)
 
-        bsz, seq_len, n_heads, head_dim = shape_list(output)
-        output = tf.reshape(output, [bsz, seq_len, -1])
+        output = tf.reshape(output, [batch_size, seq_len, -1], name='output_reshape')
 
         output = self.combine_heads(output)  # [batch_size, seq_len, dim]
 

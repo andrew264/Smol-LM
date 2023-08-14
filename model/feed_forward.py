@@ -28,10 +28,10 @@ class FeedForward(tf.keras.layers.Layer):
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
-        self.w1 = tf.keras.layers.Dense(hidden_dim, use_bias=False)
-        self.w2 = tf.keras.layers.Dense(dim, use_bias=False)
-        self.w3 = tf.keras.layers.Dense(hidden_dim, use_bias=False)
-        self.act = tf.nn.silu
+        self.w1 = tf.keras.layers.Dense(hidden_dim, use_bias=False, name='ffn1', activation=tf.nn.silu)
+        self.w2 = tf.keras.layers.Dense(dim, use_bias=False, name='ffn2')
+        self.w3 = tf.keras.layers.Dense(hidden_dim, use_bias=False, name='ffn3')
+        # self.act = tf.nn.silu
 
     def call(self, x, **kwargs):
         """
@@ -39,4 +39,4 @@ class FeedForward(tf.keras.layers.Layer):
         :param x: (tf.Tensor): The input tensor of shape (batch_size, seq_len, dim).
         :return: (tf.Tensor): The output tensor of shape (batch_size, seq_len, dim).
         """
-        return self.w2(self.act(self.w1(x)) * self.w3(x))
+        return self.w2(self.w1(x) * self.w3(x))
