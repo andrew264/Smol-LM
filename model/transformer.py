@@ -80,6 +80,13 @@ class Transformer(tf.keras.layers.Layer):
             tf.ones((1, 1, seq_len, seq_len), dtype=tf.bool), -1, 0,
             name="mask"
         )
+    
+    def get_embedding(self) -> tf.Tensor:
+        """
+        Returns the token embedding layer.
+        :return: (tf.Tensor) The token embedding layer.
+        """
+        return self.token_emb
 
     def call(self, tokens: tf.Tensor, **kwargs):
         """
