@@ -76,6 +76,14 @@ class SmolLM(tf.keras.Model):
         :return: The output logits tensor.
         """
         return self.transformer(tokens=tokens, **kwargs)
+    
+    def load_weights(self, filepath, skip_mismatch=False, by_name=False, options=None):
+        """
+        Loads the model weights.
+        After loading the weights, the output layer weights are set to the embedding layer weights.
+        """
+        super().load_weights(filepath, skip_mismatch, by_name, options)
+        self.transformer.update_output_weights()
 
     def get_config(self):
         config = super(SmolLM, self).get_config()

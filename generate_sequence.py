@@ -22,6 +22,7 @@ if __name__ == '__main__':
         print("Weights Loaded from hdf5 file.")
     else:
         print("No weights found. Exiting.")
+        exit(1)
     model.summary()
     tokenizer = Tokenizer(vocab)
     while True:

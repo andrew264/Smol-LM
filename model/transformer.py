@@ -4,6 +4,7 @@ import tensorflow as tf
 
 from model.block import TransformerBlock
 from model.norm import RMSNorm
+from model.output_layer import SharedOutput
 from model.utils import shape_list
 
 
@@ -65,8 +66,7 @@ class Transformer(tf.keras.layers.Layer):
             for i in range(n_layers)
         ]
         self.norm = RMSNorm(eps=norm_eps, name='final_norm')
-        self.output_layer = tf.keras.layers.Dense(vocab_size, use_bias=False, name="output_layer", dtype=tf.float32)
-
+        self.output_layer = SharedOutput(embedding_layer=self.token_emb)
         self.freqs_cis = precompute_freqs_cis(dim=dim // n_heads, end=max_seq_len * 2)
 
     @staticmethod
@@ -87,6 +87,12 @@ class Transformer(tf.keras.layers.Layer):
         :return: (tf.Tensor) The token embedding layer.
         """
         return self.token_emb
+    
+    def update_output_weights(self):
+        """
+        Updates the output layer weights to be the same as the token embedding layer.
+        """
+        self.output_layer.update_weights(self.token_emb)
 
     def call(self, tokens: tf.Tensor, **kwargs):
         """
