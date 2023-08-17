@@ -1,6 +1,6 @@
-from typing import Optional
-
 import tensorflow as tf
+
+from model.config import ModelConfig
 
 
 class FeedForward(tf.keras.layers.Layer):
@@ -8,30 +8,38 @@ class FeedForward(tf.keras.layers.Layer):
     A feed forward layer.
 
     Args:
-        dim (int): The number of features in the input tensor.
-        hidden_dim (int): The number of features in the hidden layer.
-        multiple_of (int): The dimension of the feed forward layer must be a multiple of this value.
-        ffn_dim_multiplier (Optional[float]): The dimension of the feed forward layer will be multiplied by this value.
-                                                Default is None, which sets the multiplier to 4.0.
+        config (ModelConfig): The model configuration class.
 
     """
 
-    def __init__(self, dim: int,
-                 hidden_dim: int,
-                 multiple_of: int,
-                 ffn_dim_multiplier: Optional[float] = None,
+    def __init__(self, config: ModelConfig,
                  **kwargs):
         super(FeedForward, self).__init__(**kwargs)
-        hidden_dim = int(2 * hidden_dim / 3)
+        self.config = config
+        hidden_size = config.hidden_size
+        intermediate_size = int(2 * config.intermediate_size / 3)
         # custom dim factor multiplier
-        if ffn_dim_multiplier is not None:
-            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+        if config.ffn_dim_multiplier is not None:
+            intermediate_size = int(config.ffn_dim_multiplier * intermediate_size)
+        intermediate_size = config.multiple_of * ((intermediate_size + config.multiple_of - 1) // config.multiple_of)
 
-        self.w1 = tf.keras.layers.Dense(hidden_dim, use_bias=False, name='ffn1', activation=tf.nn.silu)
-        self.w2 = tf.keras.layers.Dense(dim, use_bias=False, name='ffn2')
-        self.w3 = tf.keras.layers.Dense(hidden_dim, use_bias=False, name='ffn3')
-        # self.act = tf.nn.silu
+        self.gate_proj = tf.keras.layers.Dense(units=intermediate_size,
+                                               use_bias=False,
+                                               kernel_initializer=tf.keras.initializers.TruncatedNormal(
+                                                   stddev=config.initializer_range),
+                                               name='gate_proj')
+        self.up_proj = tf.keras.layers.Dense(units=intermediate_size,
+                                             use_bias=False,
+                                             kernel_initializer=tf.keras.initializers.TruncatedNormal(
+                                                 stddev=config.initializer_range),
+                                             name='up_proj')
+        self.down_proj = tf.keras.layers.Dense(units=hidden_size,
+                                               use_bias=False,
+                                               kernel_initializer=tf.keras.initializers.TruncatedNormal(
+                                                   stddev=config.initializer_range),
+                                               name='down_proj')
+
+        self.act_fn = tf.keras.activations.get(config.hidden_act)
 
     def call(self, x, **kwargs):
         """
@@ -39,4 +47,4 @@ class FeedForward(tf.keras.layers.Layer):
         :param x: (tf.Tensor): The input tensor of shape (batch_size, seq_len, dim).
         :return: (tf.Tensor): The output tensor of shape (batch_size, seq_len, dim).
         """
-        return self.w2(self.w1(x) * self.w3(x))
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))

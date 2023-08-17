@@ -2,6 +2,7 @@ from typing import Optional, Tuple
 
 import tensorflow as tf
 
+from model.config import ModelConfig
 from model.utils import shape_list
 
 
@@ -9,24 +10,35 @@ class Attention(tf.keras.layers.Layer):
     """
     Multi-head self-attention layer with rotary positional embeddings.
 
-    :param n_heads: The number of attention heads.
-    :param dim: The dimension of the model.
-    :param max_batch_size: The maximum batch size.
-    :param max_seq_len: The maximum sequence length.
+    :param config: The model configuration class.
     """
 
-    def __init__(self, n_heads: int, dim: int, max_batch_size: int, max_seq_len: int, **kwargs):
+    def __init__(self, config: ModelConfig, **kwargs):
         super(Attention, self).__init__(**kwargs)
-        self.dim = dim
-        self.n_heads = n_heads
-        self.head_dim = dim // n_heads
-        self.max_batch_size = max_batch_size
-        self.max_seq_len = max_seq_len
+        self.config = config
 
-        self.query = tf.keras.layers.Dense(dim, use_bias=False, name='query_dense')
-        self.key = tf.keras.layers.Dense(dim, use_bias=False, name='key_dense')
-        self.value = tf.keras.layers.Dense(dim, use_bias=False, name='value_dense')
-        self.combine_heads = tf.keras.layers.Dense(dim, use_bias=False, name='combine_heads')
+        self.hidden_size = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = self.hidden_size // self.num_heads
+        self.num_key_value_heads = config.num_key_value_heads
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.max_position_embeddings = config.max_position_embeddings
+
+        if (self.head_dim * self.num_heads) != self.hidden_size:
+            raise ValueError(
+                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
+                f" and `num_heads`: {self.num_heads})."
+            )
+
+        self.q_proj = tf.keras.layers.Dense(units=self.num_heads * self.head_dim,
+                                            use_bias=False, name="q_proj")
+        self.k_proj = tf.keras.layers.Dense(units=self.num_key_value_heads * self.head_dim,
+                                            use_bias=False, name="k_proj")
+        self.v_proj = tf.keras.layers.Dense(units=self.num_key_value_heads * self.head_dim,
+                                            use_bias=False, name="v_proj")
+
+        self.o_proj = tf.keras.layers.Dense(units=self.hidden_size,
+                                            use_bias=False, name="o_proj")
 
         self._softmax = tf.keras.layers.Softmax(axis=-1)
 
@@ -130,10 +142,9 @@ class Attention(tf.keras.layers.Layer):
             tf.Tensor: The output tensor of shape (batch_size, sequence_length, num_heads, head_dim).
         """
         with tf.name_scope('scaled_dot_product_attention'):
-            scale = 1 / shape_list(q)[-1] ** 0.5
-            q = tf.multiply(q, scale, name='q_scaled')
-            attn = tf.matmul(q, k, transpose_b=True, )  # [batch_size, n_heads, seq_len, seq_len]
-            attn = self._softmax(inputs=attn, mask=mask,)
+            attn = tf.matmul(q, k, transpose_b=True, ) / tf.math.sqrt(
+                tf.cast(self.head_dim, dtype=self.dtype_policy.compute_dtype))
+            attn = self._softmax(inputs=attn, mask=mask, )
             out = tf.matmul(attn, v, name='attention_output')
             return tf.transpose(out, perm=[0, 2, 1, 3], name='attention_output_transposed')
 
@@ -149,16 +160,16 @@ class Attention(tf.keras.layers.Layer):
 
         batch_size, seq_len, _ = shape_list(x)
 
-        xq, xk, xv = self.query(x), self.key(x), self.value(x)  # [batch_size, seq_len, dim]
+        xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)  # [batch_size, seq_len, dim]
 
         # [batch_size, seq_len, n_heads, head_dim]
-        xq = tf.reshape(xq, [batch_size, seq_len, self.n_heads, self.head_dim])
-        xk = tf.reshape(xk, [batch_size, seq_len, self.n_heads, self.head_dim])
-        xv = tf.reshape(xv, [batch_size, seq_len, self.n_heads, self.head_dim])
+        xq = tf.reshape(xq, [batch_size, seq_len, self.num_heads, self.head_dim])
+        xk = tf.reshape(xk, [batch_size, seq_len, self.num_key_value_heads, self.head_dim])
+        xv = tf.reshape(xv, [batch_size, seq_len, self.num_key_value_heads, self.head_dim])
         xq, xk = self.apply_rotary_emb(xq, xk, freqs_cis)  # [batch_size, seq_len, n_heads, head_dim]
 
-        xk = self.repeat_kv(xk, 1)  # [batch_size, seq_len, n_heads, head_dim]
-        xv = self.repeat_kv(xv, 1)
+        xk = self.repeat_kv(xk, self.num_key_value_groups)  # [batch_size, seq_len, n_heads, head_dim]
+        xv = self.repeat_kv(xv, self.num_key_value_groups)
 
         xq = tf.transpose(xq, perm=[0, 2, 1, 3], name='query_transpose')  # [batch_size, n_heads, seq_len, head_dim]
         xk = tf.transpose(xk, perm=[0, 2, 1, 3], name='key_transpose')
@@ -166,8 +177,8 @@ class Attention(tf.keras.layers.Layer):
 
         output = self.scaled_dot_product_attention(xq, xk, xv, mask)
 
-        output = tf.reshape(output, [batch_size, seq_len, -1], name='output_reshape')
+        output = tf.reshape(output, [batch_size, seq_len, self.hidden_size], name='output_reshape')
 
-        output = self.combine_heads(output)  # [batch_size, seq_len, dim]
+        output = self.o_proj(output)  # [batch_size, seq_len, dim]
 
         return output

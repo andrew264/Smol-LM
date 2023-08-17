@@ -34,7 +34,7 @@ if __name__ == '__main__':
     checkpoint.save(os.path.join('./logs/', "embedding.ckpt"))
     print("Saved embeddings")
 
-    with open(os.path.join('./logs/', 'metadata.tsv'), "w",) as f:
+    with open(os.path.join('./logs/', 'metadata.tsv'), "w", ) as f:
         for i in range(sp.vocab_size()):
             piece = sp.id_to_piece(i)
             f.write(piece + "\n")

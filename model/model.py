@@ -1,9 +1,10 @@
-from typing import Optional, List
+from typing import List
 
 import tensorflow as tf
 import tensorflow_probability as tfp
 import tqdm
 
+from model.config import ModelConfig
 from model.transformer import Transformer
 from model.utils import GradientAccumulator, shape_list
 
@@ -23,41 +24,16 @@ class SmolLM(tf.keras.Model):
     SmolLM model.
 
     Attributes:
-        dim (int): The model dimensionality.
-        n_layers (int): The number of layers.
-        n_heads (int): The number of heads.
-        hidden_dim (int): The hidden dimensionality of the feed-forward layer.
-        vocab_size (int): The vocabulary size.
-        max_batch_size (int): The maximum batch size.
-        max_seq_len (int): The maximum sequence length.
-        multiple_of (int): The multiple of the sequence length.
-        ffn_dim_multiplier (float, optional): A multiplier for the feed-forward dimensionality.
-                                               Default is None, which sets the multiplier to 4.0.
-        norm_eps (float, optional): A small value used for numerical stability when normalizing.
-                                    Default is 1e-5.
+        config (ModelConfig): The model configuration class.
         num_accumulation (int): The number of gradient accumulation steps.
                                  Default is 4.
     """
 
-    def __init__(self, dim: int = 768, n_layers: int = 12, n_heads: int = 12, hidden_dim: Optional[int] = None,
-                 vocab_size: int = 32000, max_batch_size: int = 1, max_seq_len: int = 1024,
-                 multiple_of: int = 256, ffn_dim_multiplier: Optional[float] = None,
-                 norm_eps: float = 1e-05, num_accumulation: int = 1, **kwargs):
+    def __init__(self, config: ModelConfig, num_accumulation: int = 1, **kwargs):
         super(SmolLM, self).__init__(**kwargs)
-        self.dim = dim
-        self.n_layers = n_layers
-        self.n_heads = n_heads
-        self.vocab_size = vocab_size
-        self.max_seq_len = max_seq_len
-        self.multiple_of = multiple_of
-        self.ffn_dim_multiplier = ffn_dim_multiplier
-        self.norm_eps = norm_eps
-        self.hidden_dim = hidden_dim
+        self.config = config
 
-        self.transformer = Transformer(dim=dim, n_layers=n_layers, n_heads=n_heads, hidden_dim=hidden_dim,
-                                       vocab_size=vocab_size, max_seq_len=max_seq_len, max_batch_size=max_batch_size,
-                                       multiple_of=multiple_of, ffn_dim_multiplier=ffn_dim_multiplier,
-                                       norm_eps=norm_eps)
+        self.transformer = Transformer(config=config)
 
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
         self.loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction='none')
@@ -76,7 +52,7 @@ class SmolLM(tf.keras.Model):
         :return: The output logits tensor.
         """
         return self.transformer(tokens=tokens, **kwargs)
-    
+
     def load_weights(self, filepath, skip_mismatch=False, by_name=False, options=None):
         """
         Loads the model weights.
@@ -87,18 +63,7 @@ class SmolLM(tf.keras.Model):
 
     def get_config(self):
         config = super(SmolLM, self).get_config()
-        config.update({
-            "dim": self.dim,
-            "n_layers": self.n_layers,
-            "n_heads": self.n_heads,
-            "hidden_dim": self.hidden_dim,
-            "vocab_size": self.vocab_size,
-            "max_seq_len": self.max_seq_len,
-            "multiple_of": self.multiple_of,
-            "ffn_dim_multiplier": self.ffn_dim_multiplier,
-            "norm_eps": self.norm_eps
-        })
-        return config
+        config.update({"config": self.config, "num_accumulation": self.num_accumulation})
 
     @classmethod
     def from_config(cls, config):
@@ -202,7 +167,8 @@ class SmolLM(tf.keras.Model):
         """
         for _ in tqdm.tqdm(range(max_gen_len)):
             # if the sequence context is growing too long we must crop it at max_seq_len
-            idx_cond = idx if idx.shape[1] <= self.max_seq_len else idx[:, -self.max_seq_len:]
+            idx_cond = idx if idx.shape[1] <= self.config.max_position_embeddings \
+                else idx[:, -self.config.max_position_embeddings:]
 
             logits = self(idx_cond)
             logits = logits[:, -1, :]
@@ -211,7 +177,7 @@ class SmolLM(tf.keras.Model):
                 logits = logits / temperature
 
             if top_k > 0:
-                top_k = min(top_k, self.vocab_size)
+                top_k = min(top_k, self.config.vocab_size)
                 indices_to_remove = logits < tf.math.top_k(logits, top_k)[0][..., -1, None]
                 logits = tf.where(indices_to_remove, tf.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
 

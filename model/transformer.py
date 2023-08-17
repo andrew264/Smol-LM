@@ -1,8 +1,7 @@
-from typing import Optional
-
 import tensorflow as tf
 
 from model.block import TransformerBlock
+from model.config import ModelConfig
 from model.norm import RMSNorm
 from model.output_layer import SharedOutput
 from model.utils import shape_list
@@ -31,43 +30,23 @@ class Transformer(tf.keras.layers.Layer):
     Transformer model.
 
     Attributes:
-        dim (int): The dimension of the model.
-        n_layers (int): The number of layers in the model.
-        n_heads (int): The number of attention heads.
-        hidden_dim (int): The number of features in the hidden layer.
-        vocab_size (int): The size of the vocabulary.
-        max_seq_len (int): The maximum sequence length.
-        max_batch_size (int): The maximum batch size.
-        multiple_of (int): The dimension of the feed forward layer must be a multiple of this value.
-        ffn_dim_multiplier (Optional[float]): The dimension of the feed forward layer will be multiplied by this value.
-                                                Default is None, which sets the multiplier to 4.0.
-        norm_eps (float): A small value used for numerical stability when normalizing.
-                            Default is 1e-5.
+        config (ModelConfig): The model configuration class.
 
     """
 
-    def __init__(self, dim: int, n_layers: int, n_heads: int, hidden_dim: Optional[int],
-                 vocab_size: int, max_seq_len: int, max_batch_size: int,
-                 multiple_of: int, ffn_dim_multiplier: Optional[float],
-                 norm_eps: float, **kwargs):
+    def __init__(self, config: ModelConfig, **kwargs):
         super(Transformer, self).__init__(**kwargs, name="transformer")
-        self.dim = dim
-        self.n_layers = n_layers
-        self.n_heads = n_heads
-        self.vocab_size = vocab_size
-        self.max_seq_len = max_seq_len
-        self.hidden_dim = hidden_dim
+        self.config = config
 
-        self.token_emb = tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=dim)
+        self.token_emb = tf.keras.layers.Embedding(input_dim=config.vocab_size, output_dim=config.hidden_size)
         self.layers = [
-            TransformerBlock(dim=dim, n_heads=n_heads, hidden_dim=hidden_dim, multiple_of=multiple_of,
-                             max_batch_size=max_batch_size, max_seq_len=max_seq_len,
-                             ffn_dim_multiplier=ffn_dim_multiplier, norm_eps=norm_eps, name=f"tf_block_{i}")
-            for i in range(n_layers)
+            TransformerBlock(config=config, name=f"tf_block_{i}")
+            for i in range(config.num_hidden_layers)
         ]
-        self.norm = RMSNorm(eps=norm_eps, name='final_norm')
+        self.norm = RMSNorm(eps=config.rms_norm_eps, name='final_norm')
         self.output_layer = SharedOutput(embedding_layer=self.token_emb)
-        self.freqs_cis = precompute_freqs_cis(dim=dim // n_heads, end=max_seq_len * 2)
+        self.freqs_cis = precompute_freqs_cis(dim=config.hidden_size // config.num_attention_heads,
+                                              end=config.max_position_embeddings * 2)
 
     @staticmethod
     def create_mask(seq_len: int) -> tf.Tensor:
@@ -80,14 +59,14 @@ class Transformer(tf.keras.layers.Layer):
             tf.ones((1, 1, seq_len, seq_len), dtype=tf.bool), -1, 0,
             name="mask"
         )
-    
+
     def get_embedding(self) -> tf.Tensor:
         """
         Returns the token embedding layer.
         :return: (tf.Tensor) The token embedding layer.
         """
         return self.token_emb
-    
+
     def update_output_weights(self):
         """
         Updates the output layer weights to be the same as the token embedding layer.

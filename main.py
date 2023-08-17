@@ -1,5 +1,4 @@
 import glob
-import json
 import os
 import random
 
@@ -10,7 +9,7 @@ os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
 import tensorflow as tf
 from keras.optimizers.schedules import CosineDecay
 
-from model import SmolLM
+from model import SmolLM, ModelConfig
 
 # enable memory growth for GPU
 os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
@@ -78,8 +77,14 @@ if __name__ == '__main__':
 
     # create graph for tensorboard
     # tf.summary.trace_on(graph=True, profiler=True)
+    if os.path.exists('./weights/config.json'):
+        config = ModelConfig.from_json('./weights/config.json')
+        print("Loaded config from file.")
+    else:
+        config = ModelConfig()
+        print("Created new config.")
 
-    model = SmolLM(max_batch_size=batch_size, num_accumulation=8)
+    model = SmolLM(config=config, num_accumulation=8)
     warmup_steps = 5000
     initial_learning_rate = 6e-4
     final_learning_rate = 0.1 * initial_learning_rate
@@ -97,7 +102,7 @@ if __name__ == '__main__':
                                           beta_2=beta_2,
                                           epsilon=epsilon,
                                           weight_decay=weight_decay,
-                                          clipvalue=clipnorm,)
+                                          clipvalue=clipnorm, )
     model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len))
     model.summary()
@@ -107,9 +112,6 @@ if __name__ == '__main__':
 
     if not os.path.exists('./weights/'):
         os.makedirs('./weights/')
-    config = model.get_config()
-    with open('./weights/config.json', 'w') as f:
-        json.dump(config, f, indent=4)
 
     if os.path.exists('./weights/weights.hdf5'):
         model.load_weights('./weights/weights.hdf5')

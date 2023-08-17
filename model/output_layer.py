@@ -1,10 +1,12 @@
 import tensorflow as tf
 from keras.layers import Embedding, Layer
 
+
 class SharedOutput(Layer):
     """
     This is a custom output layer that shares its weights with an embedding layer.
     """
+
     def __init__(self, embedding_layer: Embedding, activation: str = None, **kwargs):
         super().__init__(**kwargs)
         self.embedding_layer = embedding_layer
@@ -25,11 +27,10 @@ class SharedOutput(Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape[0], tf.shape(self.embedding_layer.weights[0])[0]
-    
+
     def call(self, inputs, *args, **kwargs):
         inputs = tf.cast(inputs, dtype=tf.float32)
         output = tf.matmul(inputs, self.e_weights)
         if self.activation is not None:
             output = self.activation(output)
         return output
-    

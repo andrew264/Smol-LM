@@ -1,9 +1,8 @@
-import json
 import os.path
 
 import tensorflow as tf
 
-from model import SmolLM, Tokenizer
+from model import SmolLM, Tokenizer, ModelConfig
 
 # disable GPU
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -11,11 +10,13 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 if __name__ == '__main__':
     model_path = './weights/weights.hdf5'
     vocab = './weights/tokenizer.model'
-    seq_len = 1024
+    if not os.path.exists('./weights/config.json'):
+        print("No config file found. Exiting.")
+        exit(1)
+    config = ModelConfig.from_json('./weights/config.json')
     temperature = 1.0
-    params = json.load(open('./weights/config.json', 'r'))
-    model = SmolLM(**params)
-    model.build(input_shape=(1, seq_len))
+    model = SmolLM(config=config)
+    model.build(input_shape=(1, config.max_position_embeddings))
     print("Model Created.")
     if os.path.exists(model_path):
         model.load_weights(model_path)
