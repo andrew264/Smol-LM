@@ -1,10 +1,12 @@
-from typing import List
+import re
+from typing import List, Optional
 
 import tensorflow as tf
 import tensorflow_probability as tfp
 import tqdm
 
 from model.config import ModelConfig
+from model.tokenizer import Tokenizer
 from model.transformer import Transformer
 from model.utils import GradientAccumulator, shape_list
 
@@ -42,6 +44,17 @@ class SmolLM(tf.keras.Model):
         self._gradient_accumulator = GradientAccumulator()
         self._gradient_accumulator.reset()
         self.num_accumulation = num_accumulation
+        self._tokenizer: Optional[Tokenizer] = None
+
+    @property
+    def tokenizer(self):
+        return self._tokenizer
+
+    @tokenizer.setter
+    def tokenizer(self, tokenizer):
+        if not isinstance(tokenizer, Tokenizer):
+            raise TypeError("tokenizer must be an instance of Tokenizer.")
+        self._tokenizer = tokenizer
 
     def call(self, tokens: tf.Tensor, **kwargs) -> tf.Tensor:
         """
@@ -150,7 +163,7 @@ class SmolLM(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics}
 
     def generate(self, idx: List[List[int]], max_gen_len: int,
-                 temperature: float = 0.6, top_k: int = 0, top_p: float = 0.0
+                 temperature: float = 0.6, top_k: int = 0, top_p: float = 0.0, stream: bool = False
                  ) -> List[List[int]]:
         """
         Generates text from a prompt.
@@ -163,9 +176,17 @@ class SmolLM(tf.keras.Model):
         :param temperature: The temperature to use when sampling from the softmax distribution.
         :param top_k: The number of top tokens to consider when sampling from the softmax distribution.
         :param top_p: The cumulative probability of top tokens to consider when sampling from the softmax distribution.
+        :param stream: Whether to stream the generation or not. If True, the generation is streamed to the output.
         :return: A list of lists of integers. Each list of integers is a generated text.
         """
-        for _ in tqdm.tqdm(range(max_gen_len)):
+        if stream and self.tokenizer is None:
+            raise ValueError("Set `model.tokenizer` to use `stream=True`.")
+        if stream:
+            len_to_generate = range(max_gen_len)
+            print(self.tokenizer.decode(idx[0].numpy().tolist()), end="", flush=True)
+        else:
+            len_to_generate = tqdm.tqdm(range(max_gen_len), desc="Generating text")
+        for _ in len_to_generate:
             # if the sequence context is growing too long we must crop it at max_seq_len
             idx_cond = idx if idx.shape[1] <= self.config.max_position_embeddings \
                 else idx[:, -self.config.max_position_embeddings:]
@@ -194,6 +215,15 @@ class SmolLM(tf.keras.Model):
 
             probs = tf.nn.softmax(logits, axis=-1)
             idx_next = tfp.distributions.Categorical(probs=probs).sample()
+            if stream:
+                out = self.tokenizer.decode_piece(idx_next.numpy().tolist()[0])
+                out = out.replace('▁', ' ')
+                if match := re.match(r'<0x([0-9a-fA-F]+)>', out):
+                    out = bytes.fromhex(match.group(1)).decode('utf-8')
+                print(out, end='', flush=True)
             idx = tf.concat([idx, idx_next[:, tf.newaxis]], axis=1)
+
+        if stream:
+            print()
 
         return idx

@@ -11,9 +11,9 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 def multiline_input(prompt: str = '>> ') -> str:
     lines = []
     while True:
-        line = input(prompt)
+        line = input(prompt).strip()
         if line:
-            lines.append(line.strip())
+            lines.append(line)
         else:
             break
     return '\n'.join(lines)
@@ -30,6 +30,7 @@ if __name__ == '__main__':
     model = SmolLM(config=config)
     model.build(input_shape=(1, config.max_position_embeddings))
     print("Model Created.")
+    model.tokenizer = tokenizer
     if os.path.exists(model_path):
         model.load_weights(model_path)
         print("Weights Loaded from hdf5 file.")
@@ -41,9 +42,10 @@ if __name__ == '__main__':
         context = multiline_input()
         if not context or context == '':
             break
+        print('_' * 80)
         tokenized = tokenizer.encode([context], bos=True, eos=False)
         generated_seq = model.generate(tf.constant(tokenized, dtype=tf.int32), max_gen_len=150,
-                                       temperature=temperature, top_k=8)
-        generated_seq = tokenizer.decode(generated_seq[0].numpy().tolist())
-        print("Generated Sequence: ", generated_seq)
+                                       temperature=temperature, top_k=8, stream=True)
+        # generated_seq = tokenizer.decode(generated_seq[0].numpy().tolist())
+        # print("Generated Sequence: ", generated_seq)
     print("kthxbye")

@@ -50,3 +50,11 @@ class Tokenizer:
         :return: decoded string
         """
         return self.sp_model.decode(t)
+
+    def decode_piece(self, t: int | List[int]) -> str | List[str]:
+        """
+        Decode a list of token IDs into a string
+        :param t: list of token IDs
+        :return: decoded string
+        """
+        return self.sp_model.id_to_piece(t)
