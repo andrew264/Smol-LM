@@ -7,9 +7,21 @@ from model import SmolLM, Tokenizer, ModelConfig
 # disable GPU
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
+
+def multiline_input(prompt: str = '>> ') -> str:
+    lines = []
+    while True:
+        line = input(prompt)
+        if line:
+            lines.append(line.strip())
+        else:
+            break
+    return '\n'.join(lines)
+
+
 if __name__ == '__main__':
     model_path = './weights/weights.hdf5'
-    vocab = './weights/tokenizer.model'
+    tokenizer = Tokenizer('./weights/tokenizer.model')
     if not os.path.exists('./weights/config.json'):
         print("No config file found. Exiting.")
         exit(1)
@@ -25,10 +37,9 @@ if __name__ == '__main__':
         print("No weights found. Exiting.")
         exit(1)
     model.summary()
-    tokenizer = Tokenizer(vocab)
     while True:
-        context = input("Enter context: ") or None
-        if not context:
+        context = multiline_input()
+        if not context or context == '':
             break
         tokenized = tokenizer.encode([context], bos=True, eos=False)
         generated_seq = model.generate(tf.constant(tokenized, dtype=tf.int32), max_gen_len=150,
