@@ -4,6 +4,7 @@ import tensorflow as tf
 
 from model.config import ModelConfig
 from model.utils import shape_list
+from model.rotary import LlamaRotaryEmbedding, LlamaLinearScalingRotaryEmbedding, LlamaDynamicNTKScalingRotaryEmbedding
 
 
 class Attention(tf.keras.layers.Layer):
@@ -41,6 +42,27 @@ class Attention(tf.keras.layers.Layer):
                                             use_bias=False, name="o_proj")
 
         self._softmax = tf.keras.layers.Softmax(axis=-1)
+
+        self.rotary_emb = self._init_rope()
+
+    def _init_rope(self) -> LlamaRotaryEmbedding:
+        if self.config.rope_scaling is None:
+            return LlamaRotaryEmbedding(dim=self.head_dim,
+                                        max_position_embeddings=self.max_position_embeddings,
+                                        name="rotary_emb")
+        else:
+            if self.config.rope_scaling.get("type") == "linear":
+                return LlamaLinearScalingRotaryEmbedding(dim=self.head_dim,
+                                                         max_position_embeddings=self.max_position_embeddings,
+                                                         scaling_factor=self.config.rope_scaling.get("factor", 1.0),
+                                                         name="linear_rotary_emb")
+            elif self.config.rope_scaling.get("type") == "dynamic":
+                return LlamaDynamicNTKScalingRotaryEmbedding(dim=self.head_dim,
+                                                             max_position_embeddings=self.max_position_embeddings,
+                                                             scaling_factor=self.config.rope_scaling.get("factor", 1.0),
+                                                             name="dynamic_rotary_emb", )
+            else:
+                raise ValueError(f"Unknown rope scaling type: {self.config.rope_scaling.get('type')}")
 
     @staticmethod
     def repeat_kv(x: tf.Tensor, n_rep: int = 1) -> tf.Tensor:
