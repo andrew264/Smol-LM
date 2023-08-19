@@ -2,6 +2,9 @@
 .idea/
 .run/
 
+# vscode stuff
+.vscode/
+
 # python stuff
 __pycache__/
 *.pyc
