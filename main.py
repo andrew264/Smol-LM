@@ -20,8 +20,6 @@ print(f"TF executing eagerly: {tf.executing_eagerly()}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-max_seq_len = 1024
-vocab_size = 32000
 batch_size = 4
 dataset_path = './data/processed/*.bin'
 logdir = r'./logs/'
@@ -41,15 +39,15 @@ def _generator(seq_len: int, path: str) -> tuple[tf.Tensor, tf.Tensor]:
             yield batch[:-1], batch[1:]
 
 
-def _get_total_steps(path: str) -> int:
+def _get_total_steps(path: str, seq_len: int) -> int:
     files = glob.glob(path, recursive=True)
-    total_steps = 0
+    steps = 0
     for file_path in files:
         binary_data = tf.io.read_file(file_path)
         m = tf.io.decode_raw(binary_data, tf.uint16)
-        num_batches: tf.Tensor = tf.shape(m)[0] // (max_seq_len + 1)
-        total_steps += num_batches.numpy()
-    return total_steps
+        num_batches: tf.Tensor = tf.shape(m)[0] // (seq_len + 1)
+        steps += num_batches.numpy()
+    return steps
 
 
 if __name__ == '__main__':
@@ -59,6 +57,15 @@ if __name__ == '__main__':
 
         shutil.rmtree(logdir)
         print("Removed old logs.")
+
+    if os.path.exists('./weights/config.json'):
+        config = ModelConfig.from_json('./weights/config.json')
+        print("Loaded config from file.")
+    else:
+        config = ModelConfig()
+        print("Created new config.")
+        config.to_json('./weights/config.json')
+    max_seq_len = config.max_position_embeddings
 
     dataset = tf.data.Dataset.from_generator(_generator,
                                              output_signature=(
@@ -71,18 +78,12 @@ if __name__ == '__main__':
                .batch(batch_size=batch_size, drop_remainder=True)
                .prefetch(tf.data.experimental.AUTOTUNE)
                .repeat())
-    total_steps = _get_total_steps(dataset_path) // batch_size
+    total_steps = _get_total_steps(dataset_path, max_seq_len) // batch_size
     print(f"Total Steps:- {total_steps}")
     print(f"Batch Size:- {batch_size}")
 
     # create graph for tensorboard
     # tf.summary.trace_on(graph=True, profiler=True)
-    if os.path.exists('./weights/config.json'):
-        config = ModelConfig.from_json('./weights/config.json')
-        print("Loaded config from file.")
-    else:
-        config = ModelConfig()
-        print("Created new config.")
 
     model = SmolLM(config=config, num_accumulation=8)
     warmup_steps = 5000
@@ -102,7 +103,7 @@ if __name__ == '__main__':
                                           beta_2=beta_2,
                                           epsilon=epsilon,
                                           weight_decay=weight_decay,
-                                          clipvalue=clipnorm, )
+                                          clipnorm=clipnorm, )
     model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len))
     model.summary()

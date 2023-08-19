@@ -5,20 +5,20 @@ import sentencepiece as spm
 import tensorflow as tf
 from tensorboard.plugins import projector
 
-from model import SmolLM
+from model import SmolLM, ModelConfig
 
 if __name__ == '__main__':
     model_path = './weights/weights.hdf5'
     vocab = './weights/tokenizer.model'
 
-    with open('./weights/config.json', 'r') as f:
-        config = json.load(f)
-
-    if not config:
+    if os.path.exists('./weights/config.json'):
+        config = ModelConfig.from_json('./weights/config.json')
+        print("Loaded config from file.")
+    else:
         raise Exception("No config found")
 
-    model = SmolLM(**config)
-    model.build(input_shape=(1, config['max_seq_len']))
+    model = SmolLM(config=config)
+    model.build(input_shape=(1, config.max_position_embeddings))
 
     if os.path.exists(model_path):
         model.load_weights(model_path)

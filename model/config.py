@@ -16,7 +16,7 @@ class ModelConfig:
     intermediate_size: int = 3072
     multiple_of: int = 256
     ffn_dim_multiplier: Optional[float] = None
-    max_position_embeddings: int = 1024
+    max_position_embeddings: int = 2048
     num_attention_heads: int = 12
     num_hidden_layers: int = 12
     num_key_value_heads: int = 2
