@@ -11,18 +11,18 @@ class ModelConfig:
     bos_token_id: int = 1
     eos_token_id: int = 2
     hidden_act: str = "silu"
-    hidden_size: int = 768
+    hidden_size: int = 1024
     initializer_range: float = 0.02
-    intermediate_size: int = 3072
+    intermediate_size: int = 2560
     multiple_of: int = 256
-    ffn_dim_multiplier: Optional[float] = None
-    max_position_embeddings: int = 2048
-    num_attention_heads: int = 12
-    num_hidden_layers: int = 12
-    num_key_value_heads: int = 2
+    max_position_embeddings: int = 1024
+    num_attention_heads: int = 8
+    num_hidden_layers: int = 8
+    num_key_value_heads: int = 8
     pretraining_tp: int = 1
     rms_norm_eps: float = 1e-05
     vocab_size: int = 32000
+    rope_scaling: Optional[dict] = None  # {"type": "dynamic", factor: 1.0, }
 
     @classmethod
     def from_json(cls, path: str) -> Self:

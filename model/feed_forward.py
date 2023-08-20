@@ -18,9 +18,6 @@ class FeedForward(tf.keras.layers.Layer):
         self.config = config
         hidden_size = config.hidden_size
         intermediate_size = int(2 * config.intermediate_size / 3)
-        # custom dim factor multiplier
-        if config.ffn_dim_multiplier is not None:
-            intermediate_size = int(config.ffn_dim_multiplier * intermediate_size)
         intermediate_size = config.multiple_of * ((intermediate_size + config.multiple_of - 1) // config.multiple_of)
 
         self.gate_proj = tf.keras.layers.Dense(units=intermediate_size,
