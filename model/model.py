@@ -32,7 +32,7 @@ class SmolLM(tf.keras.Model):
     """
 
     def __init__(self, config: ModelConfig, num_accumulation: int = 1, **kwargs):
-        super(SmolLM, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.config = config
 
         self.transformer = Transformer(config=config)
@@ -77,10 +77,6 @@ class SmolLM(tf.keras.Model):
     def get_config(self):
         config = super(SmolLM, self).get_config()
         config.update({"config": self.config, "num_accumulation": self.num_accumulation})
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(**config)
 
     @classmethod
     def from_pretrained(cls, path: str, **kwargs):
@@ -147,7 +143,7 @@ class SmolLM(tf.keras.Model):
         accuracy = self.get_padded_accuracy(y, y_pred)
         self.accuracy_tracker.update_state(accuracy)
 
-        return {m.name: m.result() for m in self.metrics}
+        return {m.name: m.result() for m in self.metrics} | {'lr': self.optimizer.learning_rate.value()}
 
     @tf.function(jit_compile=True)
     def test_step(self, data):
