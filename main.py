@@ -1,6 +1,5 @@
 import glob
 import os
-import random
 
 # suppress tf warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -23,7 +22,7 @@ print(f"TF version: {tf.__version__}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-batch_size = 4
+batch_size = 2
 dataset_path = './data/processed/*.bin'
 logdir = r'./logs/'
 
@@ -50,6 +49,7 @@ def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor,
                 steps += 1
                 continue
             batch = m[i]
+            steps += 1
             yield batch[:-1], batch[1:]
             if steps % 1000 == 0:
                 with open('./weights/step.txt', 'w') as f:
@@ -120,6 +120,9 @@ if __name__ == '__main__':
     # create graph for tensorboard
     # tf.summary.trace_on(graph=True, profiler=True)
 
+    # force enable eager execution
+    # tf.config.run_functions_eagerly(True)
+
     model = SmolLM(config=config, num_accumulation=8)
     warmup_steps = 5000
     initial_learning_rate = 6e-4
@@ -143,9 +146,6 @@ if __name__ == '__main__':
     model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len))
     model.summary()
-
-    # force enable eager execution
-    # tf.config.run_functions_eagerly(True)
 
     if not os.path.exists('./weights/'):
         os.makedirs('./weights/')

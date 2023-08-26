@@ -1,10 +1,10 @@
-from typing import Optional, Tuple
+from typing import Tuple
 
 import tensorflow as tf
 
 from model.config import ModelConfig
-from model.utils import shape_list
 from model.rotary import LlamaRotaryEmbedding, LlamaLinearScalingRotaryEmbedding, LlamaDynamicNTKScalingRotaryEmbedding
+from model.utils import shape_list
 
 
 class Attention(tf.keras.layers.Layer):
@@ -41,7 +41,7 @@ class Attention(tf.keras.layers.Layer):
         self.o_proj = tf.keras.layers.Dense(units=self.hidden_size,
                                             use_bias=False, name="o_proj")
 
-        self._softmax = tf.keras.layers.Softmax(axis=-1)
+        self._softmax = tf.nn.softmax
 
         self.rotary_emb = self._init_rope()
 
@@ -89,118 +89,126 @@ class Attention(tf.keras.layers.Layer):
         )
 
     @staticmethod
-    def reshape_for_broadcast(freqs_cis: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
-        """
-        Reshapes the tensor of precomputed rotary positional embeddings to match the shape of the input tensor.
+    def rotate_half(x: tf.Tensor) -> tf.Tensor:
+        """Rotates half the hidden dims of the input."""
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
+        return tf.concat((-x2, x1), axis=-1)
 
-        Args:
-            freqs_cis (tf.Tensor): Precomputed rotary positional embeddings of shape (sequence_length, num_features).
-            x (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, num_features).
-
-        Returns:
-            tf.Tensor: The reshaped tensor of precomputed rotary positional embeddings.
-                          The resulting tensor will have shape (batch_size, sequence_length, num_heads, num_features).
-        """
-        ndim = x.ndim
-        assert 0 <= 1 < ndim
-        assert freqs_cis.shape == (x.shape[1], x.shape[-1])  # [sequence_length, num_features]
-        shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
-        return tf.reshape(freqs_cis, shape, name='freqs_cis_reshaped')
-
-    def apply_rotary_emb(self, xq: tf.Tensor, xk: tf.Tensor, freqs_cis: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    def apply_rotary_pos_emb(self, q: tf.Tensor, k: tf.Tensor, cos: tf.Tensor, sin: tf.Tensor, position_ids: tf.Tensor,
+                             ) -> Tuple[tf.Tensor, tf.Tensor]:
         """
         Applies rotary positional embeddings to the input tensors.
-
-        Args:
-            xq (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, num_features).
-                            The tensor to which rotary embeddings will be applied.
-            xk (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, num_features).
-                            The tensor to which rotary embeddings will be applied.
-            freqs_cis (tf.Tensor): Precomputed rotary positional embeddings.
-                                   It should have the shape (sequence_length, num_features) and complex data type.
-
-        Returns:
-            Tuple[tf.Tensor, tf.Tensor]: A tuple containing two tensors, xq_out and xk_out, both of shape
-                                        (batch_size, sequence_length, num_features).
-                                        The input tensors with rotary positional embeddings applied.
-        """
-        with tf.name_scope('apply_rotary_emb'):
-            dtype = xq.dtype
-            xq = tf.cast(xq, dtype=tf.float32, name='xq_cast')
-            xk = tf.cast(xk, dtype=tf.float32, name='xk_cast')
-
-            xq_complex = tf.complex(xq[..., ::2], xq[..., 1::2], name='xq_complex')
-            xk_complex = tf.complex(xk[..., ::2], xk[..., 1::2], name='xk_complex')
-
-            freqs_cis = self.reshape_for_broadcast(freqs_cis, xq_complex)
-
-            xq_out = xq_complex * freqs_cis
-            xk_out = xk_complex * freqs_cis
-
-            xq_out = tf.stack([tf.math.real(xq_out), tf.math.imag(xq_out)], axis=-1)
-            xk_out = tf.stack([tf.math.real(xk_out), tf.math.imag(xk_out)], axis=-1)
-
-            xk_out = tf.reshape(xk_out, shape=xk.shape)
-            xq_out = tf.reshape(xq_out, shape=xq.shape)
-
-            return tf.cast(xq_out, dtype=dtype, name='xq_out_cast'), tf.cast(xk_out, dtype=dtype, name='xk_out_cast')
-
-    def scaled_dot_product_attention(self, q: tf.Tensor, k: tf.Tensor, v: tf.Tensor,
-                                     mask: Optional[tf.Tensor] = None, ) -> tf.Tensor:
-        """
-        Applies scaled dot product attention to the input tensors.
 
         Args:
             q (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, head_dim).
                             The query tensor.
             k (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, head_dim).
                             The key tensor.
-            v (tf.Tensor): Input tensor of shape (batch_size, sequence_length, num_heads, head_dim).
-                            The value tensor.
-            mask (Optional[tf.Tensor]): Input tensor of shape (1, 1, sequence_length, sequence_length).
-                                            The attention mask.
+            cos (tf.Tensor): Input tensor of shape (1, 1, sequence_length, head_dim).
+                            The cosine positional embeddings.
+            sin (tf.Tensor): Input tensor of shape (1, 1, sequence_length, head_dim).
+                            The sine positional embeddings.
+            position_ids (tf.Tensor): Input tensor of shape (batch_size, sequence_length).
+                            The position ids.
 
-        Returns:
-            tf.Tensor: The output tensor of shape (batch_size, sequence_length, num_heads, head_dim).
         """
-        with tf.name_scope('scaled_dot_product_attention'):
-            attn = tf.matmul(q, k, transpose_b=True, ) / tf.math.sqrt(
-                tf.cast(self.head_dim, dtype=self.dtype_policy.compute_dtype))
-            attn = self._softmax(inputs=attn, mask=mask, )
-            out = tf.matmul(attn, v, name='attention_output')
-            return tf.transpose(out, perm=[0, 2, 1, 3], name='attention_output_transposed')
+        with tf.name_scope('apply_rotary_emb'):
+            cos = cos[0, 0]  # [seq_len, dim]
+            sin = sin[0, 0]  # [seq_len, dim]
+            cos = tf.expand_dims(tf.gather(cos, position_ids), axis=1)  # [bs, 1, seq_len, dim]
+            sin = tf.expand_dims(tf.gather(sin, position_ids), axis=1)  # [bs, 1, seq_len, dim]
+            q_embed = (q * cos) + (self.rotate_half(q) * sin)
+            k_embed = (k * cos) + (self.rotate_half(k) * sin)
+            return q_embed, k_embed
 
-    def call(self, x: tf.Tensor, freqs_cis: tf.Tensor,
-             mask: Optional[tf.Tensor] = None, **kwargs):
+    def call(self, hidden_states,
+             attention_mask=None,
+             position_ids=None,
+             past_key_value=None,
+             output_attentions=False,
+             use_cache=False,
+             **kwargs):
         """
         Applies multi-head self-attention with rotary positional embeddings to the input tensor.
-        :param x: Input tensor of shape (batch_size, sequence_length, num_features).
-        :param freqs_cis: Precomputed rotary positional embeddings.
-        :param mask: Optional mask tensor of shape (batch_size, sequence_length).
+        :param hidden_states: Input tensor of shape (batch_size, sequence_length, num_features).
+        :param attention_mask: Input tensor of shape (batch_size, 1, sequence_length, sequence_length).
+            The attention mask.
+        :param position_ids: Input tensor of shape (batch_size, sequence_length).
+        :param past_key_value: Tuple of tensors containing cached key and value states of the attention blocks. Can be
+            used to speed up decoding.
+        :param output_attentions: Whether to output the attention weights. If set to `True`, `past_key_values` key value
+            states are returned and can be used to speed up decoding
+        :param use_cache: Whether the model should use the past last key value states.
+        :param kwargs: Additional keyword arguments.
+
         :return: The output tensor of shape (batch_size, sequence_length, num_features).
         """
 
-        batch_size, seq_len, _ = shape_list(x)
+        bsz, q_len, _ = shape_list(hidden_states)
 
-        xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)  # [batch_size, seq_len, dim]
+        query_states = self.q_proj(hidden_states)  # [batch_size, seq_len, dim]
+        key_states = self.k_proj(hidden_states)  # [batch_size, seq_len, dim]
+        value_states = self.v_proj(hidden_states)  # [batch_size, seq_len, dim]
 
         # [batch_size, seq_len, n_heads, head_dim]
-        xq = tf.reshape(xq, [batch_size, seq_len, self.num_heads, self.head_dim])
-        xk = tf.reshape(xk, [batch_size, seq_len, self.num_key_value_heads, self.head_dim])
-        xv = tf.reshape(xv, [batch_size, seq_len, self.num_key_value_heads, self.head_dim])
-        xq, xk = self.apply_rotary_emb(xq, xk, freqs_cis)  # [batch_size, seq_len, n_heads, head_dim]
+        query_states = tf.reshape(query_states, [bsz, q_len, self.num_heads, self.head_dim])
+        key_states = tf.reshape(key_states, [bsz, q_len, self.num_key_value_heads, self.head_dim])
+        value_states = tf.reshape(value_states, [bsz, q_len, self.num_key_value_heads, self.head_dim])
+        query_states = tf.transpose(query_states, perm=[0, 2, 1, 3],
+                                    name='query_transpose')  # [batch_size, n_heads, seq_len, head_dim]
+        key_states = tf.transpose(key_states, perm=[0, 2, 1, 3], name='key_transpose')
+        value_states = tf.transpose(value_states, perm=[0, 2, 1, 3], name='value_transpose')
 
-        xk = self.repeat_kv(xk, self.num_key_value_groups)  # [batch_size, seq_len, n_heads, head_dim]
-        xv = self.repeat_kv(xv, self.num_key_value_groups)
+        kv_seq_len = shape_list(key_states)[-2]
+        if past_key_value is not None:
+            kv_seq_len += shape_list(past_key_value[0])[-2]
 
-        xq = tf.transpose(xq, perm=[0, 2, 1, 3], name='query_transpose')  # [batch_size, n_heads, seq_len, head_dim]
-        xk = tf.transpose(xk, perm=[0, 2, 1, 3], name='key_transpose')
-        xv = tf.transpose(xv, perm=[0, 2, 1, 3], name='value_transpose')
+        cos, sin = self.rotary_emb(x=value_states, seq_len=kv_seq_len)
+        query_states, key_states = self.apply_rotary_pos_emb(q=query_states, k=key_states, cos=cos, sin=sin,
+                                                             position_ids=position_ids)
 
-        output = self.scaled_dot_product_attention(xq, xk, xv, mask)
+        if past_key_value is not None:
+            key_states = tf.concat([past_key_value[0], key_states], axis=2)
+            value_states = tf.concat([past_key_value[1], value_states], axis=2)
 
-        output = tf.reshape(output, [batch_size, seq_len, self.hidden_size], name='output_reshape')
+        past_key_value = (key_states, value_states) if use_cache else None
 
-        output = self.o_proj(output)  # [batch_size, seq_len, dim]
+        key_states = self.repeat_kv(key_states, self.num_key_value_groups)
+        value_states = self.repeat_kv(value_states, self.num_key_value_groups)
 
-        return output
+        with tf.name_scope('scaled_dot_product_attention'):
+            attn_weights = tf.matmul(query_states, key_states, transpose_b=True) / tf.math.sqrt(
+                tf.cast(self.head_dim, dtype=self.dtype_policy.compute_dtype)
+            )
+            if shape_list(attn_weights) != [bsz, self.num_heads, q_len, kv_seq_len]:
+                raise ValueError(
+                    f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is "
+                    f"{shape_list(attn_weights)}"
+                )
+            if attention_mask is not None:
+                if shape_list(attention_mask) != [bsz, 1, q_len, kv_seq_len]:
+                    raise ValueError(
+                        f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is "
+                        f"{shape_list(attention_mask)}"
+                    )
+                attn_weights = attn_weights + attention_mask
+                attn_weights = tf.maximum(attn_weights, attn_weights.dtype.min)
+
+            attn_weights = self._softmax(attn_weights, axis=-1, name='attention_softmax')
+            attn_weights = tf.cast(attn_weights, dtype=self.dtype_policy.compute_dtype)
+            attn_output = tf.matmul(attn_weights, value_states)
+
+            if shape_list(attn_output) != [bsz, self.num_heads, q_len, self.head_dim]:
+                raise ValueError(
+                    f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
+                    f" {shape_list(attn_output)}"
+                )
+            attn_output = tf.transpose(attn_output, perm=[0, 2, 1, 3])
+            attn_output = tf.reshape(attn_output, (bsz, q_len, self.hidden_size))
+
+        attn_output = self.o_proj(attn_output)
+        if not output_attentions:
+            attn_weights = None
+
+        return attn_output, attn_weights, past_key_value

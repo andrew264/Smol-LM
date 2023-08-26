@@ -56,15 +56,15 @@ class SmolLM(tf.keras.Model):
             raise TypeError("tokenizer must be an instance of Tokenizer.")
         self._tokenizer = tokenizer
 
-    def call(self, tokens: tf.Tensor, **kwargs) -> tf.Tensor:
+    def call(self, input_ids: tf.Tensor, **kwargs) -> tf.Tensor:
         """
         Calls the model.
 
-        :param tokens: (tf.Tensor) The input tokens tensor.
+        :param input_ids: (tf.Tensor) The input tokens tensor.
         :param kwargs: Additional keyword arguments.
         :return: The output logits tensor.
         """
-        return self.transformer(tokens=tokens, **kwargs)
+        return self.transformer(input_ids=input_ids, **kwargs)
 
     def load_weights(self, filepath, skip_mismatch=False, by_name=False, options=None):
         """
@@ -122,7 +122,7 @@ class SmolLM(tf.keras.Model):
     def train_step(self, data):
         x, y = data
         with tf.GradientTape() as tape:
-            logits = self(x, training=True)
+            logits = self(x, training=True)[0]
             loss = self.get_loss(y, logits)
 
         gradients = tape.gradient(loss, self.trainable_variables)
@@ -148,7 +148,7 @@ class SmolLM(tf.keras.Model):
     @tf.function(jit_compile=True)
     def test_step(self, data):
         x, y = data
-        logits = self(x, training=False)
+        logits = self(x, training=False)[0]
         loss = self.get_loss(y, logits)
 
         self.loss_tracker.update_state(loss)
@@ -182,12 +182,13 @@ class SmolLM(tf.keras.Model):
             print(self.tokenizer.decode(idx[0].numpy().tolist()), end="", flush=True)
         else:
             len_to_generate = tqdm.tqdm(range(max_gen_len), desc="Generating text")
+        cache = None
         for _ in len_to_generate:
             # if the sequence context is growing too long we must crop it at max_seq_len
             idx_cond = idx if idx.shape[1] <= self.config.max_position_embeddings \
                 else idx[:, -self.config.max_position_embeddings:]
 
-            logits = self(idx_cond)
+            logits, cache, _, _ = self(idx_cond, use_cache=False, training=False)
             logits = logits[:, -1, :]
 
             if temperature > 0.0:

@@ -96,7 +96,7 @@ class LlamaDynamicNTKScalingRotaryEmbedding(LlamaRotaryEmbedding):
             base = self.base * (
                     (self.scaling_factor * seq_len / self.max_position_embeddings) - (self.scaling_factor - 1)
             ) ** (self.dim / (self.dim - 2))
-            self.inv_freq = 1.0 / (base ** (tf.range(0, self.dim, 2,) / self.dim))
+            self.inv_freq = 1.0 / (base ** (tf.range(0, self.dim, 2, dtype=tf.float32) / self.dim))
 
         t = tf.range(self.max_seq_len_cached, dtype=tf.float32)
 
