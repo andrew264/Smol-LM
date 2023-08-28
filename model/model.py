@@ -2,7 +2,6 @@ import re
 from typing import List, Optional
 
 import tensorflow as tf
-import tensorflow_probability as tfp
 import tqdm
 
 from model.config import ModelConfig
@@ -179,13 +178,13 @@ class SmolLM(tf.keras.Model):
             raise ValueError("Set `model.tokenizer` to use `stream=True`.")
         if stream:
             len_to_generate = range(max_gen_len)
-            print(self.tokenizer.decode(idx[0].numpy().tolist()), end="", flush=True)
+            print(self.tokenizer.decode(idx[0]), end="", flush=True)
         else:
             len_to_generate = tqdm.tqdm(range(max_gen_len), desc="Generating text")
         cache = None
         for _ in len_to_generate:
             # if the sequence context is growing too long we must crop it at max_seq_len
-            idx_cond = idx if idx.shape[1] <= self.config.max_position_embeddings \
+            idx_cond = idx if len(idx[0]) <= self.config.max_position_embeddings \
                 else idx[:, -self.config.max_position_embeddings:]
 
             logits, cache, _, _ = self(idx_cond, use_cache=False, training=False)
@@ -211,9 +210,9 @@ class SmolLM(tf.keras.Model):
                 logits = tf.where(indices_to_remove, tf.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
 
             probs = tf.nn.softmax(logits, axis=-1)
-            idx_next = tfp.distributions.Categorical(probs=probs).sample()
+            idx_next = tf.argmax(probs, axis=-1, output_type=tf.int32)
             if stream:
-                out = self.tokenizer.decode_piece(idx_next.numpy().tolist()[0])
+                out = self.tokenizer.decode_piece(idx_next[0].numpy().tolist())
                 out = out.replace('▁', ' ')
                 if match := re.match(r'<0x([0-9a-fA-F]+)>', out):
                     out = bytes.fromhex(match.group(1)).decode('utf-8')

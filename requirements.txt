@@ -3,7 +3,6 @@ tqdm
 ftfy
 tensorflow
 keras
-tensorboard_plugin_profile
+tensorboard-plugin-profile
 numpy
 tensorboard
-tensorflow_probability

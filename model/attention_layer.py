@@ -196,7 +196,6 @@ class Attention(tf.keras.layers.Layer):
                 attn_weights = tf.maximum(attn_weights, attn_weights.dtype.min)
 
             attn_weights = self._softmax(attn_weights, axis=-1, name='attention_softmax')
-            attn_weights = tf.cast(attn_weights, dtype=self.dtype_policy.compute_dtype)
             attn_output = tf.matmul(attn_weights, value_states)
 
             if shape_list(attn_output) != [bsz, self.num_heads, q_len, self.head_dim]:

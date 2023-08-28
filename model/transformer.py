@@ -22,7 +22,8 @@ class Transformer(tf.keras.layers.Layer):
         super(Transformer, self).__init__(**kwargs, name="transformer")
         self.config = config
 
-        self.token_emb = tf.keras.layers.Embedding(input_dim=config.vocab_size, output_dim=config.hidden_size)
+        self.token_emb = tf.keras.layers.Embedding(input_dim=config.vocab_size, output_dim=config.hidden_size,
+                                                   dtype=self.dtype_policy.compute_dtype, name='token_emb')
         self.layers = [
             TransformerBlock(config=config, name=f"tf_block_{i}")
             for i in range(config.num_hidden_layers)
@@ -120,6 +121,8 @@ class Transformer(tf.keras.layers.Layer):
         output_attentions = output_attentions if output_attentions is not None else False
         output_hidden_states = output_hidden_states if output_hidden_states is not None else False
         use_cache = use_cache if use_cache is not None else False
+        if isinstance(input_ids, list):
+            input_ids = tf.convert_to_tensor(input_ids)
         shape = shape_list(input_ids)
         if len(shape) == 1:
             input_ids = tf.expand_dims(input_ids, 0)

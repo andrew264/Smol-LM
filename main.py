@@ -22,7 +22,7 @@ print(f"TF version: {tf.__version__}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-batch_size = 2
+batch_size = 4
 dataset_path = './data/processed/*.bin'
 logdir = r'./logs/'
 
@@ -51,7 +51,7 @@ def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor,
             batch = m[i]
             steps += 1
             yield batch[:-1], batch[1:]
-            if steps % 1000 == 0:
+            if steps % 5000 == 0:
                 with open('./weights/step.txt', 'w') as f:
                     if isinstance(steps, tf.Variable):
                         f.write(str(steps.value().numpy()))
@@ -123,7 +123,7 @@ if __name__ == '__main__':
     # force enable eager execution
     # tf.config.run_functions_eagerly(True)
 
-    model = SmolLM(config=config, num_accumulation=8)
+    model = SmolLM(config=config, num_accumulation=1)
     warmup_steps = 5000
     initial_learning_rate = 6e-4
     final_learning_rate = 0.1 * initial_learning_rate
@@ -150,19 +150,20 @@ if __name__ == '__main__':
     if not os.path.exists('./weights/'):
         os.makedirs('./weights/')
 
-    if os.path.exists('./weights/weights.hdf5'):
-        model.load_weights('./weights/weights.hdf5')
-        print("Weights Loaded from hdf5 file.")
+    if os.path.exists('./weights/checkpoint'):
+        model.load_weights('./weights/weights.ckpt')
+        print("Weights Loaded from ckpt file.")
     else:
         print("No weights found. Training from scratch.")
+        start_step = 0
 
-    checkpoint = tf.keras.callbacks.ModelCheckpoint('./weights/weights.hdf5',
+    checkpoint = tf.keras.callbacks.ModelCheckpoint('./weights/weights.ckpt',
                                                     save_weights_only=True,
                                                     verbose=1,
-                                                    save_freq=2000)
+                                                    save_freq=2500)
 
     print("Training Started.")
     model.fit(x=dataset, steps_per_epoch=remaining_steps,
               callbacks=[checkpoint], verbose=1, epochs=1)
-    model.save_weights('./weights/weights.hdf5')
+    model.save_weights('./weights/weights.ckpt')
     print("Training Done.")
