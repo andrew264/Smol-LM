@@ -22,7 +22,7 @@ print(f"TF version: {tf.__version__}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-batch_size = 4
+batch_size = 8
 dataset_path = './data/processed/*.bin'
 logdir = r'./logs/'
 
@@ -51,7 +51,7 @@ def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor,
             batch = m[i]
             steps += 1
             yield batch[:-1], batch[1:]
-            if steps % 5000 == 0:
+            if steps % (2500 * batch_size) == 0:
                 with open('./weights/step.txt', 'w') as f:
                     if isinstance(steps, tf.Variable):
                         f.write(str(steps.value().numpy()))
@@ -111,10 +111,10 @@ if __name__ == '__main__':
                .batch(batch_size=batch_size, drop_remainder=True)
                .prefetch(tf.data.experimental.AUTOTUNE)
                .repeat())
-    total_steps = _get_total_steps(dataset_path, max_seq_len) // batch_size
+    total_steps = _get_total_steps(dataset_path, max_seq_len)
     remaining_steps = total_steps - start_step
-    print(f"Total Steps:- {total_steps}")
-    print(f"Remaining Steps:- {remaining_steps}")
+    print(f"Total Steps:- {total_steps // batch_size}")
+    print(f"Remaining Steps:- {remaining_steps // batch_size}")
     print(f"Batch Size:- {batch_size}")
 
     # create graph for tensorboard
@@ -163,7 +163,7 @@ if __name__ == '__main__':
                                                     save_freq=2500)
 
     print("Training Started.")
-    model.fit(x=dataset, steps_per_epoch=remaining_steps,
+    model.fit(x=dataset, steps_per_epoch=remaining_steps//batch_size,
               callbacks=[checkpoint], verbose=1, epochs=1)
     model.save_weights('./weights/weights.ckpt')
     print("Training Done.")
