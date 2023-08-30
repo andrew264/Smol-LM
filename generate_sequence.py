@@ -35,20 +35,20 @@ if __name__ == '__main__':
     print("Model Created.")
     model.tokenizer = tokenizer
     if os.path.exists('./weights/checkpoint'):
-        model = tf.train.Checkpoint(model)
-        model.restore('./weights/weights.ckpt').expect_partial()
+        ckpt = tf.train.Checkpoint(model)
+        ckpt.restore('./weights/weights.ckpt').expect_partial()
         print("Weights Loaded from ckpt file.")
     else:
         print("No weights found. Exiting.")
         exit(1)
-    model.root.summary()
+    model.summary()
     while True:
         context = multiline_input()
         if not context or context == '':
             break
         print('_' * 80)
         tokenized = tokenizer.encode([context], bos=True, eos=False)
-        generated_seq = model.root.generate(tokenized, max_gen_len=150,
+        generated_seq = model.generate(tokenized, max_gen_len=150,
                                             temperature=temperature, top_k=8, stream=True)
         # generated_seq = tokenizer.decode(generated_seq[0].numpy().tolist())
         # print("Generated Sequence: ", generated_seq)
