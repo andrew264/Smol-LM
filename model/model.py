@@ -163,8 +163,6 @@ class SmolLM(tf.keras.Model):
         """
         Generates text from a prompt.
 
-        From: https://github.com/huggingface/transformers/blob/fe3c8ab1af558b95f67f5fafc0c55f09fd2b09db/src/transformers/generation/tf_utils.py#L3059
-
         Params:
         :param idx: A list of lists of integers. Each list of integers is a prompt.
         :param max_gen_len: The maximum length of the generated text.
@@ -176,48 +174,44 @@ class SmolLM(tf.keras.Model):
         """
         if stream and self.tokenizer is None:
             raise ValueError("Set `model.tokenizer` to use `stream=True`.")
+
+        len_to_generate = range(max_gen_len) if stream else tqdm.trange(max_gen_len, desc="Generating text")
         if stream:
-            len_to_generate = range(max_gen_len)
             print(self.tokenizer.decode(idx[0]), end="", flush=True)
-        else:
-            len_to_generate = tqdm.tqdm(range(max_gen_len), desc="Generating text")
+
         cache = None
         for _ in len_to_generate:
             # if the sequence context is growing too long we must crop it at max_seq_len
-            idx_cond = idx if len(idx[0]) <= self.config.max_position_embeddings \
-                else idx[:, -self.config.max_position_embeddings:]
-
-            logits, cache, _, _ = self(idx_cond, use_cache=False, training=False)
-            logits = logits[:, -1, :]
+            idx_cond = idx if len(idx[0]) <= self.config.max_position_embeddings else idx[:, -self.config.max_position_embeddings:]
+            logits, cache, _, _ = self(idx_cond, use_cache=True, training=False)
+            logits = tf.cast(logits[:, -1, :], dtype=tf.float32)
 
             if temperature > 0.0:
                 logits = logits / temperature
 
             if top_k > 0:
                 top_k = min(top_k, self.config.vocab_size)
-                indices_to_remove = logits < tf.math.top_k(logits, top_k)[0][..., -1, None]
-                logits = tf.where(indices_to_remove, tf.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
+                min_values = tf.nn.top_k(logits, k=top_k, sorted=True)[0][:, -1]
+                logits = tf.where(logits < min_values, tf.ones_like(logits) * -1e10, logits)
 
             if 0.0 < top_p < 1.0:
-                sorted_indices = tf.argsort(logits, direction='DESCENDING')
-                sorted_logits = tf.gather(logits, sorted_indices, axis=-1, batch_dims=1)
-
+                sorted_logits = tf.sort(logits, direction='DESCENDING', axis=-1)
                 cumulative_probs = tf.cumsum(tf.nn.softmax(sorted_logits, axis=-1), axis=-1)
-                sorted_indices_to_remove = cumulative_probs > top_p
-                sorted_indices_to_remove = tf.concat([tf.zeros_like(sorted_indices_to_remove[..., :1]),
-                                                      sorted_indices_to_remove[..., :-1]], axis=-1)
-                indices_to_remove = scatter_values_on_batch_indices(sorted_indices_to_remove, sorted_indices)
-                logits = tf.where(indices_to_remove, tf.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
+                less_than_top_p = tf.cast(cumulative_probs <= top_p, tf.int32)
+                indices = tf.argmax(less_than_top_p, axis=-1, output_type=tf.int32) - 1
+                min_values = tf.gather_nd(sorted_logits, tf.stack([tf.range(tf.shape(indices)[0]), indices], axis=-1))
+                logits = tf.where(logits < min_values, tf.fill(logits.shape, -1e10), logits)
 
-            probs = tf.nn.softmax(logits, axis=-1)
-            idx_next = tf.argmax(probs, axis=-1, output_type=tf.int32)
+            samples = tf.random.categorical(logits, num_samples=1, dtype=tf.int32)
+            if samples[0, 0] == self.tokenizer.bos_id:
+                break
             if stream:
-                out = self.tokenizer.decode_piece(idx_next[0].numpy().tolist())
+                out = self.tokenizer.decode_piece(samples[0, 0].numpy().tolist())
                 out = out.replace('▁', ' ')
                 if match := re.match(r'<0x([0-9a-fA-F]+)>', out):
                     out = bytes.fromhex(match.group(1)).decode('utf-8')
                 print(out, end='', flush=True)
-            idx = tf.concat([idx, idx_next[:, tf.newaxis]], axis=1)
+            idx = tf.concat([idx, samples], axis=-1)
 
         if stream:
             print()
