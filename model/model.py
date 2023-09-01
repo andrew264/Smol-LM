@@ -159,7 +159,7 @@ class SmolLM(tf.keras.Model):
 
     def generate(self, idx: List[List[int]], max_gen_len: int,
                  temperature: float = 0.6, top_k: int = 0, top_p: float = 0.0, stream: bool = False
-                 ) -> List[List[int]]:
+                 ) -> List[List[int]] or List[int]:
         """
         Generates text from a prompt.
 
@@ -176,13 +176,13 @@ class SmolLM(tf.keras.Model):
             raise ValueError("Set `model.tokenizer` to use `stream=True`.")
 
         len_to_generate = range(max_gen_len) if stream else tqdm.trange(max_gen_len, desc="Generating text")
-        if stream:
-            print(self.tokenizer.decode(idx[0]), end="", flush=True)
 
         cache = None
+        generated_tokens = []
         for _ in len_to_generate:
             # if the sequence context is growing too long we must crop it at max_seq_len
-            idx_cond = idx if len(idx[0]) <= self.config.max_position_embeddings else idx[:, -self.config.max_position_embeddings:]
+            idx_cond = idx if len(idx[0]) <= self.config.max_position_embeddings else idx[:,
+                                                                                      -self.config.max_position_embeddings:]
             logits, cache, _, _ = self(idx_cond, use_cache=True, training=False)
             logits = tf.cast(logits[:, -1, :], dtype=tf.float32)
 
@@ -203,7 +203,8 @@ class SmolLM(tf.keras.Model):
                 logits = tf.where(logits < min_values, tf.fill(logits.shape, -1e10), logits)
 
             samples = tf.random.categorical(logits, num_samples=1, dtype=tf.int32)
-            if samples[0, 0] == self.tokenizer.bos_id:
+            generated_tokens.append(samples[0, 0].numpy())
+            if samples[0, 0] == self.tokenizer.bos_id or samples[0, 0] == self.tokenizer.eos_id:
                 break
             if stream:
                 out = self.tokenizer.decode_piece(samples[0, 0].numpy().tolist())
@@ -214,6 +215,6 @@ class SmolLM(tf.keras.Model):
             idx = tf.concat([idx, samples], axis=-1)
 
         if stream:
-            print()
+            return generated_tokens
 
         return idx

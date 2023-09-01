@@ -5,6 +5,9 @@ from sentencepiece import SentencePieceProcessor
 
 
 class Tokenizer:
+    B_INST, E_INST = "[INST]", "[/INST]"
+    B_SYS, E_SYS = "<<SYS>>\n", "\n<</SYS>>\n\n"
+
     def __init__(self, model_path: str):
         # reload tokenizer
         assert os.path.isfile(model_path), model_path
@@ -58,3 +61,16 @@ class Tokenizer:
         :return: decoded string
         """
         return self.sp_model.id_to_piece(t)
+
+    def prepare_encode_instructions(self, user_prompt: str, answer: str = "", sys_prompt: str = "") -> str:
+        """
+        Syntax
+        <bos>[INST] B_SYS SytemPrompt E_SYS Prompt [/INST] Answer <eos>
+        <bos>[INST] Prompt [/INST] Answer <eos>
+        <bos>[INST] Prompt [/INST]
+        :return: Prompt string
+        """
+        if sys_prompt != "":
+            sys_prompt = self.B_SYS + sys_prompt + self.E_SYS
+        instructions = self.B_INST + sys_prompt + user_prompt + self.E_INST + answer
+        return instructions

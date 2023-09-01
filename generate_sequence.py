@@ -1,5 +1,7 @@
 import os.path
 
+from utils import multiline_input
+
 # suppress tf warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -7,21 +9,8 @@ import tensorflow as tf
 
 from model import SmolLM, Tokenizer, ModelConfig
 
-# disable GPU
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
-
-
-def multiline_input(prompt: str = '>> ') -> str:
-    lines = []
-    while True:
-        line = input(prompt).strip()
-        if line:
-            lines.append(line)
-        else:
-            break
-    return '\n'.join(lines)
-
 
 if __name__ == '__main__':
     tokenizer = Tokenizer('./weights/tokenizer.model')
@@ -46,10 +35,9 @@ if __name__ == '__main__':
         context = multiline_input()
         if not context or context == '':
             break
-        print('_' * 80)
         tokenized = tokenizer.encode([context], bos=True, eos=False)
         generated_seq = model.generate(tokenized, max_gen_len=150,
-                                            temperature=temperature, top_k=8, stream=True)
+                                       temperature=temperature, top_k=8, stream=True)
         # generated_seq = tokenizer.decode(generated_seq[0].numpy().tolist())
         # print("Generated Sequence: ", generated_seq)
     print("kthxbye")

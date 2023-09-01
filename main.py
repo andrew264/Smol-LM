@@ -1,8 +1,11 @@
 import glob
 import os
 
+from utils import get_total_steps, enable_memory_growth
+
 # suppress tf warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# enable gpu_private thread mode
 os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
 
 import tensorflow as tf
@@ -11,12 +14,7 @@ from keras.optimizers.schedules import CosineDecay
 from model import SmolLM, ModelConfig
 
 # enable memory growth for GPU
-physical_devices = tf.config.list_physical_devices('GPU')
-for device in physical_devices:
-    tf.config.experimental.set_memory_growth(device, True)
-# enable cuda_malloc_async allocator
-os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
-print(f"Enabled TF_GPU_ALLOCATOR: {os.environ['TF_GPU_ALLOCATOR']}")
+enable_memory_growth()
 print(f"TF version: {tf.__version__}")
 
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
@@ -61,17 +59,6 @@ def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor,
                         f.write(str(steps))
 
 
-def _get_total_steps(path: str, seq_len: int) -> int:
-    files = glob.glob(path, recursive=True)
-    steps = 0
-    for file_path in files:
-        binary_data = tf.io.read_file(file_path)
-        m = tf.io.decode_raw(binary_data, tf.uint16)
-        num_batches: tf.Tensor = tf.shape(m)[0] // (seq_len + 1)
-        steps += num_batches.numpy()
-    return steps
-
-
 if __name__ == '__main__':
     if os.path.exists(logdir):
         # remove old logs
@@ -111,7 +98,7 @@ if __name__ == '__main__':
                .batch(batch_size=batch_size, drop_remainder=True)
                .prefetch(tf.data.experimental.AUTOTUNE)
                .repeat())
-    total_steps = _get_total_steps(dataset_path, max_seq_len)
+    total_steps = get_total_steps(dataset_path, max_seq_len)
     remaining_steps = total_steps - start_step
     print(f"Total Steps:- {total_steps // batch_size}")
     print(f"Remaining Steps:- {remaining_steps // batch_size}")
@@ -163,7 +150,7 @@ if __name__ == '__main__':
                                                     save_freq=2500)
 
     print("Training Started.")
-    model.fit(x=dataset, steps_per_epoch=remaining_steps//batch_size,
+    model.fit(x=dataset, steps_per_epoch=remaining_steps // batch_size,
               callbacks=[checkpoint], verbose=1, epochs=1)
     model.save_weights('./weights/weights.ckpt')
     print("Training Done.")

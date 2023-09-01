@@ -19,8 +19,6 @@ TOKENS_PER_FILE = 2 ** 24  # 16M tokens per file
 TOTAL_TOKENS = 0
 tokenizer = Tokenizer(BPE_MODEL_PATH)
 
-BOS_ID = tokenizer.bos_id
-
 
 def save_to_file(_tok: list[int]):
     global TOTAL_TOKENS
