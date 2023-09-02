@@ -1,107 +1,101 @@
-from typing import Tuple
-
 import tensorflow as tf
 
 
-class LlamaRotaryEmbedding(tf.keras.layers.Layer):
-    """
-    Rotary positional embedding layer.
+class RotaryEmbedding(tf.keras.layers.Layer):
+    """Rotary positional encoding layer.
+    https://github.com/keras-team/keras-nlp/blob/master/keras_nlp/layers/modeling/rotary_embedding.py
 
-    Attributes:
-        dim (int): The dimensionality of the embeddings.
-        max_position_embeddings (int): The maximum sequence length.
-        base (int): The base value used for the embeddings.
+    This layer encodes absolute positional information with a rotation
+    matrix. It calculates the rotary encoding with a mix of sine and
+    cosine functions with geometrically increasing wavelengths.
+    Defined and formulated in [RoFormer: Enhanced Transformer with Rotary Position Embedding](https://arxiv.org/abs/2104.09864v4).
+    The input must be a tensor with shape a sequence dimension and a feature
+    dimension. Typically, this will either an input with shape
+    `(batch_size, sequence_length, feature_length)` or
+    `(batch_size, sequence_length, num_heads, feature_length)`.
+    This layer will return a new tensor with the rotary embedding applied to
+    the input tensor.
+
+    Args:
+        max_wavelength: int. The maximum angular wavelength of the sine/cosine
+            curves.
+        scaling_factor: float. The scaling factor used to scale frequency range.
+        sequence_axis: int. Sequence axis in the input tensor.
+        feature_axis: int. Feature axis in the input tensor.
+
+    Call args:
+        inputs: The tensor inputs to apply the embedding to. This can have
+            any shape, but must contain both a sequence and feature axis. The
+            rotary embedding will be applied to `inputs` and returned.
+        start_index: An integer or integer tensor. The starting position to
+            compute the rotary embedding from. This is useful during cached
+            decoding, where each position is predicted separately in a loop.
+
+    References:
+     - [RoFormer: Enhanced Transformer with Rotary Position Embedding](https://arxiv.org/abs/2104.09864v4)
     """
 
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, **kwargs):
+    def __init__(
+            self,
+            max_wavelength=10000,
+            scaling_factor=1.0,
+            sequence_axis=1,
+            feature_axis=-1,
+            **kwargs
+    ):
         super().__init__(**kwargs)
+        self.max_wavelength = max_wavelength
+        self.sequence_axis = sequence_axis
+        self.feature_axis = feature_axis
+        self.scaling_factor = scaling_factor
 
-        self.dim = dim
-        self.max_position_embeddings = max_position_embeddings
-        self.base = base
+    def call(self, inputs, start_index=0, **kwargs):
+        input_shape = tf.shape(inputs)
+        rotary_dim = input_shape[self.feature_axis]
+        cos_emb, sin_emb = self._compute_cos_sin_embedding(input_shape, rotary_dim, start_index)
+        return self._apply_rotary_pos_emb(inputs, cos_emb, sin_emb)
 
-        self.inv_freq = 1.0 / (self.base ** (tf.range(0, self.dim, 2, dtype=tf.float32) / self.dim))
+    def _apply_rotary_pos_emb(self, tensor, cos_emb, sin_emb):
+        x1, x2 = tf.split(tensor, 2, axis=self.feature_axis)
+        half_rot_tensor = tf.concat((-x2, x1), axis=self.feature_axis)
+        return (tensor * cos_emb) + (half_rot_tensor * sin_emb)
 
-        self._set_cos_sin_cache(seq_len=max_position_embeddings)
-        self.cos_cached: tf.Tensor
-        self.sin_cached: tf.Tensor
-
-    def _set_cos_sin_cache(self, seq_len: int):
-        self.max_seq_len_cached = seq_len
-        t = tf.range(self.max_seq_len_cached, dtype=tf.float32)
-
-        freqs = tf.einsum("i,j->ij", t, self.inv_freq)
-        emb = tf.concat((freqs, freqs), axis=-1)
-        emb = tf.cast(emb, dtype=self.dtype_policy.compute_dtype)
-        self.cos_cached = tf.cos(emb)[None, None, :, :]
-        self.sin_cached = tf.sin(emb)[None, None, :, :]
-
-    def call(self, x: tf.Tensor, seq_len=None, **kwargs) -> Tuple[tf.Tensor, tf.Tensor]:
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len)
-
-        return (
-            self.cos_cached[:, :, :seq_len, ...],
-            self.sin_cached[:, :, :seq_len, ...]
+    def _compute_cos_sin_embedding(self, input_shape, rotary_dim, start_index):
+        freq_range = tf.range(0, rotary_dim, 2, dtype="float32")
+        freq_range = tf.cast(freq_range, self.compute_dtype)
+        freq_range = freq_range / tf.cast(
+            self.scaling_factor, self.compute_dtype
         )
+        inverse_freq = 1.0 / (
+                self.max_wavelength
+                ** (freq_range / tf.cast(rotary_dim, self.compute_dtype))
+        )
+        seq_len = input_shape[self.sequence_axis]
+        tensor = tf.range(seq_len, dtype="float32") + start_index
+        tensor = tf.cast(tensor, dtype=inverse_freq.dtype)
+        freq = tf.einsum("i, j -> ij", tensor, inverse_freq)
+        embedding = tf.concat((freq, freq), axis=self.feature_axis)
 
+        def get_axis(axis):
+            return axis if axis > 0 else len(input_shape) + axis
 
-class LlamaLinearScalingRotaryEmbedding(LlamaRotaryEmbedding):
-    """
-    LlamaRotaryEmbedding extended with linear scaling. Credits to the Reddit user /u/kaiokendev
+        feature_axis = get_axis(self.feature_axis)
+        sequence_axis = get_axis(self.sequence_axis)
 
-    Attributes:
-        dim (int): The dimensionality of the embeddings.
-        max_position_embeddings (int): The maximum sequence length.
-        base (int): The base value used for the embeddings.
-        scaling_factor (float): The scaling factor used for the embeddings.
-    """
+        for axis in range(len(input_shape)):
+            if axis != sequence_axis and axis != feature_axis:
+                embedding = tf.expand_dims(embedding, axis)
 
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, scaling_factor=1.0, **kwargs):
-        self.scaling_factor = scaling_factor
-        super(LlamaLinearScalingRotaryEmbedding, self).__init__(dim, max_position_embeddings, base, **kwargs)
+        return tf.cos(embedding), tf.sin(embedding)
 
-    def _set_cos_sin_cache(self, seq_len):
-        self.max_seq_len_cached = seq_len
-        t = tf.range(self.max_seq_len_cached, dtype=tf.float32)
-        t = t / self.scaling_factor
-
-        freqs = tf.einsum("i,j->ij", t, self.inv_freq)
-        emb = tf.concat((freqs, freqs), axis=-1)
-        emb = tf.cast(emb, dtype=self.dtype_policy.compute_dtype)
-        self.cos_cached = tf.cos(emb)[None, None, :, :]
-        self.sin_cached = tf.sin(emb)[None, None, :, :]
-
-
-class LlamaDynamicNTKScalingRotaryEmbedding(LlamaRotaryEmbedding):
-    """
-    LlamaRotaryEmbedding extended with Dynamic NTK scaling. Credits to the Reddit users /u/bloc97 and /u/emozilla
-
-    Attributes:
-        dim (int): The dimensionality of the embeddings.
-        max_position_embeddings (int): The maximum sequence length.
-        base (int): The base value used for the embeddings.
-        scaling_factor (float): The scaling factor used for the embeddings.
-    """
-
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, scaling_factor=1.0, **kwargs):
-        self.scaling_factor = scaling_factor
-        super(LlamaDynamicNTKScalingRotaryEmbedding, self).__init__(dim, max_position_embeddings, base, **kwargs)
-
-    def _set_cos_sin_cache(self, seq_len):
-        self.max_seq_len_cached = seq_len
-
-        if seq_len > self.max_position_embeddings:
-            base = self.base * (
-                    (self.scaling_factor * seq_len / self.max_position_embeddings) - (self.scaling_factor - 1)
-            ) ** (self.dim / (self.dim - 2))
-            self.inv_freq = 1.0 / (base ** (tf.range(0, self.dim, 2, dtype=tf.float32) / self.dim))
-
-        t = tf.range(self.max_seq_len_cached, dtype=tf.float32)
-
-        freqs = tf.einsum("i,j->ij", t, self.inv_freq)
-        emb = tf.concat((freqs, freqs), axis=-1)
-        emb = tf.cast(emb, dtype=self.dtype_policy.compute_dtype)
-        self.cos_cached = tf.cos(emb)[None, None, ...]
-        self.sin_cached = tf.sin(emb)[None, None, ...]
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "max_wavelength": self.max_wavelength,
+                "scaling_factor": self.scaling_factor,
+                "sequence_axis": self.sequence_axis,
+                "feature_axis": self.feature_axis,
+            }
+        )
+        return config

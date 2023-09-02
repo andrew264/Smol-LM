@@ -7,11 +7,10 @@ use LLaMA-2's tokenizer. <br>
 
 ### Changes made
 
-- uses `mixed_bfloat16` policy in `tf.keras.mixed_precision.set_policy` to reduce memory usage
 - uses custom `train_step` and `test_step` functions to also calculate the `perplexity` metric
 - uses Gradient Accumulation to increase the batch size
 - output layer reuses weights from input embedding layer (reducing the memory footprint).
-- Embedding layer uses `tf.bfloat16` to reduce memory usage (save weights as `ckpt` file).
+- All layers uses `tf.bfloat16` to reduce memory usage (save weights as `ckpt` file).
 
 ### Usage
 

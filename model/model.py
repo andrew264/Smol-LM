@@ -121,7 +121,7 @@ class SmolLM(tf.keras.Model):
     def train_step(self, data):
         x, y = data
         with tf.GradientTape() as tape:
-            logits = self(x, training=True)[0]
+            logits = self(x, training=True)
             loss = self.get_loss(y, logits)
 
         gradients = tape.gradient(loss, self.trainable_variables)
@@ -177,13 +177,12 @@ class SmolLM(tf.keras.Model):
 
         len_to_generate = range(max_gen_len) if stream else tqdm.trange(max_gen_len, desc="Generating text")
 
-        cache = None
         generated_tokens = []
         for _ in len_to_generate:
             # if the sequence context is growing too long we must crop it at max_seq_len
             idx_cond = idx if len(idx[0]) <= self.config.max_position_embeddings else idx[:,
                                                                                       -self.config.max_position_embeddings:]
-            logits, cache, _, _ = self(idx_cond, use_cache=True, training=False)
+            logits = self(idx_cond, training=False)
             logits = tf.cast(logits[:, -1, :], dtype=tf.float32)
 
             if temperature > 0.0:

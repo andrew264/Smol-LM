@@ -18,7 +18,7 @@ print(f"TF version: {tf.__version__}")
 
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
-batch_size = 8
+batch_size = 4
 dataset_path = './data/processed-finetune/*.bin'
 
 

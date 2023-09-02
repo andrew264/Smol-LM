@@ -21,16 +21,19 @@ class FeedForward(tf.keras.layers.Layer):
         intermediate_size = config.multiple_of * ((intermediate_size + config.multiple_of - 1) // config.multiple_of)
 
         self.gate_proj = tf.keras.layers.Dense(units=intermediate_size,
+                                               dtype=self.dtype_policy.compute_dtype,
                                                use_bias=False,
                                                kernel_initializer=tf.keras.initializers.TruncatedNormal(
                                                    stddev=config.initializer_range),
                                                name='gate_proj')
         self.up_proj = tf.keras.layers.Dense(units=intermediate_size,
+                                             dtype=self.dtype_policy.compute_dtype,
                                              use_bias=False,
                                              kernel_initializer=tf.keras.initializers.TruncatedNormal(
                                                  stddev=config.initializer_range),
                                              name='up_proj')
         self.down_proj = tf.keras.layers.Dense(units=hidden_size,
+                                               dtype=self.dtype_policy.compute_dtype,
                                                use_bias=False,
                                                kernel_initializer=tf.keras.initializers.TruncatedNormal(
                                                    stddev=config.initializer_range),
