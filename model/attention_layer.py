@@ -2,7 +2,6 @@ import tensorflow as tf
 
 from model.config import ModelConfig
 from model.rotary import RotaryEmbedding
-from model.utils import shape_list
 
 
 class Attention(tf.keras.layers.Layer):
@@ -14,6 +13,10 @@ class Attention(tf.keras.layers.Layer):
 
     def __init__(self, config: ModelConfig, **kwargs):
         super(Attention, self).__init__(**kwargs)
+        self.o_proj = None
+        self.v_proj = None
+        self.k_proj = None
+        self.q_proj = None
         self.config = config
 
         self.hidden_size = config.hidden_size
@@ -31,18 +34,13 @@ class Attention(tf.keras.layers.Layer):
 
         self._softmax = tf.nn.softmax
 
-        self.rotary_emb = self._init_rope()
-
-    def _init_rope(self) -> RotaryEmbedding:
         if self.config.rope_scaling is None:
-            return RotaryEmbedding(name="rotary_emb")
+            self.rotary_emb = RotaryEmbedding(dim=self.head_dim, name="rotary_emb")
         else:
             if self.config.rope_scaling.get("type") == "linear":
-                return RotaryEmbedding(scaling_factor=self.config.rope_scaling.get("factor", 1.0),
-                                       name="linear_rotary_emb")
-            # elif self.config.rope_scaling.get("type") == "dynamic":
-            #     return DynamicNTKScaledRotaryEmbedding(scaling_factor=self.config.rope_scaling.get("factor", 1.0),
-            #                                            name="dynamic_rotary_emb",)
+                self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
+                                                  scaling_factor=self.config.rope_scaling.get("factor", 1.0),
+                                                  name="linear_rotary_emb")
             else:
                 raise ValueError(f"Unknown rope scaling type: {self.config.rope_scaling.get('type')}")
 
@@ -94,26 +92,15 @@ class Attention(tf.keras.layers.Layer):
         :return: The output tensor of shape (batch_size, sequence_length, num_features).
         """
 
-        bsz, q_len, _ = shape_list(hidden_states)
+        shape = tf.shape(hidden_states)
+        bsz, q_len = shape[0], shape[1]
 
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
-        query_rot, query_pass = (
-            query_states[..., : self.head_dim],
-            query_states[..., self.head_dim:],
-        )
-        key_rot, key_pass = (
-            key_states[..., : self.head_dim],
-            key_states[..., self.head_dim:],
-        )
-
-        query_rot = self.rotary_emb(query_rot)
-        key_rot = self.rotary_emb(key_rot)
-
-        query_states = tf.concat((query_rot, query_pass), axis=-1)
-        key_states = tf.concat((key_rot, key_pass), axis=-1)
+        query_states = self.rotary_emb(query_states)
+        key_states = self.rotary_emb(key_states)
 
         key_states = tf.tile(key_states, [1, 1, self.num_key_value_groups, 1])
         value_states = tf.tile(value_states, [1, 1, self.num_key_value_groups, 1])

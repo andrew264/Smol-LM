@@ -20,7 +20,7 @@ print(f"TF version: {tf.__version__}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-batch_size = 4
+batch_size = 8
 dataset_path = './data/processed/*.bin'
 logdir = r'./logs/'
 
@@ -28,7 +28,7 @@ logdir = r'./logs/'
 def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor, tf.Tensor]:
     steps = 0
     seq_len += 1
-    files = glob.glob(path, recursive=True)
+    files = sorted(glob.glob(path, recursive=True))
     for file_path in files:
         binary_data = tf.io.read_file(file_path)
         m = tf.io.decode_raw(binary_data, tf.uint16)
@@ -110,9 +110,9 @@ if __name__ == '__main__':
     # force enable eager execution
     # tf.config.run_functions_eagerly(True)
 
-    model = SmolLM(config=config, num_accumulation=1)
+    model = SmolLM(config=config, num_accumulation=16)
     warmup_steps = 5000
-    initial_learning_rate = 6e-4
+    initial_learning_rate = 5e-4
     final_learning_rate = 0.1 * initial_learning_rate
     beta_1 = 0.9
     beta_2 = 0.95

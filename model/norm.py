@@ -12,6 +12,7 @@ class RMSNorm(tf.keras.layers.Layer):
 
     def __init__(self, eps=1e-6, **kwargs):
         super(RMSNorm, self).__init__(**kwargs)
+        self.weight = None
         self.eps = eps
 
     def build(self, input_shape):

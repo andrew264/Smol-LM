@@ -40,16 +40,8 @@ def _process_file(path: str) -> list[int]:
 
 
 if __name__ == '__main__':
-    if os.path.exists(PROCESSED):
-        import shutil
-
-        # ask for confirmation
-        if input("Processed data already exists. Delete? (y/n): ").lower() == 'y':
-            shutil.rmtree(PROCESSED)
-            print("Deleted old data.")
-        else:
-            exit(0)
-    os.makedirs(PROCESSED)
+    if not os.path.exists(PROCESSED):
+        os.makedirs(PROCESSED)
 
     # glob all scrapped text data
     scrapped_files = glob.glob(SCRAPPED_DATA + '**/*.txt', recursive=True)

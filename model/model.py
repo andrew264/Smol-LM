@@ -37,7 +37,9 @@ class SmolLM(tf.keras.Model):
         self.transformer = Transformer(config=config)
 
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
-        self.loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction='none')
+        self.loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True,
+                                                                         reduction=tf.keras.losses.Reduction.NONE
+                                                                         )
         self.perplexity_tracker = tf.keras.metrics.Mean(name="perplexity")
         self.accuracy_tracker = tf.keras.metrics.Mean(name="accuracy")
         self._gradient_accumulator = GradientAccumulator()

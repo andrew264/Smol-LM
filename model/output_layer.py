@@ -22,6 +22,6 @@ class SharedOutput(Layer):
         return input_shape[0], tf.shape(self.embedding_layer.embeddings)[0]
 
     def call(self, inputs, *args, **kwargs):
-        output = tf.matmul(inputs, self.embedding_layer.embeddings,
+        output = tf.matmul(tf.cast(inputs, dtype=self.embedding_layer.dtype), self.embedding_layer.embeddings,
                            transpose_b=True, name="output_weights")
         return output

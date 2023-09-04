@@ -17,6 +17,7 @@ class RotaryEmbedding(tf.keras.layers.Layer):
     the input tensor.
 
     Args:
+        dim: int. The dimension of the input tensor.
         max_wavelength: int. The maximum angular wavelength of the sine/cosine
             curves.
         scaling_factor: float. The scaling factor used to scale frequency range.
@@ -37,6 +38,7 @@ class RotaryEmbedding(tf.keras.layers.Layer):
 
     def __init__(
             self,
+            dim: int,
             max_wavelength=10000,
             scaling_factor=1.0,
             sequence_axis=1,
@@ -44,10 +46,21 @@ class RotaryEmbedding(tf.keras.layers.Layer):
             **kwargs
     ):
         super().__init__(**kwargs)
+        self.dim = dim
         self.max_wavelength = max_wavelength
         self.sequence_axis = sequence_axis
         self.feature_axis = feature_axis
         self.scaling_factor = scaling_factor
+        self.sequence_length = None
+        self._cos_sin_cache = None
+
+    def build(self, input_shape):
+        self.sequence_length = input_shape[self.sequence_axis]
+        self._cos_sin_cache = self._compute_cos_sin_embedding(
+            input_shape, self.dim, start_index=0
+        )
+
+        super().build(input_shape)
 
     def call(self, inputs, start_index=0, **kwargs):
         input_shape = tf.shape(inputs)
@@ -61,6 +74,9 @@ class RotaryEmbedding(tf.keras.layers.Layer):
         return (tensor * cos_emb) + (half_rot_tensor * sin_emb)
 
     def _compute_cos_sin_embedding(self, input_shape, rotary_dim, start_index):
+        if self._cos_sin_cache is not None and input_shape[self.sequence_axis] == self.sequence_length:
+            return self._cos_sin_cache
+
         freq_range = tf.range(0, rotary_dim, 2, dtype="float32")
         freq_range = tf.cast(freq_range, self.compute_dtype)
         freq_range = freq_range / tf.cast(
@@ -92,6 +108,7 @@ class RotaryEmbedding(tf.keras.layers.Layer):
         config = super().get_config()
         config.update(
             {
+                "dim": self.dim,
                 "max_wavelength": self.max_wavelength,
                 "scaling_factor": self.scaling_factor,
                 "sequence_axis": self.sequence_axis,
