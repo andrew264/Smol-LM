@@ -12,8 +12,8 @@ import tensorflow as tf
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-SYS_PROMPT = "You are a Helpful Assistant. " \
-             "Follow the instructions below very carefully to complete the task. "
+with open('./weights/sysprompt.txt') as f:
+    SYS_PROMPT = f.read()
 
 if __name__ == '__main__':
     if os.path.exists('./weights/config.json'):

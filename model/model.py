@@ -119,6 +119,14 @@ class SmolLM(tf.keras.Model):
     def metrics(self):
         return [self.loss_tracker, self.perplexity_tracker, self.accuracy_tracker]
 
+    @tf.function
+    def update_metrics(self, loss, logits, labels):
+        y_pred = tf.nn.softmax(logits)
+        self.loss_tracker.update_state(loss)
+        self.perplexity_tracker.update_state(self.get_perplexity(loss))
+        accuracy = self.get_padded_accuracy(labels, y_pred)
+        self.accuracy_tracker.update_state(accuracy)
+
     @tf.function(jit_compile=True)
     def train_step(self, data):
         x, y = data
@@ -130,6 +138,7 @@ class SmolLM(tf.keras.Model):
 
         if self.num_accumulation == 1:
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+            self.update_metrics(loss, logits, y)
         else:
             self._gradient_accumulator(gradients)
             if self._gradient_accumulator.step == self.num_accumulation:
@@ -137,12 +146,7 @@ class SmolLM(tf.keras.Model):
                                       self._gradient_accumulator.gradients]
                 self.optimizer.apply_gradients(zip(averaged_gradients, self.trainable_variables))
                 self._gradient_accumulator.reset()
-
-        y_pred = tf.nn.softmax(logits)
-        self.loss_tracker.update_state(loss)
-        self.perplexity_tracker.update_state(self.get_perplexity(loss))
-        accuracy = self.get_padded_accuracy(y, y_pred)
-        self.accuracy_tracker.update_state(accuracy)
+                self.update_metrics(loss, logits, y)
 
         return {m.name: m.result() for m in self.metrics} | {'lr': self.optimizer.learning_rate.value()}
 

@@ -29,7 +29,9 @@ class Transformer(tf.keras.layers.Layer):
         ]
         self.norm = tf.keras.layers.LayerNormalization(epsilon=config.rms_norm_eps,
                                                        dtype=self.dtype_policy.compute_dtype, name='norm')
-        self.output_layer = SharedOutput(embedding_layer=self.token_emb)
+        # self.output_layer = SharedOutput(embedding_layer=self.token_emb)
+        self.output_layer = tf.keras.layers.Dense(units=config.vocab_size, use_bias=False,
+                                                  dtype=self.dtype_policy.compute_dtype, name='output')
 
     @staticmethod
     def create_mask(seq_len: int) -> tf.Tensor:
@@ -54,7 +56,8 @@ class Transformer(tf.keras.layers.Layer):
         """
         Updates the output layer weights to be the same as the token embedding layer.
         """
-        self.output_layer.update_weights(self.token_emb)
+        # self.output_layer.update_weights(self.token_emb)
+        pass
 
     def _compute_mask(self, seq_len: Optional[int] = None) -> tf.Tensor:
         return tf.experimental.numpy.triu(

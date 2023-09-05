@@ -62,7 +62,8 @@ class Tokenizer:
         """
         return self.sp_model.id_to_piece(t)
 
-    def prepare_encode_instructions(self, user_prompt: str, answer: str = "", sys_prompt: str = "") -> str:
+    def prepare_encode_instructions(self, user_prompt: str, answer: str = "", sys_prompt: str = "",
+                                    encoded: bool = False) -> str | List[int]:
         """
         Syntax
         <bos>[INST] B_SYS SytemPrompt E_SYS Prompt [/INST] Answer <eos>
@@ -73,4 +74,4 @@ class Tokenizer:
         if sys_prompt != "":
             sys_prompt = self.B_SYS + sys_prompt + self.E_SYS
         instructions = self.B_INST + sys_prompt + user_prompt + self.E_INST + answer
-        return instructions
+        return instructions if not encoded else self.encode(instructions, bos=True, eos=True)

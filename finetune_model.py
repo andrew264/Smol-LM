@@ -56,7 +56,9 @@ if __name__ == '__main__':
     dataset = (dataset
                .shuffle(buffer_size=10000)
                .batch(batch_size=batch_size, drop_remainder=True)
-               .prefetch(tf.data.experimental.AUTOTUNE))
+               .prefetch(tf.data.experimental.AUTOTUNE)
+               .repeat()
+               )
     total_steps = get_total_steps(dataset_path, max_seq_len)
     print(f"Total Steps:- {total_steps // batch_size}")
 
