@@ -37,9 +37,9 @@ if __name__ == '__main__':
     history: List[List[int]] = []
 
     while True:
-        # if len of history is greater than 756, pop the first element
+        # if len of history is greater than 80% of max_seq_len, pop the second element
         history_length = sum([len(seq) for seq in history])
-        if history_length > 900:
+        if history_length > int(0.8 * max_seq_len):
             history.pop(1)
         print('_' * 80)
         context = multiline_input()

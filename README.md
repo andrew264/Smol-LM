@@ -9,10 +9,9 @@ use LLaMA-2's tokenizer. <br>
 
 - uses custom `train_step` and `test_step` functions to also calculate the `perplexity` metric
 - uses Gradient Accumulation to increase the batch size
-- All layers uses `tf.bfloat16` to reduce memory usage (save weights as `ckpt` file).
+- All layers except Embeddings use `tf.bfloat16` to reduce memory usage (save weights as `ckpt` file).
 
 ### Usage
 
-    - Run `python prepare_datasets.py` to create the datasets
     - Run `python main.py` to train the model
     - Run `python generate_sequence.py` to generate text

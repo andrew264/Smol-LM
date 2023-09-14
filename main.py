@@ -1,5 +1,6 @@
-import glob
 import os
+
+import numpy as np
 
 from utils import get_total_steps, enable_memory_growth
 
@@ -20,43 +21,34 @@ print(f"TF version: {tf.__version__}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-batch_size = 8
-dataset_path = './data/processed/*.bin'
+batch_size = 4
+dataset_path = './data/processed/train.bin'
 logdir = r'./logs/'
 
 
 def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor, tf.Tensor]:
     steps = 0
     seq_len += 1
-    files = sorted(glob.glob(path, recursive=True))
-    for file_path in files:
-        binary_data = tf.io.read_file(file_path)
-        m = tf.io.decode_raw(binary_data, tf.uint16)
-        num_batches = tf.shape(m)[0] // seq_len
-        if start_step > num_batches:
-            start_step -= num_batches
-            steps += num_batches
-            print(f'Skipping file {file_path}...')
-            continue
-        print(f'Processing file {file_path}...')
-        m = m[:num_batches * seq_len]  # Truncate to have an even number of batches
-        m = tf.reshape(m, [num_batches, seq_len])
-        for i in range(num_batches):
-            if start_step > 0:
-                start_step -= 1
-                steps += 1
-                continue
-            batch = m[i]
+    binary_data = np.memmap(dataset_path, dtype=np.uint16, mode='r')
+    num_batches = len(binary_data) // seq_len
+    binary_data = binary_data[:num_batches * seq_len]
+    binary_data = binary_data.reshape(num_batches, seq_len)
+    for i in range(num_batches):
+        if start_step > 0:
+            start_step -= 1
             steps += 1
-            yield batch[:-1], batch[1:]
-            if steps % (2500 * batch_size) == 0:
-                with open('./weights/step.txt', 'w') as f:
-                    if isinstance(steps, tf.Variable):
-                        f.write(str(steps.value().numpy()))
-                    elif isinstance(steps, tf.Tensor):
-                        f.write(str(steps.numpy()))
-                    else:
-                        f.write(str(steps))
+            continue
+        batch = tf.convert_to_tensor(binary_data[i])
+        steps += 1
+        yield batch[:-1], batch[1:]
+        if steps % (2500 * batch_size) == 0:
+            with open('./weights/step.txt', 'w') as f:
+                if isinstance(steps, tf.Variable):
+                    f.write(str(steps.value().numpy()))
+                elif isinstance(steps, tf.Tensor):
+                    f.write(str(steps.numpy()))
+                else:
+                    f.write(str(steps))
 
 
 if __name__ == '__main__':
@@ -111,7 +103,7 @@ if __name__ == '__main__':
     # tf.config.run_functions_eagerly(True)
 
     model = SmolLM(config=config, num_accumulation=16)
-    warmup_steps = 5000
+    warmup_steps = 20000
     initial_learning_rate = 5e-4
     final_learning_rate = 0.1 * initial_learning_rate
     beta_1 = 0.9

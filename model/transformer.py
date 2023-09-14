@@ -1,11 +1,9 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import tensorflow as tf
 
 from model.block import TransformerBlock
 from model.config import ModelConfig
-from model.output_layer import SharedOutput
-from model.utils import shape_list
 
 
 class Transformer(tf.keras.layers.Layer):
@@ -22,7 +20,7 @@ class Transformer(tf.keras.layers.Layer):
         self.config = config
 
         self.token_emb = tf.keras.layers.Embedding(input_dim=config.vocab_size, output_dim=config.hidden_size,
-                                                   dtype=self.dtype_policy.compute_dtype, name='token_emb')
+                                                   dtype=tf.float32, name='token_emb')
         self.layers = [
             TransformerBlock(config=config, name=f"tf_block_{i}")
             for i in range(config.num_hidden_layers)
@@ -30,8 +28,6 @@ class Transformer(tf.keras.layers.Layer):
         self.norm = tf.keras.layers.LayerNormalization(epsilon=config.rms_norm_eps,
                                                        dtype=self.dtype_policy.compute_dtype, name='norm')
         # self.output_layer = SharedOutput(embedding_layer=self.token_emb)
-        self.output_layer = tf.keras.layers.Dense(units=config.vocab_size, use_bias=False,
-                                                  dtype=self.dtype_policy.compute_dtype, name='output')
 
     @staticmethod
     def create_mask(seq_len: int) -> tf.Tensor:
@@ -52,12 +48,12 @@ class Transformer(tf.keras.layers.Layer):
         """
         return self.token_emb
 
-    def update_output_weights(self):
+    def output_projection(self, x: tf.Tensor) -> tf.Tensor:
         """
-        Updates the output layer weights to be the same as the token embedding layer.
+        Computes the output logits of the transformer.
         """
-        # self.output_layer.update_weights(self.token_emb)
-        pass
+        return tf.matmul(tf.cast(x, dtype=self.token_emb.dtype), self.token_emb.embeddings, transpose_b=True,
+                         name="output_weights")
 
     def _compute_mask(self, seq_len: Optional[int] = None) -> tf.Tensor:
         return tf.experimental.numpy.triu(
@@ -65,7 +61,7 @@ class Transformer(tf.keras.layers.Layer):
             k=1)
 
     def call(self, input_ids: tf.Tensor = None,
-             attention_mask: Optional[tf.Tensor] = None, **kwargs) -> Tuple:
+             attention_mask: Optional[tf.Tensor] = None, **kwargs) -> tf.Tensor:
         """
         Compute the output logits of the transformer.
 
@@ -75,10 +71,10 @@ class Transformer(tf.keras.layers.Layer):
         """
         if isinstance(input_ids, list):
             input_ids = tf.convert_to_tensor(input_ids)
-        shape = shape_list(input_ids)
+        shape = tf.shape(input_ids)
         if len(shape) == 1:
             input_ids = tf.expand_dims(input_ids, 0)
-        batch_size, seq_length = shape_list(input_ids)
+        batch_size, seq_length = shape[0], shape[1]
 
         input_embeds = self.token_emb(input_ids)
 
@@ -94,6 +90,6 @@ class Transformer(tf.keras.layers.Layer):
 
         hidden_states = self.norm(hidden_states)
 
-        output = self.output_layer(hidden_states)
+        output = self.output_projection(hidden_states)
 
         return output
