@@ -19,15 +19,20 @@ class Transformer(tf.keras.layers.Layer):
         super(Transformer, self).__init__(**kwargs, name="transformer")
         self.config = config
 
-        self.token_emb = tf.keras.layers.Embedding(input_dim=config.vocab_size, output_dim=config.hidden_size,
-                                                   dtype=tf.float32, name='token_emb')
+        self.embed_tokens = tf.keras.layers.Embedding(input_dim=config.vocab_size, output_dim=config.hidden_size,
+                                                      dtype=self.dtype_policy.compute_dtype, name='embed_tokens')
         self.layers = [
             TransformerBlock(config=config, name=f"tf_block_{i}")
             for i in range(config.num_hidden_layers)
         ]
         self.norm = tf.keras.layers.LayerNormalization(epsilon=config.rms_norm_eps,
                                                        dtype=self.dtype_policy.compute_dtype, name='norm')
-        # self.output_layer = SharedOutput(embedding_layer=self.token_emb)
+        if config.tie_word_embeddings:
+            self.lm_head = None
+        else:
+            self.lm_head = tf.keras.layers.Dense(units=config.vocab_size,
+                                                 dtype=self.dtype_policy.compute_dtype,
+                                                 name='lm_head')
 
     @staticmethod
     def create_mask(seq_len: int) -> tf.Tensor:
@@ -46,14 +51,34 @@ class Transformer(tf.keras.layers.Layer):
         Returns the token embedding layer.
         :return: (tf.Tensor) The token embedding layer.
         """
-        return self.token_emb
+        return self.embed_tokens
+
+    def set_embedding(self, weight: tf.Tensor) -> None:
+        """
+        Sets the token embedding layer.
+        :param weight: (tf.Tensor) The new embedding layer.
+        """
+        self.embed_tokens.set_weights([weight])
+
+    def set_lm_head(self, weights: tf.Tensor) -> None:
+        """
+        Sets the lm head layer.
+        :param weights: (tf.Tensor) The new lm head layer weights and bias.
+        """
+        if not self.config.tie_word_embeddings:
+            self.lm_head.set_weights(weights)
 
     def output_projection(self, x: tf.Tensor) -> tf.Tensor:
         """
         Computes the output logits of the transformer.
         """
-        return tf.matmul(tf.cast(x, dtype=self.token_emb.dtype), self.token_emb.embeddings, transpose_b=True,
-                         name="output_weights")
+        if self.config.tie_word_embeddings:
+            return tf.matmul(tf.cast(x, dtype=self.embed_tokens.dtype),
+                             self.embed_tokens.embeddings,
+                             transpose_b=True,
+                             name="output_weights")
+        else:
+            return self.lm_head(x)
 
     def _compute_mask(self, seq_len: Optional[int] = None) -> tf.Tensor:
         return tf.experimental.numpy.triu(
@@ -76,7 +101,7 @@ class Transformer(tf.keras.layers.Layer):
             input_ids = tf.expand_dims(input_ids, 0)
         batch_size, seq_length = shape[0], shape[1]
 
-        input_embeds = self.token_emb(input_ids)
+        input_embeds = self.embed_tokens(input_ids)
 
         attention_mask = self._compute_mask(seq_length)
 
