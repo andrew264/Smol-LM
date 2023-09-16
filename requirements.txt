@@ -6,3 +6,4 @@ keras
 tensorboard-plugin-profile
 numpy
 tensorboard
+safetensors
