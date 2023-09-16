@@ -173,6 +173,8 @@ class SmolLM(tf.keras.Model):
         if stream and self.tokenizer is None:
             raise ValueError("Set `model.tokenizer` to use `stream=True`.")
 
+        max_gen_len = min(max_gen_len, self.config.max_position_embeddings)
+
         len_to_generate = range(max_gen_len) if stream else tqdm.trange(max_gen_len, desc="Generating text")
 
         generated_tokens = []

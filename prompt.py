@@ -15,6 +15,8 @@ print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 with open('./weights/sysprompt.txt') as f:
     SYS_PROMPT = f.read()
 
+weights_path = './weights/fine-tuned/'
+
 if __name__ == '__main__':
     if os.path.exists('./weights/config.json'):
         config = ModelConfig.from_json('./weights/config.json')
@@ -27,9 +29,9 @@ if __name__ == '__main__':
     tokenizer = Tokenizer('./weights/tokenizer.model')
     model.tokenizer = tokenizer
 
-    if os.path.exists('./weights/checkpoint'):
+    if os.path.exists(weights_path + 'checkpoint'):
         ckpt = tf.train.Checkpoint(model)
-        ckpt.restore('./weights/weights.ckpt').expect_partial()
+        ckpt.restore(weights_path + 'weights.ckpt').expect_partial()
         print("Weights Loaded from ckpt file.")
     else:
         raise FileNotFoundError("Checkpoint file not found.")
@@ -40,20 +42,22 @@ if __name__ == '__main__':
         # if len of history is greater than 80% of max_seq_len, pop the second element
         history_length = sum([len(seq) for seq in history])
         if history_length > int(0.8 * max_seq_len):
-            history.pop(1)
+            if len(history) > 1:
+                history.pop(1)
+            else:
+                history = []
         print('_' * 80)
         context = multiline_input()
         if not context or context == '':
             break
         if history:
             content = tokenizer.prepare_encode_instructions(context)
-            tokenized = tokenizer.encode(content)
         else:
             content = tokenizer.prepare_encode_instructions(context, sys_prompt=SYS_PROMPT)
-            tokenized = tokenizer.encode(content, bos=True, eos=False)
+        tokenized = tokenizer.encode(content, bos=True)
         history.append(tokenized)
         inp = [t for seq in history for t in seq]
-        generated_tokens = model.generate([inp], max_gen_len=250,
+        generated_tokens = model.generate([inp], max_gen_len=max_seq_len,
                                           temperature=1.0, top_k=15, top_p=0.9, stream=True)
         history[-1].extend(generated_tokens)
 

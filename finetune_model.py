@@ -1,5 +1,9 @@
 import glob
+import json
 import os
+
+import numpy as np
+from keras.src.utils import pad_sequences
 
 from utils import get_total_steps, enable_memory_growth
 
@@ -19,22 +23,23 @@ print(f"TF version: {tf.__version__}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 batch_size = 4
-dataset_path = './data/processed-finetune/*.bin'
+dataset_path = './data/processed-finetune/finetuning-data.jsonl'
+weights_path = './weights/fine-tuned/'
 
 
 def _generator(seq_len: int, path: str) -> tuple[tf.Tensor, tf.Tensor]:
     seq_len += 1
-    files = glob.glob(path, recursive=True)
-    for file_path in files:
-        binary_data = tf.io.read_file(file_path)
-        m = tf.io.decode_raw(binary_data, tf.uint16)
-        num_batches = tf.shape(m)[0] // seq_len
-        print(f'Processing file {file_path}...')
-        m = m[:num_batches * seq_len]  # Truncate to have an even number of batches
-        m = tf.reshape(m, [num_batches, seq_len])
-        for i in range(num_batches):
-            batch = m[i]
-            yield batch[:-1], batch[1:]
+    with open(path) as f:
+        for line in f.readlines():
+            data = json.loads(line)
+            data = pad_sequences([data], maxlen=seq_len, padding='post', truncating='post')[0]
+            data = tf.convert_to_tensor(data)
+            yield data[:-1], data[1:]
+
+
+def _get_total_steps(path: str) -> int:
+    with open(path) as f:
+        return len(f.readlines())
 
 
 if __name__ == '__main__':
@@ -59,11 +64,11 @@ if __name__ == '__main__':
                .prefetch(tf.data.experimental.AUTOTUNE)
                .repeat()
                )
-    total_steps = get_total_steps(dataset_path, max_seq_len)
+    total_steps = _get_total_steps(dataset_path)
     print(f"Total Steps:- {total_steps // batch_size}")
 
     model = SmolLM(config)
-    learning_rate = 5e-5
+    learning_rate = 1e-5
     optimizer = tf.keras.optimizers.AdamW(learning_rate=learning_rate,
                                           beta_1=0.9,
                                           beta_2=0.95,
@@ -81,7 +86,7 @@ if __name__ == '__main__':
         print("No checkpoint found. Exiting...")
         exit(1)
 
-    checkpoint = tf.keras.callbacks.ModelCheckpoint('./weights/weights.ckpt',
+    checkpoint = tf.keras.callbacks.ModelCheckpoint(weights_path + 'weights.ckpt',
                                                     save_weights_only=True,
                                                     verbose=1,
                                                     save_freq=2500)
@@ -90,5 +95,5 @@ if __name__ == '__main__':
 
     model.fit(x=dataset, steps_per_epoch=total_steps // batch_size,
               callbacks=[checkpoint], verbose=1, epochs=2)
-    model.save_weights('./weights/weights.ckpt')
+    model.save_weights(weights_path + 'weights.ckpt')
     print("Training Done.")
