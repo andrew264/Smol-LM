@@ -23,6 +23,9 @@ class ModelConfig:
     rms_norm_eps: float = 1e-05
     vocab_size: int = 32000
     rope_scaling: Optional[dict] = None  # {"type": "dynamic", factor: 1.0, }
+    tie_word_embeddings: bool = False
+    use_chopped_off_weights: bool = False  # Use Embedding and LM Head weights from the original LLAMA2-7B model.
+    batch_size: int = 4
 
     @classmethod
     def from_json(cls, path: str) -> Self:

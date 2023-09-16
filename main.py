@@ -21,12 +21,11 @@ print(f"TF version: {tf.__version__}")
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-batch_size = 4
 dataset_path = './data/processed/train.bin'
 logdir = r'./logs/'
 
 
-def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor, tf.Tensor]:
+def _generator(seq_len: int, batch_size: int, s_step: int = 0) -> tuple[tf.Tensor, tf.Tensor]:
     steps = 0
     seq_len += 1
     binary_data = np.memmap(dataset_path, dtype=np.uint16, mode='r')
@@ -34,8 +33,8 @@ def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor,
     binary_data = binary_data[:num_batches * seq_len]
     binary_data = binary_data.reshape(num_batches, seq_len)
     for i in range(num_batches):
-        if start_step > 0:
-            start_step -= 1
+        if s_step > 0:
+            s_step -= 1
             steps += 1
             continue
         batch = tf.convert_to_tensor(binary_data[i])
@@ -49,6 +48,21 @@ def _generator(seq_len: int, path: str, start_step: int = 0) -> tuple[tf.Tensor,
                     f.write(str(steps.numpy()))
                 else:
                     f.write(str(steps))
+
+
+def _get_embedding_and_head_weights(_config: ModelConfig):
+    weights_path = './weights/llama2-7b'
+    compute_dtype = tf.keras.mixed_precision.global_policy().compute_dtype
+    embed_tokens = tf.Variable(tf.zeros(shape=(_config.vocab_size, _config.hidden_size), dtype=compute_dtype),
+                               name='embed_tokens')
+    ckpt = tf.train.Checkpoint(weights=embed_tokens)
+    ckpt.restore(tf.train.latest_checkpoint(weights_path + '/embed_tokens'))
+    lm_head = tf.Variable(tf.zeros(shape=(_config.vocab_size, _config.hidden_size), dtype=compute_dtype),
+                          name='lm_head')
+    ckpt = tf.train.Checkpoint(weights=lm_head)
+    ckpt.restore(tf.train.latest_checkpoint(weights_path + '/lm_head'))
+    bias = tf.Variable(tf.zeros(shape=(_config.vocab_size,), dtype=compute_dtype), name='bias')
+    return embed_tokens, (tf.transpose(lm_head), bias)
 
 
 if __name__ == '__main__':
@@ -67,6 +81,8 @@ if __name__ == '__main__':
         print("Created new config.")
         config.to_json('./weights/config.json')
     max_seq_len = config.max_position_embeddings
+    batch_size = config.batch_size
+    use_llama2_weights = config.use_chopped_off_weights
 
     if os.path.exists('./weights/step.txt'):
         with open('./weights/step.txt', 'r') as f:
@@ -84,7 +100,7 @@ if __name__ == '__main__':
                                                  tf.TensorSpec(shape=(max_seq_len,), dtype=tf.int32),
                                                  tf.TensorSpec(shape=(max_seq_len,), dtype=tf.int32)
                                              ),
-                                             args=(max_seq_len, dataset_path, start_step))
+                                             args=(max_seq_len, batch_size, start_step))
     dataset = (dataset
                # .shuffle(buffer_size=10000)
                .batch(batch_size=batch_size, drop_remainder=True)
@@ -124,7 +140,6 @@ if __name__ == '__main__':
     optimizer.iterations = tf.Variable(start_step // batch_size, dtype=tf.int64)
     model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len))
-    model.summary()
 
     if not os.path.exists('./weights/'):
         os.makedirs('./weights/')
@@ -134,7 +149,20 @@ if __name__ == '__main__':
         print("Weights Loaded from ckpt file.")
     else:
         print("No weights found. Training from scratch.")
+        if use_llama2_weights:
+            # the hacks begin here
+            embed_weights, head_weights = _get_embedding_and_head_weights(config)
+            model.transformer.set_embedding(embed_weights)
+            model.transformer.set_lm_head(head_weights)
+            # end of hacks
         start_step = 0
+
+    if use_llama2_weights:
+        # freeze those weights
+        model.transformer.embed_tokens.trainable = False
+        model.transformer.lm_head.trainable = False
+
+    model.summary()
 
     checkpoint = tf.keras.callbacks.ModelCheckpoint('./weights/weights.ckpt',
                                                     save_weights_only=True,
