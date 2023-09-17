@@ -1,11 +1,9 @@
-import glob
 import json
 import os
 
-import numpy as np
 from keras.src.utils import pad_sequences
 
-from utils import get_total_steps, enable_memory_growth
+from utils import enable_memory_growth
 
 # suppress tf warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -22,7 +20,6 @@ print(f"TF version: {tf.__version__}")
 
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
-batch_size = 4
 dataset_path = './data/processed-finetune/finetuning-data.jsonl'
 weights_path = './weights/fine-tuned/'
 
@@ -51,6 +48,8 @@ if __name__ == '__main__':
         print("Created new config.")
         config.to_json('./weights/config.json')
     max_seq_len = config.max_position_embeddings
+    batch_size = config.batch_size
+    use_llama2_weights = config.use_chopped_off_weights
 
     dataset = tf.data.Dataset.from_generator(_generator,
                                              output_signature=(
@@ -77,7 +76,6 @@ if __name__ == '__main__':
                                           clipvalue=1.0, )
     model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len))
-    model.summary()
 
     if os.path.exists('./weights/checkpoint'):
         model.load_weights('./weights/weights.ckpt')
@@ -85,6 +83,13 @@ if __name__ == '__main__':
     else:
         print("No checkpoint found. Exiting...")
         exit(1)
+
+    if use_llama2_weights:
+        # freeze those weights
+        model.transformer.embed_tokens.trainable = False
+        model.transformer.lm_head.trainable = False
+
+    model.summary()
 
     checkpoint = tf.keras.callbacks.ModelCheckpoint(weights_path + 'weights.ckpt',
                                                     save_weights_only=True,

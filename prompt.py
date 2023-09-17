@@ -36,16 +36,18 @@ if __name__ == '__main__':
     else:
         raise FileNotFoundError("Checkpoint file not found.")
 
+    enable_history = input("Enable history? (y/n): ").lower() == 'y'
     history: List[List[int]] = []
 
     while True:
         # if len of history is greater than 80% of max_seq_len, pop the second element
-        history_length = sum([len(seq) for seq in history])
-        if history_length > int(0.8 * max_seq_len):
-            if len(history) > 1:
-                history.pop(1)
-            else:
-                history = []
+        if enable_history:
+            history_length = sum([len(seq) for seq in history])
+            if history_length > int(0.8 * max_seq_len):
+                if len(history) > 1:
+                    history.pop(1)
+                else:
+                    history = []
         print('_' * 80)
         context = multiline_input()
         if not context or context == '':
@@ -55,10 +57,14 @@ if __name__ == '__main__':
         else:
             content = tokenizer.prepare_encode_instructions(context, sys_prompt=SYS_PROMPT)
         tokenized = tokenizer.encode(content, bos=True)
-        history.append(tokenized)
-        inp = [t for seq in history for t in seq]
+        if enable_history:
+            history.append(tokenized)
+            inp = [t for seq in history for t in seq]
+        else:
+            inp = tokenized
         generated_tokens = model.generate([inp], max_gen_len=max_seq_len,
-                                          temperature=1.0, top_k=15, top_p=0.9, stream=True)
-        history[-1].extend(generated_tokens)
+                                          temperature=1.0, top_k=12, repeat_penalty=1.3, stream=True)
+        if enable_history:
+            history[-1].extend(generated_tokens)
 
         print()
