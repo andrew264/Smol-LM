@@ -37,7 +37,7 @@ if __name__ == '__main__':
             break
         tokenized = tokenizer.encode([context], bos=True, eos=False)
         generated_seq = model.generate(tokenized, max_gen_len=150,
-                                       temperature=temperature, top_k=8, stream=True)
+                                       temperature=temperature, top_k=12, repeat_penalty=1.1, stream=True)
         # generated_seq = tokenizer.decode(generated_seq[0].numpy().tolist())
         # print("Generated Sequence: ", generated_seq)
     print("kthxbye")

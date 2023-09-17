@@ -20,6 +20,30 @@ def scatter_values_on_batch_indices(values, batch_indices):
     return tf.scatter_nd(pair_indices, tf.reshape(values, [-1]), shape)
 
 
+def create_score_penalty_matrix(input_ids: tf.Tensor, logits: tf.Tensor, penalty_factor: float = 1.0) -> tf.Tensor:
+    # https://github.com/huggingface/transformers/blob/0a55d9f7376f72ad3ff296d4249840021b03bcc4/src/transformers/generation/tf_logits_process.py#L254
+    logit_penalties = tf.gather(logits, input_ids, axis=1, batch_dims=1)
+    logit_penalties = tf.where(logit_penalties > 0, 1 / penalty_factor, logit_penalties)
+    logit_penalties = tf.where(logit_penalties < 0, penalty_factor, logit_penalties)
+
+    # Scatter the penalties back to the logits
+    token_penalties = tf.ones(tf.shape(logits))
+    input_id_shape = tf.shape(input_ids)
+    batch_size = input_id_shape[0]
+    seq_len = input_id_shape[1]
+    indexable_prev_input_ids = tf.concat(
+        (
+            tf.expand_dims(tf.repeat(tf.range(batch_size), seq_len), axis=-1),
+            tf.expand_dims(tf.reshape(input_ids, [-1]), axis=-1),
+        ),
+        axis=1,
+    )
+    token_penalties = tf.tensor_scatter_nd_update(
+        token_penalties, indices=indexable_prev_input_ids, updates=tf.reshape(logit_penalties, [-1])
+    )
+    return token_penalties
+
+
 class SmolLM(tf.keras.Model):
     """
     SmolLM model.
@@ -156,7 +180,8 @@ class SmolLM(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics}
 
     def generate(self, idx: List[List[int]], max_gen_len: int,
-                 temperature: float = 0.6, top_k: int = 0, top_p: float = 0.0, stream: bool = False
+                 temperature: float = 0.6, top_k: int = 0, top_p: float = 0.0, repeat_penalty: float = 1.0,
+                 stream: bool = False
                  ) -> List[List[int]] or List[int]:
         """
         Generates text from a prompt.
@@ -167,6 +192,7 @@ class SmolLM(tf.keras.Model):
         :param temperature: The temperature to use when sampling from the softmax distribution.
         :param top_k: The number of top tokens to consider when sampling from the softmax distribution.
         :param top_p: The cumulative probability of top tokens to consider when sampling from the softmax distribution.
+        :param repeat_penalty: The penalty to apply to repeated tokens.
         :param stream: Whether to stream the generation or not. If True, the generation is streamed to the output.
         :return: A list of lists of integers. Each list of integers is a generated text.
         """
@@ -187,6 +213,10 @@ class SmolLM(tf.keras.Model):
 
             if temperature > 0.0:
                 logits = logits / temperature
+
+            if repeat_penalty > 1.0:
+                score_penalties = create_score_penalty_matrix(idx_cond, logits, repeat_penalty)
+                logits = logits * score_penalties
 
             if top_k > 0:
                 top_k = min(top_k, self.config.vocab_size)
@@ -209,11 +239,12 @@ class SmolLM(tf.keras.Model):
                 out = self.tokenizer.decode_piece(samples[0, 0].numpy().tolist())
                 out = out.replace('▁', ' ')
                 if match := re.match(r'<0x([0-9a-fA-F]+)>', out):
-                    out = bytes.fromhex(match.group(1)).decode('utf-8')
+                    out = bytes.fromhex(match.group(1)).decode('utf-8', errors='ignore')
                 print(out, end='', flush=True)
             idx = tf.concat([idx, samples], axis=-1)
 
         if stream:
+            print()
             return generated_tokens
 
         return idx
