@@ -145,7 +145,7 @@ class SmolLM(tf.keras.Model):
     @tf.function(jit_compile=True)
     def test_step(self, data):
         x, y = data
-        logits = self(x, training=False)[0]
+        logits = self(x, training=False)
         loss = self.get_loss(y, logits)
 
         self.loss_tracker.update_state(loss)
