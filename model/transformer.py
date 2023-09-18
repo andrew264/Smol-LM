@@ -97,7 +97,7 @@ class Transformer(tf.keras.layers.Layer):
         if isinstance(input_ids, list):
             input_ids = tf.convert_to_tensor(input_ids)
         shape = tf.shape(input_ids)
-        if len(shape) == 1:
+        if input_ids.ndim == 1:
             input_ids = tf.expand_dims(input_ids, 0)
         batch_size, seq_length = shape[0], shape[1]
 
