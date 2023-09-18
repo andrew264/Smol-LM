@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Optional, Self
+from typing import Optional
 
 
 @dataclass
@@ -28,7 +28,7 @@ class ModelConfig:
     batch_size: int = 4
 
     @classmethod
-    def from_json(cls, path: str) -> Self:
+    def from_json(cls, path: str) -> "ModelConfig":
         """
         Loads a configuration from a json file.
         :param path: (str) The path to the json file.
