@@ -21,8 +21,8 @@ class TransformerBlock(tf.keras.layers.Layer):
         self.attention = Attention(config=config, name='attention')
 
         self.feed_forward = FeedForward(config=config, name='ffn')
-        self.input_layernorm = RMSNorm(eps=config.rms_norm_eps, name='input_norm')
-        self.post_attention_layernorm = RMSNorm(eps=config.rms_norm_eps, name='post_attention_norm')
+        self.input_layernorm = RMSNorm(epsilon=config.rms_norm_eps, name='input_norm')
+        self.post_attention_layernorm = RMSNorm(epsilon=config.rms_norm_eps, name='post_attention_norm')
 
     def call(self,
              hidden_states: tf.Tensor,
