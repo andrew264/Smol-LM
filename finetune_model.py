@@ -77,9 +77,12 @@ if __name__ == '__main__':
     model.compile(optimizer=optimizer, jit_compile=True)
     model.build(input_shape=(batch_size, max_seq_len))
 
-    if os.path.exists('./weights/checkpoint'):
+    if os.path.exists(weights_path + 'checkpoint'):
+        model.load_weights(weights_path + 'weights.ckpt')
+        print("Loaded Fine-tuned weights.")
+    elif os.path.exists('./weights/checkpoint'):
         model.load_weights('./weights/weights.ckpt')
-        print("Weights Loaded from ckpt file.")
+        print("Loaded Pre-trained weights.")
     else:
         print("No checkpoint found. Exiting...")
         exit(1)

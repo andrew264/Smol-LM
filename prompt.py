@@ -12,8 +12,8 @@ import tensorflow as tf
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 print(f"Global dtype policy: {tf.keras.mixed_precision.global_policy()}")
 
-with open('./weights/sysprompt.txt') as f:
-    SYS_PROMPT = f.read()
+# with open('./weights/sysprompt.txt') as f:
+#     SYS_PROMPT = f.read()
 
 weights_path = './weights/fine-tuned/'
 
@@ -52,10 +52,7 @@ if __name__ == '__main__':
         context = multiline_input()
         if not context or context == '':
             break
-        if history:
-            content = tokenizer.prepare_encode_instructions(context)
-        else:
-            content = tokenizer.prepare_encode_instructions(context, sys_prompt=SYS_PROMPT)
+        content = tokenizer.prepare_encode_instructions(context)
         tokenized = tokenizer.encode(content, bos=True)
         if enable_history:
             history.append(tokenized)
