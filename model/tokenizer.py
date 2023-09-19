@@ -1,13 +1,10 @@
 import os
-from typing import List
+from typing import List, Optional
 
 from sentencepiece import SentencePieceProcessor
 
 
 class Tokenizer:
-    B_INST, E_INST = "[INST]", "[/INST]"
-    B_SYS, E_SYS = "<<SYS>>\n", "\n<</SYS>>\n\n"
-
     def __init__(self, model_path: str):
         # reload tokenizer
         assert os.path.isfile(model_path), model_path
@@ -62,16 +59,30 @@ class Tokenizer:
         """
         return self.sp_model.id_to_piece(t)
 
-    def prepare_encode_instructions(self, user_prompt: str, answer: str = "", sys_prompt: str = "",
+    def prepare_encode_instructions(self, user_prompt: str, answer: Optional[str] = None, sys_prompt: Optional[str] = None,
                                     encoded: bool = False) -> str | List[int]:
         """
         Syntax
-        <bos>[INST] B_SYS SytemPrompt E_SYS Prompt [/INST] Answer <eos>
-        <bos>[INST] Prompt [/INST] Answer <eos>
-        <bos>[INST] Prompt [/INST]
-        :return: Prompt string
+
+        ### System:
+        {sys_prompt}
+
+        ### User:
+        {question}
+
+        ### Assistant
+        {answer}
         """
-        if sys_prompt != "":
-            sys_prompt = self.B_SYS + sys_prompt + self.E_SYS
-        instructions = self.B_INST + sys_prompt + user_prompt + self.E_INST + answer
-        return instructions if not encoded else self.encode(instructions, bos=True, eos=True)
+        if sys_prompt:
+            sys_prompt = f"### System:\n{sys_prompt}\n\n"
+        else:
+            sys_prompt = ""
+        question = f"### User:\n{user_prompt}\n\n"
+        if answer:
+            answer = f"### Assistant:\n{answer}\n"
+        else:
+            answer = "### Assistant:\n"
+        if encoded:
+            return self.encode(sys_prompt + question + answer, bos=True, eos=True)
+        else:
+            return sys_prompt + question + answer
