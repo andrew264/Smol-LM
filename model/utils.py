@@ -96,10 +96,7 @@ class GradientAccumulator:
                 ]
             )
         if len(gradients) != len(self._gradients):
-            raise ValueError(
-                "Expected %s gradients, but got %d"
-                % (len(self._gradients), len(gradients))
-            )
+            raise ValueError(f"Expected {len(self._gradients)} gradients, but got {len(gradients)}")
 
         for accum_gradient, gradient in zip(self._gradients, gradients):
             accum_gradient.assign_add(self.flat_gradients(gradient), read_value=False)
@@ -111,9 +108,4 @@ class GradientAccumulator:
             return
         self._accum_steps.assign(0)
         for gradient in self._gradients:
-            shape = (
-                gradient.shape
-                if gradient.shape.is_fully_defined()
-                else tf.shape(gradient)
-            )
-            gradient.assign(tf.zeros(shape, dtype=gradient.dtype), read_value=False)
+            gradient.assign(tf.zeros(tf.shape(gradient), dtype=gradient.dtype), read_value=False)
