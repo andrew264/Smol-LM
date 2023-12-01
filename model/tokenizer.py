@@ -59,7 +59,8 @@ class Tokenizer:
         """
         return self.sp_model.id_to_piece(t)
 
-    def prepare_encode_instructions(self, user_prompt: str, answer: Optional[str] = None, sys_prompt: Optional[str] = None,
+    def prepare_encode_instructions(self, user_prompt: str, answer: Optional[str] = None,
+                                    sys_prompt: Optional[str] = None,
                                     encoded: bool = False) -> str | List[int]:
         """
         Syntax

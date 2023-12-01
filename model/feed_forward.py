@@ -1,50 +1,16 @@
-import tensorflow as tf
+import torch.nn as nn
+from torch import Tensor
+from torch.nn import functional as F
 
-from model.config import ModelConfig
+from model import ModelConfig
 
 
-class FeedForward(tf.keras.layers.Layer):
-    """
-    A feed forward layer.
+class FeedForward(nn.Module):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        self.w1 = nn.Linear(config.dim, config.intermediate_size, bias=False)
+        self.w3 = nn.Linear(config.dim, config.intermediate_size, bias=False)
+        self.w2 = nn.Linear(config.intermediate_size, config.dim, bias=False)
 
-    Args:
-        config (ModelConfig): The model configuration class.
-
-    """
-
-    def __init__(self, config: ModelConfig,
-                 **kwargs):
-        super(FeedForward, self).__init__(**kwargs)
-        self.config = config
-        hidden_size = config.hidden_size
-        intermediate_size = int(2 * config.intermediate_size / 3)
-        intermediate_size = config.multiple_of * ((intermediate_size + config.multiple_of - 1) // config.multiple_of)
-
-        self.gate_proj = tf.keras.layers.Dense(units=intermediate_size,
-                                               dtype=self.dtype_policy.compute_dtype,
-                                               use_bias=False,
-                                               kernel_initializer=tf.keras.initializers.TruncatedNormal(
-                                                   stddev=config.initializer_range),
-                                               name='gate_proj')
-        self.up_proj = tf.keras.layers.Dense(units=intermediate_size,
-                                             dtype=self.dtype_policy.compute_dtype,
-                                             use_bias=False,
-                                             kernel_initializer=tf.keras.initializers.TruncatedNormal(
-                                                 stddev=config.initializer_range),
-                                             name='up_proj')
-        self.down_proj = tf.keras.layers.Dense(units=hidden_size,
-                                               dtype=self.dtype_policy.compute_dtype,
-                                               use_bias=False,
-                                               kernel_initializer=tf.keras.initializers.TruncatedNormal(
-                                                   stddev=config.initializer_range),
-                                               name='down_proj')
-
-        self.act_fn = tf.keras.activations.get(config.hidden_act)
-
-    def call(self, x, **kwargs):
-        """
-        Passes the inputs through the feed forward layer.
-        :param x: (tf.Tensor): The input tensor of shape (batch_size, seq_len, dim).
-        :return: (tf.Tensor): The output tensor of shape (batch_size, seq_len, dim).
-        """
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+    def forward(self, x: Tensor) -> Tensor:
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))

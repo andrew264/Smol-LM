@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
-from typing import Optional
+
+from model.utils import find_multiple
 
 
 @dataclass
@@ -8,24 +9,25 @@ class ModelConfig:
     """
     The model configuration class.
     """
-    bos_token_id: int = 1
-    eos_token_id: int = 2
-    hidden_act: str = "silu"
-    hidden_size: int = 1024
-    initializer_range: float = 0.02
-    intermediate_size: int = 2560
-    multiple_of: int = 256
-    max_position_embeddings: int = 1024
-    num_attention_heads: int = 8
-    num_hidden_layers: int = 8
-    num_key_value_heads: int = 8
-    pretraining_tp: int = 1
-    rms_norm_eps: float = 1e-05
+    block_size: int = 1024
     vocab_size: int = 32000
-    rope_scaling: Optional[dict] = None  # {"type": "dynamic", factor: 1.0, }
-    tie_word_embeddings: bool = False
-    use_chopped_off_weights: bool = False  # Use Embedding and LM Head weights from the original LLAMA2-7B model.
-    batch_size: int = 4
+    n_layer: int = 8
+    n_head: int = 8
+    dim: int = 1024
+    intermediate_size: int = 2560
+    n_local_heads: int = -1
+    head_dim: int = 64
+    rope_base: float = 10000
+    norm_eps: float = 1e-5
+
+    def __post_init__(self):
+        if self.n_local_heads == -1:
+            self.n_local_heads = self.n_head
+        if self.intermediate_size is None:
+            hidden_dim = 4 * self.dim
+            n_hidden = int(2 * hidden_dim / 3)
+            self.intermediate_size = find_multiple(n_hidden, 256)
+        self.head_dim = self.dim // self.n_head
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":

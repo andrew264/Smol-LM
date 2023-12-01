@@ -1,54 +1,21 @@
-from typing import Optional
+import torch.nn as nn
+from torch import Tensor
 
-import tensorflow as tf
-
+from model import ModelConfig
 from model.attention_layer import Attention
-from model.config import ModelConfig
 from model.feed_forward import FeedForward
 from model.norm import RMSNorm
 
 
-class TransformerBlock(tf.keras.layers.Layer):
-    """
-    A transformer block.
+class TransformerBlock(nn.Module):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        self.attention = Attention(config)
+        self.feed_forward = FeedForward(config)
+        self.ffn_norm = RMSNorm(config.dim, config.norm_eps)
+        self.attention_norm = RMSNorm(config.dim, config.norm_eps)
 
-    Args:
-        config (ModelConfig): The model configuration class.
-    """
-
-    def __init__(self, config: ModelConfig, **kwargs):
-        super(TransformerBlock, self).__init__(**kwargs)
-        self.attention = Attention(config=config, name='attention')
-
-        self.feed_forward = FeedForward(config=config, name='ffn')
-        self.input_layernorm = RMSNorm(epsilon=config.rms_norm_eps, name='input_norm')
-        self.post_attention_layernorm = RMSNorm(epsilon=config.rms_norm_eps, name='post_attention_norm')
-
-    def call(self,
-             hidden_states: tf.Tensor,
-             attention_mask: Optional[tf.Tensor] = None,
-             *args, **kwargs):
-        """
-        Passes the inputs through the transformer block.
-
-        :param hidden_states: The input tensor of shape (batch_size, seq_len, dim).
-        :param attention_mask: The attention mask tensor of shape (batch_size, 1, seq_len, seq_len).
-        :param kwargs: Additional keyword arguments.
-
-        :return: The output tensor of shape (batch_size, seq_len, dim).
-        """
-        residual = hidden_states
-
-        hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.attention(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-        )
-        hidden_states = residual + hidden_states
-
-        residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.feed_forward(hidden_states)
-        hidden_states = residual + hidden_states
-
-        return hidden_states
+    def forward(self, x: Tensor, input_pos: Tensor, freqs_cis: Tensor, mask: Tensor) -> Tensor:
+        h = x + self.attention(self.attention_norm(x), freqs_cis, mask, input_pos)
+        out = h + self.feed_forward(self.ffn_norm(h))
+        return out

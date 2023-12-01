@@ -1,124 +1,75 @@
-import tensorflow as tf
+from typing import Optional
 
-from model.config import ModelConfig
-from model.rotary import RotaryEmbedding
+import torch
+import torch.nn as nn
+from torch import Tensor
+from torch.nn import functional as F
+
+from model import ModelConfig
 
 
-class Attention(tf.keras.layers.Layer):
-    """
-    Multi-head self-attention layer with rotary positional embeddings.
+def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
+    xshaped = x.float().reshape(*x.shape[:-1], -1, 2)
+    freqs_cis = freqs_cis.view(1, xshaped.size(1), 1, xshaped.size(3), 2)
+    x_out2 = torch.stack(
+        [
+            xshaped[..., 0] * freqs_cis[..., 0] - xshaped[..., 1] * freqs_cis[..., 1],
+            xshaped[..., 1] * freqs_cis[..., 0] + xshaped[..., 0] * freqs_cis[..., 1],
+        ],
+        -1,
+    )
 
-    :param config: The model configuration class.
-    """
+    x_out2 = x_out2.flatten(3)
+    return x_out2.type_as(x)
 
-    def __init__(self, config: ModelConfig, **kwargs):
-        super(Attention, self).__init__(**kwargs)
-        self.o_proj = None
-        self.v_proj = None
-        self.k_proj = None
-        self.q_proj = None
-        self.config = config
 
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-        self.max_position_embeddings = config.max_position_embeddings
+class Attention(nn.Module):
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        assert config.dim % config.n_head == 0
 
-        if (self.head_dim * self.num_heads) != self.hidden_size:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+        total_head_dim = (config.n_head + 2 * config.n_local_heads) * config.head_dim
+        # key, query, value projections for all heads, but in a batch
+        self.wqkv = nn.Linear(config.dim, total_head_dim, bias=False)
+        self.wo = nn.Linear(config.dim, config.dim, bias=False)
+        self.kv_cache = None
 
-        self._softmax = tf.nn.softmax
+        self.n_head = config.n_head
+        self.head_dim = config.head_dim
+        self.n_local_heads = config.n_local_heads
+        self.dim = config.dim
+        self._register_load_state_dict_pre_hook(self.load_hook)
 
-        if self.config.rope_scaling is None:
-            self.rotary_emb = RotaryEmbedding(dim=self.head_dim, name="rotary_emb")
-        else:
-            if self.config.rope_scaling.get("type") == "linear":
-                self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
-                                                  scaling_factor=self.config.rope_scaling.get("factor", 1.0),
-                                                  name="linear_rotary_emb")
-            else:
-                raise ValueError(f"Unknown rope scaling type: {self.config.rope_scaling.get('type')}")
+    def load_hook(self, state_dict, prefix, *args):
+        if prefix + "wq.weight" in state_dict:
+            wq = state_dict.pop(prefix + "wq.weight")
+            wk = state_dict.pop(prefix + "wk.weight")
+            wv = state_dict.pop(prefix + "wv.weight")
+            state_dict[prefix + "wqkv.weight"] = torch.cat([wq, wk, wv])
 
-    def build(self, inputs_shape):
-        self.q_proj = tf.keras.layers.EinsumDense(
-            equation="abc,cde->abde",
-            output_shape=(None, self.num_heads, self.head_dim),
-            dtype=self.dtype_policy.compute_dtype,
-            name="query_proj",
-        )
-        self.q_proj.build(inputs_shape)
+    def forward(self, x: Tensor, freqs_cis: Tensor, mask: Tensor, input_pos: Optional[Tensor] = None) -> Tensor:
+        bsz, seqlen, _ = x.shape
 
-        self.k_proj = tf.keras.layers.EinsumDense(
-            equation="abc,cde->abde",
-            output_shape=(None, self.num_key_value_heads, self.head_dim),
-            dtype=self.dtype_policy.compute_dtype,
-            name="key_proj",
-        )
-        self.k_proj.build(inputs_shape)
+        kv_size = self.n_local_heads * self.head_dim
+        q, k, v = self.wqkv(x).split([self.dim, kv_size, kv_size], dim=-1)
 
-        self.v_proj = tf.keras.layers.EinsumDense(
-            equation="abc,cde->abde",
-            output_shape=(None, self.num_key_value_heads, self.head_dim),
-            dtype=self.dtype_policy.compute_dtype,
-            name="value_proj",
-        )
-        self.v_proj.build(inputs_shape)
+        q = q.view(bsz, seqlen, self.n_head, self.head_dim)
+        k = k.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        v = v.view(bsz, seqlen, self.n_local_heads, self.head_dim)
 
-        self.o_proj = tf.keras.layers.EinsumDense(
-            equation="abc,cd->abd",
-            output_shape=(None, self.hidden_size),
-            dtype=self.dtype_policy.compute_dtype,
-            name="attention_output",
-        )
-        self.o_proj.build(inputs_shape)
+        q = apply_rotary_emb(q, freqs_cis)
+        k = apply_rotary_emb(k, freqs_cis)
 
-        self.built = True
+        q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
-    def call(self, hidden_states,
-             attention_mask=None,
-             **kwargs):
-        """
-        Applies multi-head self-attention with rotary positional embeddings to the input tensor.
-        :param hidden_states: Input tensor of shape (batch_size, sequence_length, num_features).
-        :param attention_mask: Input tensor of shape (batch_size, 1, sequence_length, sequence_length).
-            The attention mask.
-        :param kwargs: Additional keyword arguments.
+        if self.kv_cache is not None:
+            k, v = self.kv_cache.update(input_pos, k, v)
 
-        :return: The output tensor of shape (batch_size, sequence_length, num_features).
-        """
+        k = k.repeat_interleave(self.n_head // self.n_local_heads, dim=1)
+        v = v.repeat_interleave(self.n_head // self.n_local_heads, dim=1)
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0)
 
-        shape = tf.shape(hidden_states)
-        bsz, q_len = shape[0], shape[1]
+        y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.dim)
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
-
-        query_states = self.rotary_emb(query_states)
-        key_states = self.rotary_emb(key_states)
-
-        key_states = tf.tile(key_states, [1, 1, self.num_key_value_groups, 1])
-        value_states = tf.tile(value_states, [1, 1, self.num_key_value_groups, 1])
-
-        with tf.name_scope('scaled_dot_product_attention'):
-            attn_scores = tf.einsum("aecd,abcd->acbe", key_states, query_states)
-            norm_factor = tf.math.sqrt(tf.cast(self.head_dim, dtype=attn_scores.dtype))
-            attn_scores /= norm_factor
-
-            if attention_mask is not None:
-                attn_scores = attn_scores + attention_mask
-                attn_scores = tf.maximum(attn_scores, attn_scores.dtype.min)
-
-            attn_scores = self._softmax(attn_scores, axis=-1, name='attention_softmax')
-            attn_output = tf.einsum("acbe,aecd->abcd", attn_scores, value_states)
-
-            attn_output = tf.reshape(attn_output, (bsz, q_len, self.hidden_size))
-
-        attn_output = self.o_proj(attn_output)
-
-        return attn_output
+        y = self.wo(y)
+        return y
