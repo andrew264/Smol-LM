@@ -31,7 +31,7 @@ class NPDataset(Dataset):
 
 def train(model, batch_size: int, config: ModelConfig):
     # dataloader
-    dataset = NPDataset(dataset_path, config.block_size)
+    dataset = NPDataset(dataset_path, config.max_position_embeddings)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
     # optimizer
@@ -59,7 +59,7 @@ def train(model, batch_size: int, config: ModelConfig):
             elapsed = time.time() - start_time
             print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                   f"Bits/Token {avg_loss / np.log(2):.3f} | "
-                  f"Tokens/s {config.block_size * len(losses) * batch_size / elapsed:.0f}")
+                  f"Tokens/s {config.max_position_embeddings * len(losses) * batch_size / elapsed:.0f}")
             losses = []
             start_time = time.time()
         if i % 10000 == 0:
@@ -67,7 +67,7 @@ def train(model, batch_size: int, config: ModelConfig):
 
 
 if __name__ == '__main__':
-    batch = 4
+    batch = 12
 
     if os.path.exists('./weights/config.json'):
         config = ModelConfig.from_json('./weights/config.json')
@@ -79,7 +79,7 @@ if __name__ == '__main__':
 
     model = Transformer(config)
     model.to(dtype=torch.bfloat16, device=device)
-    model.setup_caches(max_batch_size=batch, max_seq_length=config.block_size, device=device)
+    model.setup_caches(max_batch_size=batch, max_seq_length=config.max_position_embeddings, device=device)
     # torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
 
     if os.path.exists('./weights/model_ckpt.pt'):

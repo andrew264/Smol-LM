@@ -26,18 +26,23 @@ def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
 class Attention(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        assert config.dim % config.n_head == 0
+        self.config = config
 
-        total_head_dim = (config.n_head + 2 * config.n_local_heads) * config.head_dim
+        self.head_dim = config.hidden_size // config.num_attention_heads
+        total_head_dim = (config.num_attention_heads + 2 * config.num_key_value_heads) * self.head_dim
         # key, query, value projections for all heads, but in a batch
-        self.wqkv = nn.Linear(config.dim, total_head_dim, bias=False)
-        self.wo = nn.Linear(config.dim, config.dim, bias=False)
+        self.wqkv = nn.Linear(config.hidden_size, total_head_dim, bias=config.attention_bias)
+        self.wo = nn.Linear(config.hidden_size, config.hidden_size, bias=config.attention_bias)
         self.kv_cache = None
 
-        self.n_head = config.n_head
-        self.head_dim = config.head_dim
-        self.n_local_heads = config.n_local_heads
-        self.dim = config.dim
+        self.num_heads = config.num_attention_heads
+        self.n_local_heads = config.num_key_value_heads
+        self.hidden_size = config.hidden_size
+        if (self.head_dim * self.num_heads) != self.hidden_size:
+            raise ValueError(
+                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
+                f" and `num_heads`: {self.num_heads})."
+            )
         self._register_load_state_dict_pre_hook(self.load_hook)
 
     def load_hook(self, state_dict, prefix, *args):
@@ -51,9 +56,9 @@ class Attention(nn.Module):
         bsz, seqlen, _ = x.shape
 
         kv_size = self.n_local_heads * self.head_dim
-        q, k, v = self.wqkv(x).split([self.dim, kv_size, kv_size], dim=-1)
+        q, k, v = self.wqkv(x).split([self.hidden_size, kv_size, kv_size], dim=-1)
 
-        q = q.view(bsz, seqlen, self.n_head, self.head_dim)
+        q = q.view(bsz, seqlen, self.num_heads, self.head_dim)
         k = k.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         v = v.view(bsz, seqlen, self.n_local_heads, self.head_dim)
 
@@ -65,11 +70,11 @@ class Attention(nn.Module):
         if self.kv_cache is not None:
             k, v = self.kv_cache.update(input_pos, k, v)
 
-        k = k.repeat_interleave(self.n_head // self.n_local_heads, dim=1)
-        v = v.repeat_interleave(self.n_head // self.n_local_heads, dim=1)
+        k = k.repeat_interleave(self.num_heads // self.n_local_heads, dim=1)
+        v = v.repeat_interleave(self.num_heads // self.n_local_heads, dim=1)
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0)
 
-        y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.dim)
+        y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.hidden_size)
 
         y = self.wo(y)
         return y

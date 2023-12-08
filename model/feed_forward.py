@@ -8,9 +8,9 @@ from model import ModelConfig
 class FeedForward(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
-        self.w1 = nn.Linear(config.dim, config.intermediate_size, bias=False)
-        self.w3 = nn.Linear(config.dim, config.intermediate_size, bias=False)
-        self.w2 = nn.Linear(config.intermediate_size, config.dim, bias=False)
+        self.w1 = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
+        self.w3 = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
+        self.w2 = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.w2(F.silu(self.w1(x)) * self.w3(x))

@@ -9,25 +9,27 @@ class ModelConfig:
     """
     The model configuration class.
     """
-    block_size: int = 1024
-    vocab_size: int = 32000
-    n_layer: int = 8
-    n_head: int = 8
-    dim: int = 1024
-    intermediate_size: int = 2560
-    n_local_heads: int = -1
-    head_dim: int = 64
-    rope_base: float = 10000
-    norm_eps: float = 1e-5
-
-    def __post_init__(self):
-        if self.n_local_heads == -1:
-            self.n_local_heads = self.n_head
-        if self.intermediate_size is None:
-            hidden_dim = 4 * self.dim
-            n_hidden = int(2 * hidden_dim / 3)
-            self.intermediate_size = find_multiple(n_hidden, 256)
-        self.head_dim = self.dim // self.n_head
+    vocab_size = 32000
+    hidden_size = 1024
+    intermediate_size = 2560
+    num_hidden_layers = 8
+    num_attention_heads = 8
+    num_key_value_heads = 4
+    hidden_act = "silu"
+    max_position_embeddings = 1024
+    initializer_range = 0.02
+    rms_norm_eps = 1e-6
+    use_cache = True
+    pad_token_id = None
+    bos_token_id = 1
+    eos_token_id = 2
+    pretraining_tp = 1
+    tie_word_embeddings = False
+    rope_theta = 10000.0
+    rope_scaling = None
+    attention_bias = False
+    attention_dropout = 0.0
+    gradient_checkpointing = True
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
