@@ -33,7 +33,6 @@ class Attention(nn.Module):
         # key, query, value projections for all heads, but in a batch
         self.wqkv = nn.Linear(config.hidden_size, total_head_dim, bias=config.attention_bias)
         self.wo = nn.Linear(config.hidden_size, config.hidden_size, bias=config.attention_bias)
-        self.kv_cache = None
 
         self.num_heads = config.num_attention_heads
         self.n_local_heads = config.num_key_value_heads

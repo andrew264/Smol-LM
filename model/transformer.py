@@ -78,8 +78,9 @@ class Transformer(nn.Module):
         self.max_seq_length = max_seq_length
         self.max_batch_size = max_batch_size
         for b in self.layers:
-            b.attention.kv_cache = KVCache(max_batch_size, max_seq_length, self.config.num_key_value_heads, head_dim,
-                                           device=device)
+            b.attention.register_module('kv_cache',
+                                        KVCache(max_batch_size, max_seq_length, self.config.num_key_value_heads,
+                                                head_dim, device=device))
 
         self.freqs_cis = precompute_freqs_cis(self.config.max_position_embeddings,
                                               self.config.hidden_size // self.config.num_attention_heads,

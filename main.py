@@ -37,33 +37,46 @@ def train(model, batch_size: int, config: ModelConfig):
     # optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
+    accum_steps = config.grad_accumulation_steps
+
     losses = []
-    perplexities = []
     start_time = time.time()
+    step = 0
+    if os.path.exists('./weights/step.txt'):
+        with open('./weights/step.txt', 'r') as f:
+            step = int(f.read())
     for i, (x, y) in enumerate(dataloader):
+        if i < step:
+            continue
         x = x.to(device)
         y = y.to(device)
 
-        logits = model(x)
-        optimizer.zero_grad()  # reset gradients
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
-        loss.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+        with torch.set_grad_enabled(True):
+            logits = model(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+            losses.append(loss.item())
+            loss = loss / accum_steps
+            loss.backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if (i + 1) % accum_steps == 0 or i == len(dataloader) - 1:
+                optimizer.step()
+                optimizer.zero_grad()
 
         losses.append(loss.item())
-        perplexities.append(2 ** loss.item())
-        if i % 100 == 0:
+        if i % 100 == 0 and i > 0:
             avg_loss = sum(losses) / len(losses)
-            avg_perplexity = sum(perplexities) / len(perplexities)
+            avg_perplexity = 2 ** avg_loss
             elapsed = time.time() - start_time
             print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                   f"Bits/Token {avg_loss / np.log(2):.3f} | "
                   f"Tokens/s {config.max_position_embeddings * len(losses) * batch_size / elapsed:.0f}")
             losses = []
             start_time = time.time()
-        if i % 10000 == 0:
+        if i % 10000 == 0 and i > 0:
             torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
+            with open('./weights/step.txt', 'w') as f:
+                f.write(f"{i}\n")
+        torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
 
 
 if __name__ == '__main__':
@@ -77,10 +90,16 @@ if __name__ == '__main__':
         print("Created new config.")
         config.to_json('./weights/config.json')
 
+
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
     model = Transformer(config)
     model.to(dtype=torch.bfloat16, device=device)
     model.setup_caches(max_batch_size=batch, max_seq_length=config.max_position_embeddings, device=device)
     # torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
+    print(f"Model has {count_parameters(model) / 1024 / 1024:.2f}M parameters.")
 
     if os.path.exists('./weights/model_ckpt.pt'):
         model.load_state_dict(torch.load('./weights/model_ckpt.pt'))

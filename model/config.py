@@ -1,8 +1,6 @@
 import json
 from dataclasses import dataclass
 
-from model.utils import find_multiple
-
 
 @dataclass
 class ModelConfig:
@@ -30,6 +28,7 @@ class ModelConfig:
     attention_bias = False
     attention_dropout = 0.0
     gradient_checkpointing = True
+    grad_accumulation_steps = 1
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
@@ -39,7 +38,11 @@ class ModelConfig:
         :return: (ModelConfig) The configuration class.
         """
         with open(path, "r") as f:
-            return cls(**json.load(f))
+            config_dict = json.load(f)
+        conf = cls()
+        for k, v in config_dict.items():
+            setattr(conf, k, v)
+        return conf
 
     def to_json(self, path: str) -> None:
         with open(path, "w") as f:
