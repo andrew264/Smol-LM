@@ -72,4 +72,4 @@ if __name__ == '__main__':
             break
         tokens = tokenizer.encode(prompt)
         generate(model, torch.tensor(tokens, device=device, dtype=torch.int),
-                 max_tokens=350)
+                 max_tokens=350, top_k=8)
