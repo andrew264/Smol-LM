@@ -9,10 +9,10 @@ class ModelConfig:
     """
     vocab_size = 32000
     hidden_size = 1024
-    intermediate_size = 2560
+    intermediate_size = 4096
     num_hidden_layers = 8
-    num_attention_heads = 8
-    num_key_value_heads = 4
+    num_attention_heads = 16
+    num_key_value_heads = 8
     hidden_act = "silu"
     max_position_embeddings = 1024
     initializer_range = 0.02
