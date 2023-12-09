@@ -25,14 +25,35 @@ class NPDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> (np.ndarray, np.ndarray):
         return np.int64(self.data[index][:-1]), np.int64(self.data[index][1:])
+
+
+@torch.no_grad()
+def estimate_loss(model: Transformer, batch_size: int, config: ModelConfig):
+    model.eval()
+    dataset = NPDataset('./data/processed/val.bin', config.max_position_embeddings)
+    validation_data = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+    losses = []
+    for i, (x, y) in enumerate(validation_data):
+        x = x.to(device)
+        y = y.to(device)
+        logits = model(x)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+        losses.append(loss.item())
+        if i >= 250:
+            break
+    avg_loss = sum(losses) / len(losses)
+    avg_perplexity = 2 ** avg_loss
+    print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
+          f"Bits/Token {avg_loss / np.log(2):.3f}")
+    model.train()
 
 
 def train(model, batch_size: int, config: ModelConfig):
     # dataloader
     dataset = NPDataset(dataset_path, config.max_position_embeddings)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    train_data = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
     # optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
@@ -45,9 +66,10 @@ def train(model, batch_size: int, config: ModelConfig):
     if os.path.exists('./weights/step.txt'):
         with open('./weights/step.txt', 'r') as f:
             step = int(f.read())
-    print(f"Starting from step {step} / {len(dataloader)}")
-    for i, (x, y) in enumerate(dataloader):
-        if i < step:
+    print(f"Starting from step {step} / {len(train_data)}")
+    model.train()
+    for i, (x, y) in enumerate(train_data):
+        if i <= step:
             continue
         x = x.to(device)
         y = y.to(device)
@@ -59,7 +81,7 @@ def train(model, batch_size: int, config: ModelConfig):
             loss = loss / accum_steps
             loss.backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            if (i + 1) % accum_steps == 0 or i == len(dataloader) - 1:
+            if (i + 1) % accum_steps == 0 or i == len(train_data) - 1:
                 optimizer.step()
                 optimizer.zero_grad()
 
@@ -71,12 +93,13 @@ def train(model, batch_size: int, config: ModelConfig):
             print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                   f"Bits/Token {avg_loss / np.log(2):.3f} | "
                   f"Tokens/s {config.max_position_embeddings * len(losses) * batch_size / elapsed:.0f}")
-            losses = []
-            start_time = time.time()
         if i % 1000 == 0 and i > 0:
             torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
             with open('./weights/step.txt', 'w') as f:
                 f.write(f"{i}\n")
+            estimate_loss(model, batch_size=batch_size, config=config)
+        losses = []
+        start_time = time.time()
     torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
 
 
@@ -110,3 +133,4 @@ if __name__ == '__main__':
         print("Created new model.")
 
     train(model, batch_size=batch, config=config)
+    # estimate_loss(model, batch_size=batch, config=config)
