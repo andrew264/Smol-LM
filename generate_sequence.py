@@ -55,15 +55,14 @@ def generate(
 if __name__ == '__main__':
 
     config = ModelConfig.from_json(config)
+    config.max_batch_size = 1
+
     tokenizer = Tokenizer(tokenizer_path)
     model = Transformer(config)
     checkpoint = torch.load(weights, mmap=True, weights_only=True)
     model.load_state_dict(checkpoint, assign=True, strict=False)
     model.to(dtype=torch.bfloat16, device=device)
     model = model.eval()
-
-    with torch.no_grad():
-        model.setup_caches(1, 1024, device=device)
 
     print('model loaded')
     while True:

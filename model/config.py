@@ -29,6 +29,7 @@ class ModelConfig:
     attention_dropout = 0.0
     gradient_checkpointing = True
     grad_accumulation_steps = 1
+    max_batch_size = 1
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":

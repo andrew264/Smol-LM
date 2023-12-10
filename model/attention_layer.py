@@ -43,6 +43,9 @@ class Attention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
         self._register_load_state_dict_pre_hook(self.load_hook)
+        cache_shape = (config.max_batch_size, self.n_local_heads, config.max_position_embeddings, self.head_dim)
+        self.register_buffer('k_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device='cuda'), persistent=False)
+        self.register_buffer('v_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device='cuda'), persistent=False)
 
     def load_hook(self, state_dict, prefix, *args):
         if prefix + "wq.weight" in state_dict:
@@ -50,6 +53,18 @@ class Attention(nn.Module):
             wk = state_dict.pop(prefix + "wk.weight")
             wv = state_dict.pop(prefix + "wv.weight")
             state_dict[prefix + "wqkv.weight"] = torch.cat([wq, wk, wv])
+
+    @torch.no_grad()
+    def update_cache(self, input_pos, k_val, v_val):
+        # input_pos: [S], k_val: [B, H, S, D]
+        assert input_pos.shape[0] == k_val.shape[2], f"{input_pos.shape[0]} != {k_val.shape[2]}"
+
+        k_out = self.k_cache
+        v_out = self.v_cache
+        k_out[:, :, input_pos] = k_val
+        v_out[:, :, input_pos] = v_val
+
+        return k_out, v_out
 
     def forward(self, x: Tensor, freqs_cis: Tensor, mask: Tensor, input_pos: Optional[Tensor] = None) -> Tensor:
         bsz, seqlen, _ = x.shape
@@ -66,8 +81,8 @@ class Attention(nn.Module):
 
         q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
-        if self.kv_cache is not None:
-            k, v = self.kv_cache.update(input_pos, k, v)
+        if not self.training:
+            k, v = self.update_cache(input_pos, k, v)
 
         k = k.repeat_interleave(self.num_heads // self.n_local_heads, dim=1)
         v = v.repeat_interleave(self.num_heads // self.n_local_heads, dim=1)

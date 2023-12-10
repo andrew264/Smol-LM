@@ -30,10 +30,10 @@ class NPDataset(Dataset):
 
 
 @torch.no_grad()
-def estimate_loss(model: Transformer, batch_size: int, config: ModelConfig):
+def estimate_loss(model: Transformer, config: ModelConfig):
     model.eval()
     dataset = NPDataset('./data/processed/val.bin', config.max_position_embeddings)
-    validation_data = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+    validation_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=True, drop_last=True)
     losses = []
     for i, (x, y) in enumerate(validation_data):
         x = x.to(device)
@@ -50,13 +50,13 @@ def estimate_loss(model: Transformer, batch_size: int, config: ModelConfig):
     model.train()
 
 
-def train(model, batch_size: int, config: ModelConfig):
+def train(model, config: ModelConfig):
     # dataloader
     dataset = NPDataset(dataset_path, config.max_position_embeddings)
-    train_data = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+    train_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=False, drop_last=True)
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, fused=True)
 
     accum_steps = config.grad_accumulation_steps
 
@@ -92,19 +92,18 @@ def train(model, batch_size: int, config: ModelConfig):
             elapsed = time.time() - start_time
             print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                   f"Bits/Token {avg_loss / np.log(2):.3f} | "
-                  f"Tokens/s {config.max_position_embeddings * len(losses) * batch_size / elapsed:.0f}")
+                  f"Tokens/s {config.max_position_embeddings * len(losses) * config.max_batch_size / elapsed:.0f}")
         if i % 1000 == 0 and i > 0:
             torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
             with open('./weights/step.txt', 'w') as f:
                 f.write(f"{i}\n")
-            estimate_loss(model, batch_size=batch_size, config=config)
+            estimate_loss(model, config=config)
         losses = []
         start_time = time.time()
     torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
 
 
 if __name__ == '__main__':
-    batch = 8
 
     if os.path.exists('./weights/config.json'):
         config = ModelConfig.from_json('./weights/config.json')
@@ -112,6 +111,7 @@ if __name__ == '__main__':
     else:
         config = ModelConfig()
         config.grad_accumulation_steps = 8
+        config.max_batch_size = 8
         print("Created new config.")
         config.to_json('./weights/config.json')
 
@@ -122,7 +122,6 @@ if __name__ == '__main__':
 
     model = Transformer(config)
     model.to(dtype=torch.bfloat16, device=device)
-    model.setup_caches(max_batch_size=batch, max_seq_length=config.max_position_embeddings, device=device)
     torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
     print(f"Model has {count_parameters(model) / 1024 / 1024:.2f}M parameters.")
 
@@ -132,5 +131,5 @@ if __name__ == '__main__':
     else:
         print("Created new model.")
 
-    train(model, batch_size=batch, config=config)
-    # estimate_loss(model, batch_size=batch, config=config)
+    train(model, config=config)
+    # estimate_loss(model, config=config)

@@ -8,7 +8,6 @@ from torch.utils.checkpoint import checkpoint
 from model import ModelConfig
 from model.block import TransformerBlock
 from model.norm import RMSNorm
-from model.utils import find_multiple
 
 
 def precompute_freqs_cis(
@@ -20,26 +19,6 @@ def precompute_freqs_cis(
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     cache = torch.stack([freqs_cis.real, freqs_cis.imag], dim=-1)
     return cache.to(dtype=torch.bfloat16)
-
-
-class KVCache(nn.Module):
-    def __init__(self, max_batch_size, max_seq_length, n_heads, head_dim, dtype=torch.bfloat16, device='cpu'):
-        super().__init__()
-        cache_shape = (max_batch_size, n_heads, max_seq_length, head_dim)
-        self.register_buffer('k_cache', torch.zeros(cache_shape, dtype=dtype, device=device))
-        self.register_buffer('v_cache', torch.zeros(cache_shape, dtype=dtype, device=device))
-
-    @torch.no_grad()
-    def update(self, input_pos, k_val, v_val):
-        # input_pos: [S], k_val: [B, H, S, D]
-        assert input_pos.shape[0] == k_val.shape[2], f"{input_pos.shape[0]} != {k_val.shape[2]}"
-
-        k_out = self.k_cache
-        v_out = self.v_cache
-        k_out[:, :, input_pos] = k_val
-        v_out[:, :, input_pos] = v_val
-
-        return k_out, v_out
 
 
 class Transformer(nn.Module):
@@ -55,9 +34,14 @@ class Transformer(nn.Module):
 
         self.freqs_cis: Optional[Tensor] = None
         self.mask_cache: Optional[Tensor] = None
-        self.max_batch_size = -1
-        self.max_seq_length = -1
+        self.max_batch_size = config.max_batch_size
+        self.max_seq_length = config.max_position_embeddings
         self.gradient_checkpointing = config.gradient_checkpointing
+
+        self.freqs_cis = precompute_freqs_cis(self.config.max_position_embeddings,
+                                              self.config.hidden_size // self.config.num_attention_heads,
+                                              self.config.rope_theta).cuda()
+        self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).cuda()
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -69,23 +53,6 @@ class Transformer(nn.Module):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-
-    def setup_caches(self, max_batch_size, max_seq_length, device='cuda'):
-        if self.max_seq_length >= max_seq_length and self.max_batch_size >= max_batch_size:
-            return
-        head_dim = self.config.hidden_size // self.config.num_attention_heads
-        max_seq_length = find_multiple(max_seq_length, 8)
-        self.max_seq_length = max_seq_length
-        self.max_batch_size = max_batch_size
-        for b in self.layers:
-            b.attention.register_module('kv_cache',
-                                        KVCache(max_batch_size, max_seq_length, self.config.num_key_value_heads,
-                                                head_dim, device=device))
-
-        self.freqs_cis = precompute_freqs_cis(self.config.max_position_embeddings,
-                                              self.config.hidden_size // self.config.num_attention_heads,
-                                              self.config.rope_theta).to(device)
-        self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).to(device)
 
     def forward(self, idx: Tensor, input_pos: Optional[Tensor] = None) -> Tensor:
         assert self.freqs_cis is not None, "Caches must be initialized first"
