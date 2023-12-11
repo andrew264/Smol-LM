@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 import torch
@@ -5,7 +6,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 
-from model import ModelConfig
+from model import ModelConfig, Tokenizer
 from model.block import TransformerBlock
 from model.norm import RMSNorm
 
@@ -19,6 +20,28 @@ def precompute_freqs_cis(
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     cache = torch.stack([freqs_cis.real, freqs_cis.imag], dim=-1)
     return cache.to(dtype=torch.bfloat16)
+
+
+def multinomial_sample_one_no_sync(probs_sort):  # Does multinomial sampling without a cuda synchronization
+    q = torch.empty_like(probs_sort).exponential_(1)
+    return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(dtype=torch.int)
+
+
+def logits_to_probs(logits, temperature: float = 1.0, top_k: Optional[int] = None):
+    logits = logits / max(temperature, 1e-5)
+
+    if top_k is not None:
+        v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+        pivot = v.select(-1, -1).unsqueeze(-1)
+        logits = torch.where(logits < pivot, -float("Inf"), logits)
+    probs = torch.nn.functional.softmax(logits, dim=-1)
+    return probs
+
+
+def sample(logits, temperature: float = 1.0, top_k: Optional[int] = None):
+    probs = logits_to_probs(logits[0, -1], temperature, top_k)
+    idx_next = multinomial_sample_one_no_sync(probs)
+    return idx_next, probs
 
 
 class Transformer(nn.Module):
@@ -71,3 +94,25 @@ class Transformer(nn.Module):
         x = self.norm(x)
         logits = self.output(x)
         return logits
+
+    @torch.no_grad()
+    def generate(self, prompt: torch.Tensor, tokenizer: Tokenizer, max_tokens: int, stream: bool = True,
+                 **sampling_kwargs) -> str:
+        return_output = ''
+        while len(prompt) < max_tokens:
+            logits = self(prompt.view(1, -1))
+            idx_next, _ = sample(logits, **sampling_kwargs)
+            idx = idx_next.tolist()[0]
+            if idx == tokenizer.eos_id or idx == tokenizer.pad_id:
+                break
+            out = tokenizer.decode_piece(idx)
+            out = out.replace('▁', ' ')
+            if match := re.match(r'<0x([0-9a-fA-F]+)>', out):
+                out = bytes.fromhex(match.group(1)).decode('utf-8', errors='ignore')
+            return_output += out
+            if stream:
+                print(out, end='', flush=True)
+            prompt = torch.cat([prompt, idx_next], dim=-1)
+        if stream:
+            print()
+        return return_output
