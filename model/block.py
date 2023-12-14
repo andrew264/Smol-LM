@@ -1,10 +1,10 @@
 import torch.nn as nn
+from flash_attn.ops.rms_norm import RMSNorm
 from torch import Tensor
 
 from model import ModelConfig
 from model.attention_layer import Attention
 from model.feed_forward import FeedForward
-from model.norm import RMSNorm
 
 
 class TransformerBlock(nn.Module):

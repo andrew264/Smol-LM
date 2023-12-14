@@ -3,12 +3,13 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from flash_attn.ops.fused_dense import FusedDense
+from flash_attn.ops.rms_norm import RMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 
 from model import ModelConfig, Tokenizer
 from model.block import TransformerBlock
-from model.norm import RMSNorm
 
 
 def precompute_freqs_cis(
@@ -53,7 +54,7 @@ class Transformer(nn.Module):
         self.tok_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(config.num_hidden_layers))
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.output = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.output = FusedDense(config.hidden_size, config.vocab_size, bias=False)
 
         self.freqs_cis: Optional[Tensor] = None
         self.mask_cache: Optional[Tensor] = None
