@@ -63,7 +63,7 @@ def train(model, config: ModelConfig):
 
             if (i + 1) % 100 == 0:
                 avg_loss = sum(losses) / len(losses)
-                avg_perplexity = 2 ** avg_loss
+                avg_perplexity = torch.exp(torch.tensor(avg_loss))
                 print(f"Epoch {epoch + 1} | Batch {i + 1} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                       f"Bits/Token {avg_loss / np.log(2):.3f} | "
                       f"Time {time.time() - start_time:.1f}s")

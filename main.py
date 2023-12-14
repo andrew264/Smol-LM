@@ -44,7 +44,7 @@ def estimate_loss(model: Transformer, config: ModelConfig):
         if i >= 250:
             break
     avg_loss = sum(losses) / len(losses)
-    avg_perplexity = 2 ** avg_loss
+    avg_perplexity = torch.exp(torch.tensor(avg_loss))
     print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
           f"Bits/Token {avg_loss / np.log(2):.3f}")
     model.train()
@@ -88,18 +88,17 @@ def train(model, config: ModelConfig):
         losses.append(loss.item())
         if i % 100 == 0 and i > 0:
             avg_loss = sum(losses) / len(losses)
-            avg_perplexity = 2 ** avg_loss
-            elapsed = time.time() - start_time
+            avg_perplexity = torch.exp(torch.tensor(avg_loss))
             print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                   f"Bits/Token {avg_loss / np.log(2):.3f} | "
-                  f"Tokens/s {config.max_position_embeddings * len(losses) * config.max_batch_size / elapsed:.0f}")
+                  f"Time {time.time() - start_time:.1f}s")
+            start_time = time.time()
             losses = []
         if i % 1000 == 0 and i > 0:
             torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
             with open('./weights/step.txt', 'w') as f:
                 f.write(f"{i}\n")
             estimate_loss(model, config=config)
-        start_time = time.time()
     torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
 
 

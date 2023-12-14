@@ -5,6 +5,8 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
 
+from flash_attn.ops.fused_dense import FusedDense
+
 from model import ModelConfig
 
 
@@ -31,8 +33,8 @@ class Attention(nn.Module):
         self.head_dim = config.hidden_size // config.num_attention_heads
         total_head_dim = (config.num_attention_heads + 2 * config.num_key_value_heads) * self.head_dim
         # key, query, value projections for all heads, but in a batch
-        self.wqkv = nn.Linear(config.hidden_size, total_head_dim, bias=config.attention_bias)
-        self.wo = nn.Linear(config.hidden_size, config.hidden_size, bias=config.attention_bias)
+        self.wqkv = FusedDense(config.hidden_size, total_head_dim, bias=config.attention_bias)
+        self.wo = FusedDense(config.hidden_size, config.hidden_size, bias=config.attention_bias)
 
         self.num_heads = config.num_attention_heads
         self.n_local_heads = config.num_key_value_heads

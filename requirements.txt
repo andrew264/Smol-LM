@@ -1,3 +1,4 @@
 sentencepiece
 torch
 numpy
+flash-attn
