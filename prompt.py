@@ -11,15 +11,15 @@ def get_prompt(conv: list[dict[str, str]]) -> list[int]:
     for line in conv:
         for k, v in line.items():
             if k == 'SYSTEM':
-                tokens += tokenizer.encode(f"###{k}: {v}\n", bos=True, eos=True)
+                tokens += tokenizer.encode(f" ### System: {v} ", bos=True, eos=True)
             elif k == 'USER':
-                tokens += tokenizer.encode(f"\n###{k}: {v}\n", eos=True, bos=True if not tokens else False)
+                tokens += tokenizer.encode(f" ### Instruction: {v} ", eos=True, bos=True if not tokens else False)
             elif k == 'ASSISTANT':
-                tokens += tokenizer.encode(f"\n###{k}: {v}\n", eos=True, bos=False)
+                tokens += tokenizer.encode(f" ### Response: {v} ", eos=True, bos=False)
             else:
                 raise ValueError(f"Unknown key {k}")
     if conv[-1].keys() == {'USER'}:
-        tokens += tokenizer.encode('\n###ASSISTANT:', eos=False, bos=False)
+        tokens += tokenizer.encode(' ### Response: ', eos=False, bos=False)
     return tokens
 
 
@@ -36,7 +36,7 @@ if __name__ == '__main__':
     model = model.eval()
 
     CONVERSATION: list[dict[str, str]] = [
-        {"SYSTEM": "You are an AI Assistant. Respond to USER prompts."},
+        # {"SYSTEM": "You are an AI Assistant. Write response to the given instructions. Follow the instructions carefully."},
     ]
 
 
@@ -57,6 +57,6 @@ if __name__ == '__main__':
             break
         CONVERSATION.append({"USER": inp})
         prompt = torch.tensor(get_prompt(CONVERSATION), dtype=torch.int, device=device)
-        out = model.generate(prompt, tokenizer=tokenizer, max_tokens=128, stream=False, temperature=1.0, top_k=20)
+        out = model.generate(prompt, tokenizer=tokenizer, max_tokens=1024, stream=False, temperature=1.0, top_k=16)
         CONVERSATION.append({"ASSISTANT": out.strip()})
         print(f"ASSISTANT: {out.strip()}")

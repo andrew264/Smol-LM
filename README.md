@@ -6,7 +6,9 @@ This is a small language model for text generation based on LLAMA.<br>
 use LLaMA-2's tokenizer. <br>
 
 ### Changes made
-    - Daring today aren't we.
+    - Added Gradient Checkpointing
+    - Added Gradient Accumulation (with accelerate)
+    - Added Mixture of Experts (MoE) from Mixtral
 
 ### Usage
 

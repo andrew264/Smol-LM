@@ -1,21 +1,32 @@
+from typing import Tuple
+
 import torch.nn as nn
 from flash_attn.ops.rms_norm import RMSNorm
 from torch import Tensor
 
 from model import ModelConfig
 from model.attention_layer import Attention
-from model.feed_forward import FeedForward
+from model.feed_forward import SparseMoEBlock
 
 
 class TransformerBlock(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.attention = Attention(config)
-        self.feed_forward = FeedForward(config)
-        self.ffn_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.attention_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.block_sparse_moe = SparseMoEBlock(config)
+        self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
-    def forward(self, x: Tensor, input_pos: Tensor, freqs_cis: Tensor, mask: Tensor) -> Tensor:
-        h = x + self.attention(self.attention_norm(x), freqs_cis, mask, input_pos)
-        out = h + self.feed_forward(self.ffn_norm(h))
-        return out
+    def forward(self, x: Tensor, start_pos: Tensor, mask: Tensor, freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
+        # Self-attention
+        residual = x
+        x = self.input_layernorm(x)
+        x = residual + self.attention(x, mask, start_pos=start_pos, freqs_cis=freqs_cis)
+
+        # Block-sparse MoE
+        residual = x
+        x = self.post_attention_layernorm(x)
+        x, router_logits = self.block_sparse_moe(x)
+        x = residual + x
+
+        return x, router_logits

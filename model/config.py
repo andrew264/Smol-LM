@@ -11,8 +11,11 @@ class ModelConfig:
     hidden_size = 1024
     intermediate_size = 4096
     num_hidden_layers = 8
-    num_attention_heads = 16
+    num_attention_heads = 8
     num_key_value_heads = 8
+    num_local_experts = 2
+    num_experts_per_tok = 2
+    router_aux_loss_coef = 0.001
     hidden_act = "silu"
     max_position_embeddings = 1024
     initializer_range = 0.02

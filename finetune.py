@@ -5,7 +5,7 @@ import time
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+from accelerate import Accelerator
 from torch.utils.data import DataLoader, Dataset
 
 from model import ModelConfig, Transformer
@@ -39,34 +39,38 @@ def train(model, config: ModelConfig):
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, fused=True)
 
     accum_steps = config.grad_accumulation_steps
+    accelerator = Accelerator(gradient_accumulation_steps=accum_steps)
+    model, optimizer, training_dataloader = accelerator.prepare(model, optimizer, train_data)
 
     losses = []
     start_time = time.time()
     print(f"Training for {epochs} epochs...")
     print(f"Total number of batches: {len(dataloader)}")
+
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1} started.")
         for i, (x, y) in enumerate(dataloader):
-            x = x.to(device)
-            y = y.to(device)
-
-            with torch.set_grad_enabled(True):
-                logits = model(x)
-                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+            # train step
+            with accelerator.accumulate(model):
+                x = x.to(device)
+                y = y.to(device)
+                logits, loss = model(x=x, y=y)
                 losses.append(loss.item())
-                loss = loss / accum_steps
-                loss.backward(retain_graph=True)
+                accelerator.backward(loss)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                if (i + 1) % accum_steps == 0 or i == len(train_data) - 1:
-                    optimizer.step()
-                    optimizer.zero_grad()
+                optimizer.step()
+                optimizer.zero_grad()
 
             if (i + 1) % 100 == 0:
+                time_delta = time.time() - start_time
                 avg_loss = sum(losses) / len(losses)
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
-                print(f"Epoch {epoch + 1} | Batch {i + 1} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
+                tokens_per_sec = 100 * config.max_batch_size * config.max_position_embeddings / time_delta
+                print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                       f"Bits/Token {avg_loss / np.log(2):.3f} | "
-                      f"Time {time.time() - start_time:.1f}s")
+                      f"Time {time_delta:.1f}s | "
+                      f"Tokens/s {tokens_per_sec:.1f}"
+                      )
                 start_time = time.time()
                 losses = []
             if i % 1000 == 0 and i > 0:
@@ -79,7 +83,7 @@ def train(model, config: ModelConfig):
 if __name__ == '__main__':
     if os.path.exists('./weights/config.json'):
         config = ModelConfig.from_json('./weights/config.json')
-        config.max_epochs = 3
+        config.max_epochs = 2
         print("Loaded config from file.")
     else:
         raise FileNotFoundError("No config file found.")
@@ -88,7 +92,10 @@ if __name__ == '__main__':
     model.to(dtype=torch.bfloat16, device=device)
     torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
 
-    if os.path.exists('./weights/model_ckpt.pt'):
+    if os.path.exists('./finetuned-weights/model_ckpt.pt'):
+        model.load_state_dict(torch.load('./finetuned-weights/model_ckpt.pt'))
+        print("Continuing training from file.")
+    elif os.path.exists('./weights/model_ckpt.pt'):
         model.load_state_dict(torch.load('./weights/model_ckpt.pt'))
         print("Loaded model from file.")
     else:

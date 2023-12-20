@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+from accelerate import Accelerator
 from torch.utils.data import DataLoader, Dataset
 
 from model import ModelConfig, Transformer
@@ -38,8 +38,7 @@ def estimate_loss(model: Transformer, config: ModelConfig):
     for i, (x, y) in enumerate(validation_data):
         x = x.to(device)
         y = y.to(device)
-        logits = model(x)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+        logits, loss = model(x=x, y=y)
         losses.append(loss.item())
         if i >= 250:
             break
@@ -50,15 +49,14 @@ def estimate_loss(model: Transformer, config: ModelConfig):
     model.train()
 
 
-def train(model, config: ModelConfig):
+def train(model, optimizer, config: ModelConfig):
     # dataloader
     dataset = NPDataset(dataset_path, config.max_position_embeddings)
     train_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=False, drop_last=True)
 
-    # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, fused=True)
-
     accum_steps = config.grad_accumulation_steps
+    accelerator = Accelerator(gradient_accumulation_steps=accum_steps)
+    model, optimizer, training_dataloader = accelerator.prepare(model, optimizer, train_data)
 
     losses = []
     start_time = time.time()
@@ -71,27 +69,30 @@ def train(model, config: ModelConfig):
     for i, (x, y) in enumerate(train_data):
         if i <= step:
             continue
-        x = x.to(device)
-        y = y.to(device)
+        if i == step + 1:
+            start_time = time.time()
 
-        with torch.set_grad_enabled(True):
-            logits = model(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+        # train step
+        with accelerator.accumulate(model):
+            x = x.to(device)
+            y = y.to(device)
+            logits, loss = model(x=x, y=y)
             losses.append(loss.item())
-            loss = loss / accum_steps
-            loss.backward(retain_graph=True)
+            accelerator.backward(loss)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            if (i + 1) % accum_steps == 0 or i == len(train_data) - 1:
-                optimizer.step()
-                optimizer.zero_grad()
+            optimizer.step()
+            optimizer.zero_grad()
 
-        losses.append(loss.item())
         if i % 100 == 0 and i > 0:
+            time_delta = time.time() - start_time
             avg_loss = sum(losses) / len(losses)
             avg_perplexity = torch.exp(torch.tensor(avg_loss))
+            tokens_per_sec = 100 * config.max_batch_size * config.max_position_embeddings / time_delta
             print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                   f"Bits/Token {avg_loss / np.log(2):.3f} | "
-                  f"Time {time.time() - start_time:.1f}s")
+                  f"Time {time_delta:.1f}s | "
+                  f"Tokens/s {tokens_per_sec:.1f}"
+                  )
             start_time = time.time()
             losses = []
         if i % 1000 == 0 and i > 0:
@@ -99,6 +100,7 @@ def train(model, config: ModelConfig):
             with open('./weights/step.txt', 'w') as f:
                 f.write(f"{i}\n")
             estimate_loss(model, config=config)
+            start_time = time.time()
     torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
 
 
@@ -130,5 +132,8 @@ if __name__ == '__main__':
     else:
         print("Created new model.")
 
-    train(model, config=config)
+    # optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, fused=True)
+
+    train(model, optimizer, config=config)
     # estimate_loss(model, config=config)
