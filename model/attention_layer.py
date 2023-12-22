@@ -58,12 +58,13 @@ class Attention(nn.Module):
     @torch.no_grad()
     def update_cache(self, start_pos, k_val, v_val):
         seqlen = k_val.size(1)
-        k_out = self.k_cache
-        v_out = self.v_cache
-        k_out[:, start_pos: start_pos + seqlen] = k_val
-        v_out[:, start_pos: start_pos + seqlen] = v_val
+        self.k_cache[:, start_pos: start_pos + seqlen] = k_val
+        self.v_cache[:, start_pos: start_pos + seqlen] = v_val
 
-        return k_out[:, :seqlen], v_out[:, :seqlen]
+        keys = self.k_cache[:, : start_pos + seqlen]
+        values = self.v_cache[:, : start_pos + seqlen]
+
+        return keys, values
 
     def forward(self, x: Tensor, mask: Tensor, freqs_cis: Tensor, start_pos: Optional[Tensor] = None, ) -> Tensor:
         bsz, seqlen, _ = x.size()

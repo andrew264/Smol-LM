@@ -26,4 +26,4 @@ if __name__ == '__main__':
             break
         tokens = tokenizer.encode(prompt)
         model.generate(torch.tensor(tokens, device=device, dtype=torch.int), tokenizer=tokenizer,
-                       max_tokens=350, top_k=8)
+                       max_tokens=350, top_p=0.9, temperature=0.9)

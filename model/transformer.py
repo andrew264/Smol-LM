@@ -44,34 +44,26 @@ def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = Non
     return overall_loss * num_experts
 
 
-def multinomial_sample_one_no_sync(probs_sort):  # Does multinomial sampling without a cuda synchronization
-    q = torch.empty_like(probs_sort).exponential_(1)
-    return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(dtype=torch.int)
-
-
-def logits_to_probs(logits, temperature: float = 1.0, top_k: Optional[int] = None):
-    logits = logits / max(temperature, 1e-5)
-
-    if top_k is not None:
-        v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-        pivot = v.select(-1, -1).unsqueeze(-1)
-        logits = torch.where(logits < pivot, -float("Inf"), logits)
-    probs = torch.nn.functional.softmax(logits, dim=-1)
-    return probs
-
-
-def sample(logits, temperature: float = 1.0, top_k: Optional[int] = None):
-    probs = logits_to_probs(logits[0, -1], temperature, top_k)
-    idx_next = multinomial_sample_one_no_sync(probs)
-    return idx_next, probs
-
-
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)
     freqs = torch.outer(t, freqs).float()
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     return freqs_cis
+
+
+def sample_top_p(probs, p):
+    """
+    Perform top-p (nucleus) sampling on a probability distribution.
+    """
+    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
+    probs_sum = torch.cumsum(probs_sort, dim=-1)
+    mask = probs_sum - probs_sort > p
+    probs_sort[mask] = 0.0
+    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+    next_token = torch.multinomial(probs_sort, num_samples=1)
+    next_token = torch.gather(probs_idx, -1, next_token)
+    return next_token
 
 
 class Transformer(nn.Module):
@@ -109,7 +101,10 @@ class Transformer(nn.Module):
 
     def forward(self, x: Tensor, y: Optional[Tensor] = None, start_pos: int = 0) -> tuple[Tensor, Optional[Tensor]]:
         seq_length = x.shape[1]
-        mask = self.causal_mask[:seq_length, :seq_length]
+        if seq_length > 1:
+            mask = self.causal_mask[:seq_length, :seq_length]
+        else:
+            mask = None
         x = self.tok_embeddings(x)
         freqs_cis = self.freqs_cis[start_pos: start_pos + seq_length]
 
@@ -139,7 +134,17 @@ class Transformer(nn.Module):
         tokens[:, :prompt.shape[-1]] = prompt
         for cur_pos in range(prompt.shape[-1], max_tokens):
             logits, _ = self(tokens[:, prev_pos: cur_pos], start_pos=prev_pos)
-            idx_next, _ = sample(logits, **sampling_kwargs)
+
+            top_p = sampling_kwargs.get('top_p', 0.0)
+            if sampling_kwargs.get('temperature', 1.0) > 0.0:
+                temperature = sampling_kwargs.get('temperature', 1.0)
+                probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
+                next_token = sample_top_p(probs, top_p)
+            else:
+                next_token = torch.argmax(logits[:, -1], dim=-1,)
+            next_token = next_token.reshape(-1)
+            idx_next = next_token[-1].unsqueeze(0)
+
             idx = idx_next.tolist()[0]
             tokens[:, cur_pos] = idx
             prev_pos = cur_pos
