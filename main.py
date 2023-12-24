@@ -89,10 +89,8 @@ def train(model, optimizer, config: ModelConfig):
             avg_perplexity = torch.exp(torch.tensor(avg_loss))
             tokens_per_sec = 100 * config.max_batch_size * config.max_position_embeddings / time_delta
             print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
-                  f"Bits/Token {avg_loss / np.log(2):.3f} | "
                   f"Time {time_delta:.1f}s | "
-                  f"Tokens/s {tokens_per_sec:.1f}"
-                  )
+                  f"Tokens/s {tokens_per_sec:.1f}")
             start_time = time.time()
             losses = []
         if i % 1000 == 0 and i > 0:

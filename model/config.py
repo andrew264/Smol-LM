@@ -7,7 +7,7 @@ class ModelConfig:
     """
     The model configuration class.
     """
-    vocab_size = 32000
+    vocab_size = -1
     hidden_size = 1024
     intermediate_size = 4096
     num_hidden_layers = 8

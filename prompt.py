@@ -1,25 +1,27 @@
 import torch
+from tokenizers import Tokenizer
 
-from model import ModelConfig, Tokenizer, Transformer
+from model import ModelConfig, Transformer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = Tokenizer('./weights/tokenizer.model')
+tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 
 
 def get_prompt(conv: list[dict[str, str]]) -> list[int]:
     tokens = []
+    pad_id, bos_id, eos_id = 0, 1, 2
     for line in conv:
         for k, v in line.items():
             if k == 'SYSTEM':
-                tokens += tokenizer.encode(f" ### System: {v} ", bos=True, eos=True)
+                tokens += [bos_id] + tokenizer.encode(f" ### System: {v} ",).ids + [eos_id]
             elif k == 'USER':
-                tokens += tokenizer.encode(f" ### Instruction: {v} ", eos=True, bos=True if not tokens else False)
+                tokens += tokenizer.encode(f" ### Instruction: {v} ",).ids + [eos_id]
             elif k == 'ASSISTANT':
-                tokens += tokenizer.encode(f" ### Response: {v} ", eos=True, bos=False)
+                tokens += tokenizer.encode(f" ### Response: {v} ",).ids + [eos_id]
             else:
                 raise ValueError(f"Unknown key {k}")
     if conv[-1].keys() == {'USER'}:
-        tokens += tokenizer.encode(' ### Response: ', eos=False, bos=False)
+        tokens += tokenizer.encode(' ### Response: ',).ids
     return tokens
 
 
@@ -57,6 +59,6 @@ if __name__ == '__main__':
             break
         CONVERSATION.append({"USER": inp})
         prompt = torch.tensor(get_prompt(CONVERSATION), dtype=torch.int, device=device)
-        out = model.generate(prompt, tokenizer=tokenizer, max_tokens=1024, stream=False, temperature=1.0, top_k=16)
+        out = model.generate(prompt, tokenizer=tokenizer, max_tokens=1024, stream=False, temperature=0.9, top_p=0.9)
         CONVERSATION.append({"ASSISTANT": out.strip()})
         print(f"ASSISTANT: {out.strip()}")

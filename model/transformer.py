@@ -6,10 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from flash_attn.ops.fused_dense import FusedDense
 from flash_attn.ops.rms_norm import RMSNorm
+from tokenizers import Tokenizer
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 
-from model import ModelConfig, Tokenizer
+from model import ModelConfig
 from model.block import TransformerBlock
 
 
@@ -130,6 +131,7 @@ class Transformer(nn.Module):
                  **sampling_kwargs) -> str:
         return_output = ''
         prev_pos = 0
+        pad_id, eos_id = 0, 2
         tokens = torch.full((1, max_tokens), 0, dtype=torch.long, device="cuda")
         tokens[:, :prompt.shape[-1]] = prompt
         for cur_pos in range(prompt.shape[-1], max_tokens):
@@ -148,12 +150,9 @@ class Transformer(nn.Module):
             idx = idx_next.tolist()[0]
             tokens[:, cur_pos] = idx
             prev_pos = cur_pos
-            if idx == tokenizer.eos_id or idx == tokenizer.pad_id:
+            if idx == eos_id or idx == pad_id:
                 break
-            out = tokenizer.decode_piece(idx)
-            out = out.replace('▁', ' ')
-            if match := re.match(r'<0x([0-9a-fA-F]+)>', out):
-                out = bytes.fromhex(match.group(1)).decode('utf-8', errors='ignore')
+            out = tokenizer.decode([idx])
             return_output += out
             if stream:
                 print(out, end='', flush=True)

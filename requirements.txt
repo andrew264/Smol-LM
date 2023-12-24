@@ -3,3 +3,4 @@ torch
 numpy
 flash-attn
 accelerate
+tokenizers
