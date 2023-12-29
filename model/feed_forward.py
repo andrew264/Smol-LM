@@ -3,6 +3,7 @@ import torch.nn as nn
 from flash_attn.ops.fused_dense import FusedDense
 from torch import Tensor
 from torch.nn import functional as F
+from transformers.activations import get_activation
 
 from model import ModelConfig
 
@@ -12,9 +13,10 @@ class FeedForward(nn.Module):
         super().__init__()
         self.w1 = FusedDense(config.hidden_size, config.intermediate_size, bias=False)
         self.w2 = FusedDense(config.intermediate_size, config.hidden_size, bias=False)
+        self.act = get_activation(config.hidden_act)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.w2(F.silu(self.w1(x)))
+        return self.w2(self.act(self.w1(x)))
 
 
 class SparseMoEBlock(nn.Module):
