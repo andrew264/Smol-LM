@@ -18,6 +18,9 @@ def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = Non
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
     """
+    if not any(gate_logits):  # if gate_logits is None or empty tuple
+        return 0
+
     if gate_logits is None or not isinstance(gate_logits, tuple):
         return 0
 

@@ -6,14 +6,18 @@ from torch import Tensor
 
 from model import ModelConfig
 from model.attention_layer import Attention
-from model.feed_forward import SparseMoEBlock
+from model.feed_forward import SparseMoEBlock, FeedForward
 
 
 class TransformerBlock(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.attention = Attention(config)
-        self.block_sparse_moe = SparseMoEBlock(config)
+        self.is_moe = config.is_moe
+        if self.is_moe:
+            self.block_sparse_moe = SparseMoEBlock(config)
+        else:
+            self.feed_forward = FeedForward(config)
         self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
@@ -26,7 +30,11 @@ class TransformerBlock(nn.Module):
         # Block-sparse MoE
         residual = x
         x = self.post_attention_layernorm(x)
-        x, router_logits = self.block_sparse_moe(x)
+        if self.is_moe:
+            x, router_logits = self.block_sparse_moe(x)
+        else:
+            x = self.feed_forward(x)
+            router_logits = None
         x = residual + x
 
         return x, router_logits

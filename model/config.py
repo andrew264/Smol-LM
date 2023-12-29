@@ -13,13 +13,14 @@ class ModelConfig:
     num_hidden_layers = 8
     num_attention_heads = 8
     num_key_value_heads = 8
+    is_moe = True
     num_local_experts = 2
-    num_experts_per_tok = 2
+    num_experts_per_tok = 1
     router_aux_loss_coef = 0.001
     hidden_act = "silu"
     max_position_embeddings = 1024
     initializer_range = 0.02
-    rms_norm_eps = 1e-6
+    rms_norm_eps = 1e-5
     use_cache = True
     pad_token_id = 0
     bos_token_id = 1
@@ -47,6 +48,10 @@ class ModelConfig:
         conf = cls()
         for k, v in config_dict.items():
             setattr(conf, k, v)
+        if conf.num_local_experts == 1:
+            conf.is_moe = False
+        if conf.is_moe and conf.num_experts_per_tok > conf.num_local_experts:
+            raise ValueError("num_experts_per_tok must be less than or equal to num_local_experts.")
         return conf
 
     def to_json(self, path: str) -> None:

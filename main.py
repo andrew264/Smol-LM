@@ -109,8 +109,7 @@ if __name__ == '__main__':
         print("Loaded config from file.")
     else:
         config = ModelConfig()
-        config.grad_accumulation_steps = 8
-        config.max_batch_size = 8
+        config.vocab_size = 32000
         print("Created new config.")
         config.to_json('./weights/config.json')
 
@@ -123,6 +122,7 @@ if __name__ == '__main__':
     model.to(dtype=torch.bfloat16, device=device)
     torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
     print(f"Model has {count_parameters(model) / 1024 / 1024:.2f}M parameters.")
+    print(f"Model is_moe: {config.is_moe}")
 
     if os.path.exists('./weights/model_ckpt.pt'):
         model.load_state_dict(torch.load('./weights/model_ckpt.pt'))
