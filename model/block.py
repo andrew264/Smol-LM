@@ -15,15 +15,18 @@ class TransformerBlock(nn.Module):
         self.attention = Attention(config)
         self.block_sparse_moe = SparseMoEBlock(config)
         self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
     def forward(self, x: Tensor, start_pos: Tensor, mask: Tensor, freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
         # Self-attention
         residual = x
         x = self.input_layernorm(x)
-        attn_outputs = self.attention(x, mask, start_pos=start_pos, freqs_cis=freqs_cis)
+        x = residual + self.attention(x, mask, start_pos=start_pos, freqs_cis=freqs_cis)
 
         # Block-sparse MoE
-        feed_forward_hidden_states, router_logits = self.block_sparse_moe(x)
-        x = residual + attn_outputs + feed_forward_hidden_states
+        residual = x
+        x = self.post_attention_layernorm(x)
+        x, router_logits = self.block_sparse_moe(x)
+        x = residual + x
 
         return x, router_logits
