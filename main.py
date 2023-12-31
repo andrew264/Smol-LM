@@ -4,7 +4,10 @@ import time
 import numpy as np
 import torch
 from accelerate import Accelerator
+from torch import nn
 from torch.utils.data import DataLoader, Dataset
+
+import bitsandbytes as bnb
 
 from model import ModelConfig, Transformer
 
@@ -30,7 +33,7 @@ class NPDataset(Dataset):
 
 
 @torch.no_grad()
-def estimate_loss(model: Transformer, config: ModelConfig):
+def estimate_loss(model: nn.Module, config: ModelConfig):
     model.eval()
     dataset = NPDataset('./data/processed/val.bin', config.max_position_embeddings)
     validation_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=True, drop_last=True)
@@ -49,14 +52,14 @@ def estimate_loss(model: Transformer, config: ModelConfig):
     model.train()
 
 
-def train(model, optimizer, config: ModelConfig):
+def train(model: nn.Module, optimizer, config: ModelConfig):
     # dataloader
     dataset = NPDataset(dataset_path, config.max_position_embeddings)
     train_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=False, drop_last=True)
 
     accum_steps = config.grad_accumulation_steps
     accelerator = Accelerator(gradient_accumulation_steps=accum_steps)
-    model, optimizer, training_dataloader = accelerator.prepare(model, optimizer, train_data)
+    model, optimizer, train_data = accelerator.prepare(model, optimizer, train_data)
 
     losses = []
     start_time = time.time()
@@ -74,11 +77,9 @@ def train(model, optimizer, config: ModelConfig):
 
         # train step
         with accelerator.accumulate(model):
-            x = x.to(device)
-            y = y.to(device)
-            logits, loss = model(x=x, y=y)
+            logits, loss = model(x=x, y=y)  # forward pass
             losses.append(loss.item())
-            accelerator.backward(loss)
+            accelerator.backward(loss)  # backward pass
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             optimizer.zero_grad()
@@ -121,7 +122,7 @@ if __name__ == '__main__':
     model = Transformer(config)
     model.to(dtype=torch.bfloat16, device=device)
     torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
-    print(f"Model has {count_parameters(model) / 1024 / 1024:.2f}M parameters.")
+    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
     print(f"Model is_moe: {config.is_moe}")
 
     if os.path.exists('./weights/model_ckpt.pt'):
@@ -131,7 +132,11 @@ if __name__ == '__main__':
         print("Created new model.")
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, fused=True)
+    lr = 3e-4
+    betas = (0.9, 0.95)
+    weight_decay = 0.1
+    optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=lr, betas=betas,
+                                         weight_decay=weight_decay, min_8bit_size=0)
 
     train(model, optimizer, config=config)
     # estimate_loss(model, config=config)
