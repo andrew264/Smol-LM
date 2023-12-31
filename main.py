@@ -1,13 +1,13 @@
 import os
 import time
 
+import bitsandbytes as bnb
 import numpy as np
 import torch
+import transformers
 from accelerate import Accelerator
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
-
-import bitsandbytes as bnb
 
 from model import ModelConfig, Transformer
 
@@ -57,16 +57,22 @@ def train(model: nn.Module, optimizer, config: ModelConfig):
     dataset = NPDataset(dataset_path, config.max_position_embeddings)
     train_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=False, drop_last=True)
 
-    accum_steps = config.grad_accumulation_steps
-    accelerator = Accelerator(gradient_accumulation_steps=accum_steps)
-    model, optimizer, train_data = accelerator.prepare(model, optimizer, train_data)
-
-    losses = []
-    start_time = time.time()
     step = 0
     if os.path.exists('./weights/step.txt'):
         with open('./weights/step.txt', 'r') as f:
             step = int(f.read())
+
+    accum_steps = config.grad_accumulation_steps
+    accelerator = Accelerator(gradient_accumulation_steps=accum_steps)
+
+    scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
+                                                             num_training_steps=len(train_data) * config.max_epochs)
+    scheduler.last_epoch = step
+
+    model, optimizer, train_data, scheduler = accelerator.prepare(model, optimizer, train_data, scheduler)
+
+    losses = []
+    start_time = time.time()
     print(f"Starting from step {step} / {len(train_data)}")
     model.train()
     for i, (x, y) in enumerate(train_data):
@@ -82,6 +88,7 @@ def train(model: nn.Module, optimizer, config: ModelConfig):
             accelerator.backward(loss)  # backward pass
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            scheduler.step()
             optimizer.zero_grad()
 
         if i % 100 == 0 and i > 0:
