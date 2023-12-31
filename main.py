@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Optional
 
 import bitsandbytes as bnb
 import numpy as np
@@ -10,8 +11,6 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from model import ModelConfig, Transformer
-
-dataset_path = './data/processed/train.bin'
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,56 +28,86 @@ class NPDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, index) -> (np.ndarray, np.ndarray):
-        return np.int64(self.data[index][:-1]), np.int64(self.data[index][1:])
+        x, y = np.int64(self.data[index][:-1]), np.int64(self.data[index][1:])
+        return x, y
+
+
+def count_parameters(m: nn.Module):
+    return sum(p.numel() for p in m.parameters() if p.requires_grad)
 
 
 @torch.no_grad()
-def estimate_loss(model: nn.Module, config: ModelConfig):
+def validate_model(model: nn.Module, validation_data: DataLoader, full_validation: bool = False):
     model.eval()
-    dataset = NPDataset('./data/processed/val.bin', config.max_position_embeddings)
-    validation_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=True, drop_last=True)
+
     losses = []
+    start_time = time.time()
     for i, (x, y) in enumerate(validation_data):
         x = x.to(device)
         y = y.to(device)
         logits, loss = model(x=x, y=y)
         losses.append(loss.item())
-        if i >= 250:
+        if not full_validation and i > 100:
             break
     avg_loss = sum(losses) / len(losses)
     avg_perplexity = torch.exp(torch.tensor(avg_loss))
-    print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
-          f"Bits/Token {avg_loss / np.log(2):.3f}")
+    print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f}"
+          f" | Time {time.time() - start_time:.1f}s")
     model.train()
 
 
-def train(model: nn.Module, optimizer, config: ModelConfig):
-    # dataloader
-    dataset = NPDataset(dataset_path, config.max_position_embeddings)
-    train_data = DataLoader(dataset, batch_size=config.max_batch_size, shuffle=False, drop_last=True)
+def train(model_path: str, model_weights_path: str, training_data: DataLoader, config: ModelConfig,
+          validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False):
+    """
 
-    step = 0
-    if os.path.exists('./weights/step.txt'):
-        with open('./weights/step.txt', 'r') as f:
-            step = int(f.read())
+    :param model_path: Model path to save model weights
+    :param model_weights_path: path to .pt file to save model weights
+    :param training_data: DataLoader for training data
+    :param config: ModelConfig
+    :param validation_data: DataLoader for validation data
+    :param start_step: Start training from this step (useful for resuming training)
+    :param save_step_count: Save the current step count to model_path/step.txt
+    :return:
+    """
 
-    accum_steps = config.grad_accumulation_steps
-    accelerator = Accelerator(gradient_accumulation_steps=accum_steps)
+    model = Transformer(config)
+    model.to(dtype=torch.bfloat16, device=device)
+    torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
+    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
 
+    if os.path.exists(model_weights_path):
+        model.load_state_dict(torch.load(model_weights_path))
+        print("Loaded model from weights file.")
+    elif os.path.exists('weights/model_ckpt.pt'):
+        model.load_state_dict(torch.load('weights/model_ckpt.pt'))
+        print("Loaded model from checkpoint.")
+    else:
+        print("Created new model.")
+
+    # optimizer
+    lr = 3e-4
+    betas = (0.9, 0.95)
+    weight_decay = 0.1
+    optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=lr, betas=betas,
+                                         weight_decay=weight_decay, min_8bit_size=0)
+
+    # scheduler
     scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
                                                              num_training_steps=len(train_data) * config.max_epochs)
-    scheduler.last_epoch = step
+    scheduler.last_epoch = start_step
 
-    model, optimizer, train_data, scheduler = accelerator.prepare(model, optimizer, train_data, scheduler)
+    # accelerator
+    accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
+    model, optimizer, data, scheduler = accelerator.prepare(model, optimizer, training_data, scheduler)
 
     losses = []
     start_time = time.time()
-    print(f"Starting from step {step} / {len(train_data)}")
+    print(f"Starting from step {start_step} / {len(data)}")
     model.train()
-    for i, (x, y) in enumerate(train_data):
-        if i <= step:
+    for i, (x, y) in enumerate(data):
+        if i <= start_step:
             continue
-        if i == step + 1:
+        if i == start_step + 1:
             start_time = time.time()
 
         # train step
@@ -102,48 +131,50 @@ def train(model: nn.Module, optimizer, config: ModelConfig):
             start_time = time.time()
             losses = []
         if i % 1000 == 0 and i > 0:
-            torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
-            with open('./weights/step.txt', 'w') as f:
-                f.write(f"{i}\n")
-            estimate_loss(model, config=config)
+            torch.save(model.state_dict(), model_weights_path)
+            if save_step_count:
+                with open(model_path + 'step.txt', 'w') as f:
+                    f.write(f"{i}\n")
+            if validation_data is not None:
+                if i % 10000 == 0:
+                    validate_model(model, validation_data, full_validation=True)
+                else:
+                    validate_model(model, validation_data)
             start_time = time.time()
-    torch.save(model.state_dict(), f"./weights/model_ckpt.pt")
+    torch.save(model.state_dict(), model_weights_path)
 
 
 if __name__ == '__main__':
 
-    if os.path.exists('./weights/config.json'):
-        config = ModelConfig.from_json('./weights/config.json')
+    path = './weights/'
+
+    if os.path.exists(path + 'config.json'):
+        params = ModelConfig.from_json(path + 'config.json')
         print("Loaded config from file.")
     else:
-        config = ModelConfig()
-        config.vocab_size = 32000
+        params = ModelConfig()
+        params.vocab_size = 32000
         print("Created new config.")
-        config.to_json('./weights/config.json')
+        params.to_json(path + 'config.json')
 
+    # training
+    dataset = NPDataset('./data/processed/train.bin', params.max_position_embeddings)
+    train_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
+    # validation
+    dataset = NPDataset('./data/processed/val.bin', params.max_position_embeddings)
+    val_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
 
-    def count_parameters(model):
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # resume training
+    step = 0
+    if os.path.exists(path + 'step.txt'):
+        with open(path + 'step.txt', 'r') as f:
+            step = int(f.read())
 
-
-    model = Transformer(config)
-    model.to(dtype=torch.bfloat16, device=device)
-    torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
-    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
-    print(f"Model is_moe: {config.is_moe}")
-
-    if os.path.exists('./weights/model_ckpt.pt'):
-        model.load_state_dict(torch.load('./weights/model_ckpt.pt'))
-        print("Loaded model from file.")
-    else:
-        print("Created new model.")
-
-    # optimizer
-    lr = 3e-4
-    betas = (0.9, 0.95)
-    weight_decay = 0.1
-    optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=lr, betas=betas,
-                                         weight_decay=weight_decay, min_8bit_size=0)
-
-    train(model, optimizer, config=config)
-    # estimate_loss(model, config=config)
+    train(path,
+          model_weights_path=path + 'model_ckpt.pt',
+          training_data=train_data,
+          validation_data=val_data,
+          config=params,
+          start_step=step,
+          save_step_count=True,
+          )
