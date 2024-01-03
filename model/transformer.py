@@ -70,7 +70,7 @@ def sample_top_p(probs, p):
 
 
 class Transformer(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, device=torch.device('cuda')) -> None:
         super().__init__()
         self.causal_mask = None
         self.config = config
@@ -86,10 +86,10 @@ class Transformer(nn.Module):
         self.router_aux_loss_coef = config.router_aux_loss_coef
         self.num_experts = config.num_local_experts
 
-        self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).cuda()
+        self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).to(device)
         self.freqs_cis = precompute_freqs_cis(self.config.hidden_size // self.config.num_attention_heads,
                                               self.config.max_position_embeddings * 2,
-                                              self.config.rope_theta).cuda()
+                                              self.config.rope_theta).to(device)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
