@@ -129,9 +129,11 @@ class Transformer(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, prompt: Tensor, tokenizer: Tokenizer, max_tokens: int, stream: bool = True,
-                 **sampling_kwargs) -> str:
-        return_output = ''
+    def generate(self, prompt: Tensor, max_tokens: int,
+                 tokenizer: Optional[Tokenizer] = None,
+                 stream: bool = True,
+                 **sampling_kwargs) -> list[int]:
+        return_output = []
         prev_pos = 0
         pad_id, eos_id = 0, 2
         tokens = torch.full((1, max_tokens), 0, dtype=torch.long, device="cuda")
@@ -145,19 +147,20 @@ class Transformer(nn.Module):
                 probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
                 next_token = sample_top_p(probs, top_p)
             else:
-                next_token = torch.argmax(logits[:, -1], dim=-1,)
+                next_token = torch.argmax(logits[:, -1], dim=-1, )
             next_token = next_token.reshape(-1)
             idx_next = next_token[-1].unsqueeze(0)
 
             idx = idx_next.tolist()[0]
             tokens[:, cur_pos] = idx
             prev_pos = cur_pos
-            if idx == eos_id or idx == pad_id:
+            if idx in [pad_id, eos_id]:
                 break
-            out = tokenizer.decode([idx])
-            return_output += out
+            return_output += [idx]
             if stream:
-                print(out, end='', flush=True)
+                if tokenizer is None:
+                    raise ValueError("Tokenizer must be provided if stream is True.")
+                print(tokenizer.decode([idx]), end='', flush=True)
             prompt = torch.cat([prompt, idx_next], dim=-1)
         if stream:
             print()

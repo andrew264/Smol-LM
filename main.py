@@ -56,12 +56,11 @@ def validate_model(model: nn.Module, validation_data: DataLoader, full_validatio
     model.train()
 
 
-def train(model_path: str, model_weights_path: str, training_data: DataLoader, config: ModelConfig,
+def train(model_path: str, training_data: DataLoader, config: ModelConfig,
           validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False):
     """
 
     :param model_path: Model path to save model weights
-    :param model_weights_path: path to .pt file to save model weights
     :param training_data: DataLoader for training data
     :param config: ModelConfig
     :param validation_data: DataLoader for validation data
@@ -75,12 +74,10 @@ def train(model_path: str, model_weights_path: str, training_data: DataLoader, c
     torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
     print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
 
+    model_weights_path = model_path + "model_ckpt.pt"
     if os.path.exists(model_weights_path):
         model.load_state_dict(torch.load(model_weights_path))
         print("Loaded model from weights file.")
-    elif os.path.exists('weights/model_ckpt.pt'):
-        model.load_state_dict(torch.load('weights/model_ckpt.pt'))
-        print("Loaded model from checkpoint.")
     else:
         print("Created new model.")
 
@@ -93,7 +90,7 @@ def train(model_path: str, model_weights_path: str, training_data: DataLoader, c
 
     # scheduler
     scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
-                                                             num_training_steps=len(train_data) * config.max_epochs)
+                                                             num_training_steps=len(training_data) * config.max_epochs)
     scheduler.last_epoch = start_step
 
     # accelerator
@@ -102,46 +99,49 @@ def train(model_path: str, model_weights_path: str, training_data: DataLoader, c
 
     losses = []
     start_time = time.time()
-    print(f"Starting from step {start_step} / {len(data)}")
     model.train()
-    for i, (x, y) in enumerate(data):
-        if i <= start_step:
-            continue
-        if i == start_step + 1:
-            start_time = time.time()
+    for epoch in range(config.max_epochs):
+        print(f"Epoch {epoch + 1} / {config.max_epochs}")
+        print(f"Starting from step {start_step} / {len(data)}")
+        for i, (x, y) in enumerate(data):
+            if i <= start_step:
+                continue
+            if i == start_step + 1:
+                start_time = time.time()
 
-        # train step
-        with accelerator.accumulate(model):
-            logits, loss = model(x=x, y=y)  # forward pass
-            losses.append(loss.item())
-            accelerator.backward(loss)  # backward pass
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
+            # train step
+            with accelerator.accumulate(model):
+                logits, loss = model(x=x, y=y)  # forward pass
+                losses.append(loss.item())
+                accelerator.backward(loss)  # backward pass
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
 
-        if i % 100 == 0 and i > 0:
-            time_delta = time.time() - start_time
-            avg_loss = sum(losses) / len(losses)
-            avg_perplexity = torch.exp(torch.tensor(avg_loss))
-            tokens_per_sec = 100 * config.max_batch_size * config.max_position_embeddings / time_delta
-            print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
-                  f"Time {time_delta:.1f}s | "
-                  f"Tokens/s {tokens_per_sec:.1f}")
-            start_time = time.time()
-            losses = []
-        if i % 1000 == 0 and i > 0:
-            torch.save(model.state_dict(), model_weights_path)
-            if save_step_count:
-                with open(model_path + 'step.txt', 'w') as f:
-                    f.write(f"{i}\n")
-            if validation_data is not None:
-                if i % 10000 == 0:
-                    validate_model(model, validation_data, full_validation=True)
-                else:
-                    validate_model(model, validation_data)
-            start_time = time.time()
-    torch.save(model.state_dict(), model_weights_path)
+            if i % 100 == 0 and i > 0:
+                time_delta = time.time() - start_time
+                avg_loss = sum(losses) / len(losses)
+                avg_perplexity = torch.exp(torch.tensor(avg_loss))
+                tokens_per_sec = 100 * config.max_batch_size * config.max_position_embeddings / time_delta
+                print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
+                      f"Time {time_delta:.1f}s | "
+                      f"Tokens/s {tokens_per_sec:.1f}")
+                start_time = time.time()
+                losses = []
+            if i % 1000 == 0 and i > 0:
+                torch.save(model.state_dict(), model_weights_path)
+                if save_step_count:
+                    with open(model_path + 'step.txt', 'w') as step_file:
+                        step_file.write(f"{i}\n")
+                if validation_data is not None:
+                    if i % 10000 == 0:
+                        validate_model(model, validation_data, full_validation=True)
+                    else:
+                        validate_model(model, validation_data)
+                start_time = time.time()
+        torch.save(model.state_dict(), model_weights_path)
+        start_step = 0
 
 
 if __name__ == '__main__':
@@ -171,7 +171,6 @@ if __name__ == '__main__':
             step = int(f.read())
 
     train(path,
-          model_weights_path=path + 'model_ckpt.pt',
           training_data=train_data,
           validation_data=val_data,
           config=params,
