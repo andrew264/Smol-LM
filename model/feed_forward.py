@@ -11,12 +11,15 @@ from model import ModelConfig
 class FeedForward(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
-        self.w1 = FusedDense(config.hidden_size, config.intermediate_size, bias=False)
-        self.w2 = FusedDense(config.intermediate_size, config.hidden_size, bias=False)
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act = get_activation(config.hidden_act)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.w2(self.act(self.w1(x)))
+        return self.down_proj(self.act(self.gate_proj(x)) * self.up_proj(x))
 
 
 class SparseMoEBlock(nn.Module):

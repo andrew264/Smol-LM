@@ -15,9 +15,6 @@ from model import ModelConfig, Transformer
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# device = torch.device("cpu")
-
-
 class NPDataset(Dataset):
     def __init__(self, path, block_size=1024):
         self.data = np.memmap(path, dtype=np.uint16, mode='r')
@@ -57,7 +54,8 @@ def validate_model(model: nn.Module, validation_data: DataLoader, full_validatio
 
 
 def train(model_path: str, training_data: DataLoader, config: ModelConfig,
-          validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False):
+          validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False,
+          disable_grads_for_embeddings: bool = False):
     """
 
     :param model_path: Model path to save model weights
@@ -66,6 +64,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :param validation_data: DataLoader for validation data
     :param start_step: Start training from this step (useful for resuming training)
     :param save_step_count: Save the current step count to model_path/step.txt
+    :param disable_grads_for_embeddings: Disable gradients for embedding layer and the output layer
     :return:
     """
 
@@ -80,6 +79,13 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
         print("Loaded model from weights file.")
     else:
         print("Created new model.")
+
+    if disable_grads_for_embeddings:
+        for param in model.tok_embeddings.parameters():
+            param.requires_grad = False
+        for param in model.output.parameters():
+            param.requires_grad = False
+        print("Disabled gradients for embedding layer and output layer.")
 
     # optimizer
     lr = 3e-4
@@ -142,6 +148,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 start_time = time.time()
         torch.save(model.state_dict(), model_weights_path)
         start_step = 0
+    print("Training complete.")
 
 
 if __name__ == '__main__':

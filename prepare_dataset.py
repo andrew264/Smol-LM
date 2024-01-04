@@ -10,9 +10,9 @@ if __name__ == '__main__':
     tokenizer = tokenizers.Tokenizer.from_file("weights/tokenizer.json")
     eot = tokenizer.encode("<|endoftext|>").ids[0]
 
-    dataset_path = '/run/media/andrew264/nvme1n1p5/openwebtext'
+    dataset_path = '/run/media/andrew264/nvme1n1p5/minipile'
     dataset = datasets.load_dataset(path=dataset_path, num_proc=num_proc)
-    split_dataset = dataset['train'].train_test_split(test_size=0.0005, shuffle=True)
+    split_dataset = dataset['train'].train_test_split(test_size=0.001, shuffle=True)
     split_dataset['val'] = split_dataset.pop('test')
 
 
@@ -23,14 +23,15 @@ if __name__ == '__main__':
         return out
 
 
-    tokenized = split_dataset.map(enc, remove_columns=['text'], num_proc=num_proc, desc="Tokenizing")
+    tokenized = split_dataset.map(enc, remove_columns=['text'], num_proc=num_proc, batch_size=int(1e6),
+                                  desc="Tokenizing")
 
     for split, dset in tokenized.items():
         arr_len = np.sum(dset['len'], dtype=np.uint64)
         print(f"Saving {split} to {PROCESSED_DATA}/{split}.bin")
         filename = f"{PROCESSED_DATA}/{split}.bin"
         arr = np.memmap(filename, dtype=np.uint16, mode='w+', shape=(arr_len,))
-        total_batches = 1024
+        total_batches = 256
 
         idx = 0
         for batch_idx in tqdm.tqdm(range(total_batches), desc=f"Writing {split}"):

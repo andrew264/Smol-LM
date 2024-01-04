@@ -52,8 +52,11 @@ class Attention(nn.Module):
         self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=False)
 
         cache_shape = (config.max_batch_size, config.max_position_embeddings, self.num_key_value_heads, self.head_dim)
-        self.register_buffer('k_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device='cuda'), persistent=False)
-        self.register_buffer('v_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device='cuda'), persistent=False)
+        device = self.q_proj.weight.device
+        self.register_buffer('k_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device=device),
+                             persistent=False)
+        self.register_buffer('v_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device=device),
+                             persistent=False)
 
     @torch.no_grad()
     def update_cache(self, start_pos, k_val, v_val):
@@ -69,9 +72,9 @@ class Attention(nn.Module):
     def forward(self, x: Tensor, mask: Tensor, freqs_cis: Tensor, start_pos: Optional[Tensor] = None, ) -> Tensor:
         bsz, seqlen, _ = x.size()
 
-        query_states = self.q_proj(x)
-        key_states = self.k_proj(x)
-        value_states = self.v_proj(x)
+        query_states: Tensor = self.q_proj(x)
+        key_states: Tensor = self.k_proj(x)
+        value_states: Tensor = self.v_proj(x)
 
         query_states = query_states.view(bsz, seqlen, self.num_heads, self.head_dim)
         key_states = key_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
@@ -87,6 +90,11 @@ class Attention(nn.Module):
 
         key_states = key_states.repeat_interleave(self.num_key_value_groups, dim=1)
         value_states = value_states.repeat_interleave(self.num_key_value_groups, dim=1)
+
+        if query_states.device.type == "cuda" and mask is not None:
+            query_states = query_states.contiguous()
+            key_states = key_states.contiguous()
+            value_states = value_states.contiguous()
 
         attn_output = F.scaled_dot_product_attention(query_states, key_states, value_states,
                                                      attn_mask=mask, dropout_p=0.0)
