@@ -3,7 +3,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import DollyDataset
+from finetune_datasets import DollyDataset, CSVDataset
 from main import train
 from model import ModelConfig
 
@@ -22,11 +22,15 @@ if __name__ == '__main__':
     else:
         raise ValueError("Config not found.")
 
-    dataset = DollyDataset(params.max_position_embeddings, tokenizer)
+    dataset1 = DollyDataset(params.max_position_embeddings, tokenizer)
+    dataset2 = CSVDataset(path="data/finetune/DankDataset.csv",
+                          max_length=params.max_position_embeddings, tokenizer=tokenizer)
+    dataset = torch.utils.data.ConcatDataset([dataset1, dataset2])
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=True, drop_last=True)
 
     train(path,
           training_data=dataloader,
           validation_data=dataloader,
           config=params,
+          disable_grads_for_embeddings=True,
           )
