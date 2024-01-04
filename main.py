@@ -5,6 +5,7 @@ from typing import Optional
 import bitsandbytes as bnb
 import numpy as np
 import torch
+import tqdm
 import transformers
 from accelerate import Accelerator
 from torch import nn
@@ -39,13 +40,16 @@ def validate_model(model: nn.Module, validation_data: DataLoader, full_validatio
 
     losses = []
     start_time = time.time()
-    for i, (x, y) in enumerate(validation_data):
+    for i, (x, y) in tqdm.tqdm(enumerate(validation_data), total=len(validation_data) if full_validation else 100,
+                               desc="Validating"):
         x = x.to(device)
         y = y.to(device)
         logits, loss = model(x=x, y=y)
         losses.append(loss.item())
-        if not full_validation and i > 100:
+
+        if not full_validation and i > 99:
             break
+
     avg_loss = sum(losses) / len(losses)
     avg_perplexity = torch.exp(torch.tensor(avg_loss))
     print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f}"
@@ -148,6 +152,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 start_time = time.time()
         torch.save(model.state_dict(), model_weights_path)
         start_step = 0
+        if validation_data is not None:
+            validate_model(model, validation_data, full_validation=True)
     print("Training complete.")
 
 

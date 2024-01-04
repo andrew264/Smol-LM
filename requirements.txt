@@ -5,3 +5,5 @@ flash-attn
 accelerate
 tokenizers
 bitsandbytes
+pandas
+tqdm
