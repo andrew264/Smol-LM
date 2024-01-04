@@ -91,6 +91,12 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
             param.requires_grad = False
         print("Disabled gradients for embedding layer and output layer.")
 
+    # total steps
+    try:
+        total_steps = len(training_data)
+    except TypeError:
+        total_steps = int(1e6)
+
     # optimizer
     lr = 3e-4
     betas = (0.9, 0.95)
@@ -100,7 +106,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
     # scheduler
     scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
-                                                             num_training_steps=len(training_data) * config.max_epochs)
+                                                             num_training_steps=total_steps * config.max_epochs)
     scheduler.last_epoch = start_step
 
     # accelerator
@@ -112,7 +118,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     model.train()
     for epoch in range(config.max_epochs):
         print(f"Epoch {epoch + 1} / {config.max_epochs}")
-        print(f"Starting from step {start_step} / {len(data)}")
+        print(f"Starting from step {start_step} / {total_steps}")
         for i, (x, y) in enumerate(data):
             if i <= start_step:
                 continue

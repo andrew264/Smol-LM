@@ -13,9 +13,9 @@ class FeedForward(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.gate_proj = FusedDense(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = FusedDense(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = FusedDense(self.intermediate_size, self.hidden_size, bias=False)
         self.act = get_activation(config.hidden_act)
 
     def forward(self, x: Tensor) -> Tensor:
