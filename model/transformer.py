@@ -76,6 +76,7 @@ class Transformer(nn.Module):
         self.config = config
 
         self.tok_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
+        self.embedding_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(config.num_hidden_layers))
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.output = FusedDense(config.hidden_size, config.vocab_size, bias=False)
@@ -109,6 +110,7 @@ class Transformer(nn.Module):
         else:
             mask = None
         x = self.tok_embeddings(x)
+        x = self.embedding_norm(x)
         freqs_cis = self.freqs_cis[start_pos: start_pos + seq_length]
 
         all_router_logits = ()
@@ -136,7 +138,7 @@ class Transformer(nn.Module):
         return_output = []
         prev_pos = 0
         pad_id, eos_id = 0, 2
-        tokens = torch.full((1, max_tokens), 0, dtype=torch.long, device="cuda")
+        tokens = torch.full((1, max_tokens), 0, dtype=torch.long, device=prompt.device)
         tokens[:, :prompt.shape[-1]] = prompt
         for cur_pos in range(prompt.shape[-1], max_tokens):
             logits, _ = self(tokens[:, prev_pos: cur_pos], start_pos=prev_pos)

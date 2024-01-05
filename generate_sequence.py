@@ -15,8 +15,7 @@ if __name__ == '__main__':
 
     tokenizer = Tokenizer.from_file(tokenizer_path)
     model = Transformer(config)
-    checkpoint = torch.load(weights, mmap=False, weights_only=True)
-    model.load_state_dict(checkpoint, strict=False)
+    model.load_state_dict(torch.load(weights))
     model.to(dtype=torch.bfloat16, device=device)
     model = model.eval()
 

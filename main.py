@@ -102,7 +102,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     betas = (0.9, 0.95)
     weight_decay = 0.1
     optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=lr, betas=betas,
-                                         weight_decay=weight_decay, min_8bit_size=0)
+                                         weight_decay=weight_decay, min_8bit_size=config.hidden_size,)
 
     # scheduler
     scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
