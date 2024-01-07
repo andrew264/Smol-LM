@@ -1,8 +1,10 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import torch
 from tokenizers import Tokenizer
+from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper, \
+    RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, Transformer
 
@@ -27,6 +29,13 @@ GENERATION_FORMAT = """Below is an instruction that describes a task. Write a re
 
 """
 
+# Logits processor
+processor: LogitsProcessorList = LogitsProcessorList()
+processor.append(TemperatureLogitsWarper(0.6))
+processor.append(TopKLogitsWarper(40))
+processor.append(TopPLogitsWarper(0.90))
+processor.append(RepetitionPenaltyLogitsProcessor(1.2))
+
 
 class MyRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -38,7 +47,7 @@ class MyRequestHandler(BaseHTTPRequestHandler):
         prompt = GENERATION_FORMAT.format(instruction=input_text)
         prompt = tokenizer.encode(prompt).ids
         prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
-        out = model.generate(prompt, max_tokens=128, stream=False, temperature=1.0, top_p=0.8)
+        out = model.generate(prompt, max_tokens=128, stream=False, logits_processors=processor)
         output_text = tokenizer.decode(out).strip()
 
         self.send_response(200)

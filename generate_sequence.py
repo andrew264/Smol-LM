@@ -1,5 +1,7 @@
 import torch
 from tokenizers import Tokenizer
+from transformers import LogitsProcessorList, TopPLogitsWarper, TemperatureLogitsWarper, TopKLogitsWarper, \
+    RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, Transformer
 
@@ -19,11 +21,19 @@ if __name__ == '__main__':
     model.to(dtype=torch.bfloat16, device=device)
     model = model.eval()
 
+    # Logits processor
+    processor: LogitsProcessorList = LogitsProcessorList()
+    processor.append(TemperatureLogitsWarper(0.6))
+    processor.append(TopKLogitsWarper(40))
+    processor.append(TopPLogitsWarper(0.90))
+    processor.append(RepetitionPenaltyLogitsProcessor(1.2))
+
     print('model loaded')
     while True:
         prompt = input("Enter a prompt: ")
         if prompt == '':
             break
         tokens = tokenizer.encode(prompt).ids
+
         model.generate(torch.tensor(tokens, device=device, dtype=torch.int), tokenizer=tokenizer,
-                       max_tokens=350, top_p=0.9, temperature=0.9)
+                       max_tokens=350, logits_processors=processor)

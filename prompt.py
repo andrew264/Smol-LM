@@ -1,5 +1,7 @@
 import torch
 from tokenizers import Tokenizer
+from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper, \
+    RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, Transformer
 
@@ -21,10 +23,16 @@ if __name__ == '__main__':
     config.max_batch_size = 1
 
     model = Transformer(config)
-    checkpoint = torch.load(weights, mmap=False, weights_only=True)
-    model.load_state_dict(checkpoint, strict=False)
+    model.load_state_dict(torch.load(weights,))
     model.to(dtype=torch.bfloat16, device=device)
     model = model.eval()
+
+    # Logits processor
+    processor: LogitsProcessorList = LogitsProcessorList()
+    processor.append(TemperatureLogitsWarper(0.6))
+    processor.append(TopKLogitsWarper(40))
+    processor.append(TopPLogitsWarper(0.90))
+    processor.append(RepetitionPenaltyLogitsProcessor(1.2))
 
 
     def multiline_input():
@@ -45,6 +53,6 @@ if __name__ == '__main__':
         prompt = GENERATION_FORMAT.format(instruction=inp)
         prompt = tokenizer.encode(prompt).ids
         prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
-        out = model.generate(prompt, max_tokens=1024, stream=False, temperature=1.0, top_p=0.9)
+        out = model.generate(prompt, max_tokens=1024, stream=False, logits_processors=processor)
         out = tokenizer.decode(out)
         print(f"Response: {out.strip()}")

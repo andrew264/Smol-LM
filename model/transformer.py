@@ -8,6 +8,7 @@ from flash_attn.ops.rms_norm import RMSNorm
 from tokenizers import Tokenizer
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
+from transformers import LogitsProcessorList
 
 from model import ModelConfig
 from model.block import TransformerBlock
@@ -53,20 +54,6 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> Tensor:
     freqs = torch.outer(t, freqs).float()
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     return freqs_cis
-
-
-def sample_top_p(probs, p):
-    """
-    Perform top-p (nucleus) sampling on a probability distribution.
-    """
-    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-    probs_sum = torch.cumsum(probs_sort, dim=-1)
-    mask = probs_sum - probs_sort > p
-    probs_sort[mask] = 0.0
-    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-    next_token = torch.multinomial(probs_sort, num_samples=1)
-    next_token = torch.gather(probs_idx, -1, next_token)
-    return next_token
 
 
 class Transformer(nn.Module):
@@ -131,10 +118,9 @@ class Transformer(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, prompt: Tensor, max_tokens: int,
+    def generate(self, prompt: Tensor, max_tokens: int, logits_processors: Optional[LogitsProcessorList] = None,
                  tokenizer: Optional[Tokenizer] = None,
-                 stream: bool = True,
-                 **sampling_kwargs) -> list[int]:
+                 stream: bool = True) -> list[int]:
         return_output = []
         prev_pos = 0
         pad_id, eos_id = 0, 2
@@ -142,14 +128,17 @@ class Transformer(nn.Module):
         tokens[:, :prompt.shape[-1]] = prompt
         for cur_pos in range(prompt.shape[-1], max_tokens):
             logits, _ = self(tokens[:, prev_pos: cur_pos], start_pos=prev_pos)
+            logits = logits[:, -1]
 
-            top_p = sampling_kwargs.get('top_p', 0.0)
-            if sampling_kwargs.get('temperature', 1.0) > 0.0:
-                temperature = sampling_kwargs.get('temperature', 1.0)
-                probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
-                next_token = sample_top_p(probs, top_p)
+            if logits_processors is not None:
+                for processor in logits_processors:
+                    logits = processor(input_ids=tokens[:, ], scores=logits)
+
+                probs = F.softmax(logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
             else:
-                next_token = torch.argmax(logits[:, -1], dim=-1, )
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+
             next_token = next_token.reshape(-1)
             idx_next = next_token[-1].unsqueeze(0)
 
