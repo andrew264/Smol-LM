@@ -6,24 +6,37 @@ import tqdm
 PROCESSED_DATA = "./data/processed"
 
 if __name__ == '__main__':
-    num_proc = 18
+    num_proc = 20
     tokenizer = tokenizers.Tokenizer.from_file("weights/tokenizer.json")
     eot = tokenizer.encode("<|endoftext|>").ids[0]
 
-    dataset_path = '/run/media/andrew264/nvme1n1p5/minipile'
-    dataset = datasets.load_dataset(path=dataset_path, num_proc=num_proc)
-    split_dataset = dataset['train'].train_test_split(test_size=0.001, shuffle=True)
+    minipile = '/run/media/andrew264/nvme1n1p5/minipile'
+    simple_wikipedia = '/run/media/andrew264/nvme1n1p5/simple_wikipedia_LM'
+    refinedweb = '/run/media/andrew264/nvme1n1p5/refinedweb-3m'
+    d1 = datasets.load_dataset(path=minipile, num_proc=num_proc)['train']
+    d2 = datasets.load_dataset(path=simple_wikipedia, num_proc=num_proc)['train']  # id, url, title, text
+    # remove the url and id and combine title and text
+    d2 = d2.map(lambda x: {'text': x['title'] + '\n' + x['text']}, num_proc=num_proc)
+    d2 = d2.remove_columns(['id', 'url', 'title'])
+
+    d3 = datasets.load_dataset(path=refinedweb, num_proc=num_proc)['train']
+    dataset = datasets.concatenate_datasets([d1, d2, d3])
+    split_dataset = dataset.train_test_split(test_size=0.001, shuffle=True)
     split_dataset['val'] = split_dataset.pop('test')
 
 
-    def enc(x):
-        ids = tokenizer.encode(x['text']).ids
-        ids.append(eot)
-        out = {'ids': ids, 'len': len(ids)}
+    def enc_batch(x):
+        out = {'ids': [], 'len': []}
+        encoded = tokenizer.encode_batch(x['text'])
+        for item in encoded:
+            ids = item.ids + [eot]
+            out['ids'].append(ids)
+            out['len'].append(len(ids))
         return out
 
 
-    tokenized = split_dataset.map(enc, remove_columns=['text'], num_proc=num_proc, batch_size=int(1e6),
+    tokenized = split_dataset.map(enc_batch, remove_columns=['text'], num_proc=num_proc,
+                                  batched=True, batch_size=500,
                                   desc="Tokenizing")
 
     for split, dset in tokenized.items():

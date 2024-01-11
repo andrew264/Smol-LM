@@ -1,22 +1,31 @@
+import time
+
 import datasets
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, processors
 
 if __name__ == '__main__':
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence([pre_tokenizers.ByteLevel(add_prefix_space=True),
-                                                       pre_tokenizers.Digits(individual_digits=False)])
+                                                       pre_tokenizers.Digits(individual_digits=True)])
     tokenizer.decoder = decoders.ByteLevel()
     tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
     trainer = trainers.BpeTrainer(
-        vocab_size=32000,
+        vocab_size=51200,
         min_frequency=2,
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
         special_tokens=["<|pad|>", "<|endoftext|>", "<|USER|>", "<|SYSTEM|>", "<|ASSISTANT|>"],
         show_progress=True,
-        max_token_length=64,
+        max_token_length=32,
     )
-    dataset_path = '/run/media/andrew264/nvme1n1p5/minipile'
-    dataset = datasets.load_dataset(path=dataset_path, num_proc=20)['train']
+
+    num_proc = 20
+    minipile = '/run/media/andrew264/nvme1n1p5/minipile'
+    simple_wikipedia = '/run/media/andrew264/nvme1n1p5/simple_wikipedia_LM'
+    refinedweb = '/run/media/andrew264/nvme1n1p5/refinedweb-3m'
+    d1 = datasets.load_dataset(path=minipile, num_proc=num_proc)['train']
+    d2 = datasets.load_dataset(path=simple_wikipedia, num_proc=num_proc)['train']
+    d3 = datasets.load_dataset(path=refinedweb, num_proc=num_proc)['train']
+    dataset = datasets.concatenate_datasets([d1, d2, d3])
 
 
     def batch_iterator(batch_size=100000):
@@ -25,6 +34,8 @@ if __name__ == '__main__':
 
 
     print("Training tokenizer...")
+    start = time.time()
     tokenizer.train_from_iterator(batch_iterator(), trainer=trainer, length=len(dataset), )
+    print(f"Finished training in {time.time() - start} seconds")
     tokenizer.save('./weights/tokenizer.json')
     print("Saved tokenizer.json")
