@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 
 import torch.nn as nn
 from flash_attn.ops.rms_norm import RMSNorm
@@ -21,7 +21,7 @@ class TransformerBlock(nn.Module):
         self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
-    def forward(self, x: Tensor, start_pos: Tensor, mask: Tensor, freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, start_pos: Tensor, mask: Optional[Tensor], freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
         # Self-attention
         residual = x
         x = self.input_layernorm(x)

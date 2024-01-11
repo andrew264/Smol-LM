@@ -90,12 +90,10 @@ class Transformer(nn.Module):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def forward(self, x: Tensor, y: Optional[Tensor] = None, start_pos: int = 0) -> tuple[Tensor, Optional[Tensor]]:
+    def forward(self, x: Tensor, y: Optional[Tensor] = None, start_pos: int = 0,
+                mask: Optional[Tensor] = None) -> tuple[Tensor, Optional[Tensor]]:
         seq_length = x.shape[1]
-        if seq_length > 1:
-            mask = self.causal_mask[:seq_length, :seq_length]
-        else:
-            mask = None
+
         x = self.tok_embeddings(x)
         x = self.embedding_norm(x)
         freqs_cis = self.freqs_cis[start_pos: start_pos + seq_length]
@@ -129,20 +127,17 @@ class Transformer(nn.Module):
         for cur_pos in range(prompt.shape[-1], max_tokens):
             logits, _ = self(tokens[:, prev_pos: cur_pos], start_pos=prev_pos)
             logits = logits[:, -1]
+            logits = F.log_softmax(logits, dim=-1)
 
             if logits_processors is not None:
-                for processor in logits_processors:
-                    logits = processor(input_ids=tokens[:, ], scores=logits)
+                logits = logits_processors(input_ids=tokens[:, ], scores=logits)
 
                 probs = F.softmax(logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
-            next_token = next_token.reshape(-1)
-            idx_next = next_token[-1].unsqueeze(0)
-
-            idx = idx_next.tolist()[0]
+            idx = next_token.item()
             tokens[:, cur_pos] = idx
             prev_pos = cur_pos
             if idx in [pad_id, eos_id]:
@@ -152,7 +147,7 @@ class Transformer(nn.Module):
                 if tokenizer is None:
                     raise ValueError("Tokenizer must be provided if stream is True.")
                 print(tokenizer.decode([idx]), end='', flush=True)
-            prompt = torch.cat([prompt, idx_next], dim=-1)
+            prompt = torch.cat([prompt, next_token.squeeze(1)], dim=-1)
         if stream:
             print()
         return return_output

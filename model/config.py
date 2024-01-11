@@ -14,6 +14,7 @@ class ModelConfig:
     num_attention_heads = 8
     num_key_value_heads = 8
     is_moe = True
+    sliding_window = -1
     num_local_experts = 2
     num_experts_per_tok = 1
     router_aux_loss_coef = 0.001
