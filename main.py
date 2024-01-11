@@ -59,7 +59,7 @@ def validate_model(model: nn.Module, validation_data: DataLoader, full_validatio
 
 def train(model_path: str, training_data: DataLoader, config: ModelConfig,
           validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False,
-          disable_grads_for_embeddings: bool = False):
+          disable_grads_for_embeddings: bool = False, disable_scheduler: bool = False):
     """
 
     :param model_path: Model path to save model weights
@@ -69,6 +69,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :param start_step: Start training from this step (useful for resuming training)
     :param save_step_count: Save the current step count to model_path/step.txt
     :param disable_grads_for_embeddings: Disable gradients for embedding layer and the output layer
+    :param disable_scheduler: Disable the learning rate scheduler
     :return:
     """
 
@@ -76,6 +77,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     model.to(dtype=torch.bfloat16, device=device)
     torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
     print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
+    # validate_model(model, validation_data, full_validation=True)
+    # return
 
     model_weights_path = model_path + "model_ckpt.pt"
     if os.path.exists(model_weights_path):
@@ -102,12 +105,14 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     betas = (0.9, 0.95)
     weight_decay = 0.1
     optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=lr, betas=betas,
-                                         weight_decay=weight_decay, min_8bit_size=config.hidden_size,)
+                                         weight_decay=weight_decay, min_8bit_size=config.hidden_size, )
 
     # scheduler
-    scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
-                                                             num_training_steps=total_steps * config.max_epochs)
-    scheduler.last_epoch = start_step
+    scheduler = None
+    if not disable_scheduler:
+        scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
+                                                                 num_training_steps=total_steps * config.max_epochs)
+        scheduler.last_epoch = start_step
 
     # accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
@@ -119,20 +124,25 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     for epoch in range(config.max_epochs):
         print(f"Epoch {epoch + 1} / {config.max_epochs}")
         print(f"Starting from step {start_step} / {total_steps}")
-        for i, (x, y) in enumerate(data):
+        for i, item in enumerate(data):
             if i <= start_step:
                 continue
             if i == start_step + 1:
                 start_time = time.time()
 
+            x = item[0]
+            y = item[1]
+            mask = item[2] if len(item) > 2 else None
+
             # train step
             with accelerator.accumulate(model):
-                logits, loss = model(x=x, y=y)  # forward pass
+                logits, loss = model(x=x, y=y, mask=mask)  # forward pass
                 losses.append(loss.item())
                 accelerator.backward(loss)  # backward pass
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
-                scheduler.step()
+                if not disable_scheduler:
+                    scheduler.step()
                 optimizer.zero_grad()
 
             if i % 100 == 0 and i > 0:
@@ -195,4 +205,5 @@ if __name__ == '__main__':
           config=params,
           start_step=step,
           save_step_count=True,
+          disable_scheduler=True
           )
