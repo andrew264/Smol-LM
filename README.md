@@ -7,6 +7,7 @@
     - Added Gradient Checkpointing
     - Added Gradient Accumulation (with accelerate)
     - Added Mixture of Experts (MoE) from Mixtral
+    - Flash Attention - 2
 
 ### Usage
 
