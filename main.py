@@ -12,6 +12,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from model import ModelConfig, Transformer
+from utils import load_model
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -35,7 +36,10 @@ def count_parameters(m: nn.Module):
 
 
 @torch.no_grad()
-def validate_model(model: nn.Module, validation_data: DataLoader, full_validation: bool = False):
+def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full_validation: bool = False):
+    if model is None:
+        model = load_model(ModelConfig.from_json('./weights/config.json'),
+                           './weights/model_ckpt.pt', device)
     model.eval()
 
     losses = []
@@ -73,19 +77,11 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :return:
     """
 
-    model = Transformer(config)
-    model.to(dtype=torch.bfloat16, device=device)
-    torch.compile(model=model.forward, fullgraph=True, mode='reduce-overhead')
-    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
-    # validate_model(model, validation_data, full_validation=True)
-    # return
-
     model_weights_path = model_path + "model_ckpt.pt"
-    if os.path.exists(model_weights_path):
-        model.load_state_dict(torch.load(model_weights_path))
-        print("Loaded model from weights file.")
-    else:
-        print("Created new model.")
+    model = load_model(config, model_weights_path, device)
+
+    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
+    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
 
     if disable_grads_for_embeddings:
         for param in model.tok_embeddings.parameters():
@@ -207,3 +203,4 @@ if __name__ == '__main__':
           save_step_count=True,
           disable_scheduler=True
           )
+    # validate_model(None, val_data, True)

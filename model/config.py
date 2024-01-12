@@ -24,10 +24,6 @@ class ModelConfig:
     rms_norm_eps = 1e-5
     use_cache = True
     pad_token_id = 0
-    bos_token_id = 1
-    eos_token_id = 2
-    pretraining_tp = 1
-    tie_word_embeddings = False
     rope_theta = 10000.0
     rope_scaling = None
     attention_bias = False

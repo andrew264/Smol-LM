@@ -4,6 +4,7 @@ from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogit
     RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, Transformer
+from utils import load_model
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
@@ -22,10 +23,7 @@ if __name__ == '__main__':
     config = ModelConfig.from_json('./weights/config.json')
     config.max_batch_size = 1
 
-    model = Transformer(config)
-    model.load_state_dict(torch.load(weights,))
-    model.to(dtype=torch.bfloat16, device=device)
-    model = model.eval()
+    model = load_model(config, weights, device)
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()

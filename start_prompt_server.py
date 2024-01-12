@@ -7,6 +7,7 @@ from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogit
     RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, Transformer
+from utils import load_model
 
 device = torch.device("cuda")
 weights = './finetuned-weights/model_ckpt.pt'
@@ -15,10 +16,7 @@ config = ModelConfig.from_json('./weights/config.json')
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 config.max_batch_size = 1
 
-model = Transformer(config, device=device)
-model.to(device=device, dtype=torch.bfloat16)
-model.load_state_dict(torch.load(weights))
-model = model.eval()
+model = load_model(config, weights, device)
 
 GENERATION_FORMAT = """Below is an instruction that describes a task. Write a response that completes the request.
 

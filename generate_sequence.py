@@ -4,6 +4,7 @@ from transformers import LogitsProcessorList, TopPLogitsWarper, TemperatureLogit
     RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, Transformer
+from utils import load_model
 
 weights = './weights/model_ckpt.pt'
 tokenizer_path = 'weights/tokenizer.json'
@@ -16,10 +17,7 @@ if __name__ == '__main__':
     config.max_batch_size = 1
 
     tokenizer = Tokenizer.from_file(tokenizer_path)
-    model = Transformer(config)
-    model.load_state_dict(torch.load(weights))
-    model.to(dtype=torch.bfloat16, device=device)
-    model = model.eval()
+    model = load_model(config, weights, device)
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
