@@ -1,16 +1,17 @@
 import time
 
 import datasets
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, processors
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, processors, normalizers
 
 if __name__ == '__main__':
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence([pre_tokenizers.ByteLevel(add_prefix_space=True),
                                                        pre_tokenizers.Digits(individual_digits=True)])
     tokenizer.decoder = decoders.ByteLevel()
-    tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+    tokenizer.post_processor = processors.ByteLevel()
+    tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC(), ])
     trainer = trainers.BpeTrainer(
-        vocab_size=51200,
+        vocab_size=16000,
         min_frequency=2,
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
         special_tokens=["<|pad|>", "<|endoftext|>", "<|USER|>", "<|SYSTEM|>", "<|ASSISTANT|>"],
@@ -28,7 +29,7 @@ if __name__ == '__main__':
     dataset = datasets.concatenate_datasets([d1, d2, d3])
 
 
-    def batch_iterator(batch_size=100000):
+    def batch_iterator(batch_size=10000):
         for i in range(0, len(dataset), batch_size):
             yield dataset[i: i + batch_size]["text"]
 

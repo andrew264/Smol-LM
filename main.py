@@ -11,7 +11,7 @@ from accelerate import Accelerator
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from model import ModelConfig, Transformer
+from model import ModelConfig
 from utils import load_model
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

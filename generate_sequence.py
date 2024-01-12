@@ -3,7 +3,7 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopPLogitsWarper, TemperatureLogitsWarper, TopKLogitsWarper, \
     RepetitionPenaltyLogitsProcessor
 
-from model import ModelConfig, Transformer
+from model import ModelConfig
 from utils import load_model
 
 weights = './weights/model_ckpt.pt'

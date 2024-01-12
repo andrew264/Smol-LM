@@ -1,3 +1,5 @@
+import time
+
 import datasets
 import numpy as np
 import tokenizers
@@ -35,6 +37,7 @@ if __name__ == '__main__':
         return out
 
 
+    start = time.time()
     tokenized = split_dataset.map(enc_batch, remove_columns=['text'], num_proc=num_proc,
                                   batched=True, batch_size=500,
                                   desc="Tokenizing")
@@ -54,3 +57,4 @@ if __name__ == '__main__':
             arr[idx: idx + len(arr_batch)] = arr_batch
             idx += len(arr_batch)
         arr.flush()
+    print(f"Finished in {time.time() - start:.1f}s")

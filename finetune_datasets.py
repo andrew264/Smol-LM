@@ -1,17 +1,13 @@
+import pandas as pd
 import torch
 from datasets import load_dataset
 from tokenizers import Tokenizer
 from torch.utils.data import Dataset
-import pandas as pd
 
-PROMPT_FORMAT = """Below is an instruction that describes a task. Write a response that completes the request.
-
-<|USER|>
-{instruction}
-
+PROMPT_FORMAT = """<|USER|>
+{instruction}<|endoftext|>
 <|ASSISTANT|>
-{response}
-<|endoftext|>"""
+{response}<|endoftext|>"""
 
 
 class DollyDataset(Dataset):
@@ -27,33 +23,55 @@ class DollyDataset(Dataset):
             if context != '':
                 instruction = "Context: " + context + '\n' + instruction
             data.append(PROMPT_FORMAT.format(instruction=instruction, response=response))
-        tokenized = tokenizer.encode_batch(data)
-        self.data = torch.tensor(data=[x.ids for x in tokenized], dtype=torch.int64)
-        del dataset, data, tokenized
+        self.tokenized = tokenizer.encode_batch(data)
+        del dataset, data
 
     def __len__(self):
-        return len(self.data)
+        return len(self.tokenized)
 
     def __getitem__(self, index) -> (list[int], list[int]):
-        return self.data[index][:-1], self.data[index][1:]
+        ids = self.tokenized[index].ids
+        mask = self.tokenized[index].attention_mask
+        return torch.tensor(ids[:-1]), torch.tensor(ids[1:]), torch.tensor(mask[:-1])
 
 
 class CSVDataset(Dataset):
-    def __init__(self, path: str, max_length: int, tokenizer: Tokenizer):
+    def __init__(self, path: str, max_length: int, tokenizer: Tokenizer, sample_frac=1.0):
         tokenizer.enable_padding(pad_id=0, pad_token='<|pad|>', length=max_length + 1)
         tokenizer.enable_truncation(max_length=max_length + 1)
         data = []
-        df = pd.read_csv(path)
+        df = pd.read_csv(path).sample(frac=sample_frac, replace=True)
         for row in df.itertuples():
             instruction = row[1]
             response = row[2]
             data.append(PROMPT_FORMAT.format(instruction=instruction, response=response))
-        tokenized = tokenizer.encode_batch(data)
-        self.data = torch.tensor(data=[x.ids for x in tokenized], dtype=torch.int64)
-        del df, data, tokenized
+        self.tokenized = tokenizer.encode_batch(data)
+        del df, data
 
     def __len__(self):
-        return len(self.data)
+        return len(self.tokenized)
 
     def __getitem__(self, index) -> (list[int], list[int]):
-        return self.data[index][:-1], self.data[index][1:]
+        ids = self.tokenized[index].ids
+        mask = self.tokenized[index].attention_mask
+        return torch.tensor(ids[:-1]), torch.tensor(ids[1:]), torch.tensor(mask[:-1])
+
+
+class InstructMixDataset(Dataset):
+    def __init__(self, max_length: int, tokenizer: Tokenizer):
+        self.dataset = load_dataset("Locutusque/InstructMix-V2")['train']
+        self.max_length = max_length
+        self.tokenizer = tokenizer
+        self.tokenizer.enable_padding(pad_id=0, pad_token='<|pad|>', length=max_length + 1)
+        tokenizer.enable_truncation(max_length=max_length + 1)
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index) -> (list[int], list[int]):
+        row = self.dataset[index]
+        prompt = PROMPT_FORMAT.format(instruction=row['Input'], response=row['Output'])
+        tokenized = self.tokenizer.encode(prompt)
+        ids = tokenized.ids
+        mask = tokenized.attention_mask
+        return torch.tensor(ids[:-1]), torch.tensor(ids[1:]), torch.tensor(mask[:-1])  # x, y, mask

@@ -6,7 +6,7 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper, \
     RepetitionPenaltyLogitsProcessor
 
-from model import ModelConfig, Transformer
+from model import ModelConfig
 from utils import load_model
 
 device = torch.device("cuda")
@@ -18,13 +18,9 @@ config.max_batch_size = 1
 
 model = load_model(config, weights, device)
 
-GENERATION_FORMAT = """Below is an instruction that describes a task. Write a response that completes the request.
-
-<|USER|>
-{instruction}
-
+GENERATION_FORMAT = """<|USER|>
+{instruction}<|endoftext|>
 <|ASSISTANT|>
-
 """
 
 # Logits processor

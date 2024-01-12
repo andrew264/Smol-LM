@@ -3,18 +3,15 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper, \
     RepetitionPenaltyLogitsProcessor
 
-from model import ModelConfig, Transformer
+from model import ModelConfig
 from utils import load_model
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 
-GENERATION_FORMAT = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
-
-### Instruction:
-{instruction}
-
-### Response: <|startoftext|>
+GENERATION_FORMAT = """<|USER|>
+{instruction}<|endoftext|>
+<|ASSISTANT|>
 """
 
 if __name__ == '__main__':

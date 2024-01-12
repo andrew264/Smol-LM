@@ -3,7 +3,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import DollyDataset, CSVDataset
+from finetune_datasets import CSVDataset, DollyDataset
 from main import train
 from model import ModelConfig
 
@@ -24,13 +24,14 @@ if __name__ == '__main__':
 
     dataset1 = DollyDataset(params.max_position_embeddings, tokenizer)
     dataset2 = CSVDataset(path="data/finetune/DankDataset.csv",
-                          max_length=params.max_position_embeddings, tokenizer=tokenizer)
-    dataset = torch.utils.data.ConcatDataset([dataset1, dataset2])
+                          max_length=params.max_position_embeddings, tokenizer=tokenizer,
+                          sample_frac=2.0)
+    dataset = torch.utils.data.ConcatDataset([dataset2, dataset1])
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=True, drop_last=True)
 
     train(path,
           training_data=dataloader,
-          validation_data=dataloader,
           config=params,
-          disable_grads_for_embeddings=True,
+          disable_grads_for_embeddings=False,
+          disable_scheduler=True,
           )

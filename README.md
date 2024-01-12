@@ -2,8 +2,8 @@
 
 ## A small language model for text generation in PyTorch
 
-
 ### Changes made
+
     - Added Gradient Checkpointing
     - Added Gradient Accumulation (with accelerate)
     - Added Mixture of Experts (MoE) from Mixtral
