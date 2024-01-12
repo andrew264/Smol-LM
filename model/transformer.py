@@ -63,7 +63,6 @@ class Transformer(nn.Module):
         self.config = config
 
         self.tok_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
-        self.embedding_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(config.num_hidden_layers))
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.output = FusedDense(config.hidden_size, config.vocab_size, bias=False)
@@ -95,7 +94,6 @@ class Transformer(nn.Module):
         seq_length = x.shape[1]
 
         x = self.tok_embeddings(x)
-        x = self.embedding_norm(x)
         freqs_cis = self.freqs_cis[start_pos: start_pos + seq_length]
 
         all_router_logits = ()
