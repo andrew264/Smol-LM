@@ -5,7 +5,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
 from model import ModelConfig
 from utils import load_model
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda")
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 
 GENERATION_FORMAT = """<|USER|>{instruction}<|endoftext|>
@@ -43,6 +43,6 @@ if __name__ == '__main__':
         prompt = GENERATION_FORMAT.format(instruction=inp)
         prompt = tokenizer.encode(prompt).ids
         prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
-        out = model.generate(prompt, max_tokens=1024, stream=False, logits_processors=processor)
+        out = model.generate(prompt, max_tokens=512, stream=False, logits_processors=processor)
         out = tokenizer.decode(out)
         print(f"Response: {out.strip()}")

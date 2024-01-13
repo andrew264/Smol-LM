@@ -9,7 +9,7 @@ from utils import load_model
 weights = './weights/model_ckpt.pt'
 tokenizer_path = 'weights/tokenizer.json'
 config = './weights/config.json'
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda")
 
 if __name__ == '__main__':
 
@@ -22,7 +22,7 @@ if __name__ == '__main__':
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
     processor.append(RepetitionPenaltyLogitsProcessor(1.1))
-    processor.append(TopKLogitsWarper(20))
+    processor.append(TopKLogitsWarper(8))
 
     print('model loaded')
     while True:

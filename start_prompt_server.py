@@ -1,7 +1,7 @@
-import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Optional
 
 import torch
+from aiohttp import web
 from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
 
@@ -20,36 +20,38 @@ model = load_model(config, weights, device)
 GENERATION_FORMAT = """<|USER|>{instruction}<|endoftext|>
 <|ASSISTANT|>"""
 
-# Logits processor
-processor: LogitsProcessorList = LogitsProcessorList()
-processor.append(RepetitionPenaltyLogitsProcessor(1.1))
-processor.append(TopKLogitsWarper(20))
+
+def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
+    # Logits processor
+    processor: LogitsProcessorList = LogitsProcessorList()
+    if penalty is not None and penalty > 0:
+        processor.append(RepetitionPenaltyLogitsProcessor(penalty=penalty))
+    if top_k is not None and top_k > 0:
+        processor.append(TopKLogitsWarper(top_k=top_k))
+
+    # Process the input text (You can replace this with your processing logic)
+    prompt = GENERATION_FORMAT.format(instruction=input_text)
+    prompt = tokenizer.encode(prompt).ids
+    prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
+    out = model.generate(prompt, max_tokens=1024, stream=False, logits_processors=processor)
+    output_text = tokenizer.decode(out).strip()
+    return output_text
 
 
-class MyRequestHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        input_text = urllib.parse.unquote(post_data.decode('utf-8'))
+async def handle(request):
+    data = await request.json()
+    input_text = data['input']
+    top_k = data.get('top_k', None)
+    penalty = data.get('penalty', None)
+    output_text = get_response(input_text, top_k, penalty)
 
-        # Process the input text (You can replace this with your processing logic)
-        prompt = GENERATION_FORMAT.format(instruction=input_text)
-        prompt = tokenizer.encode(prompt).ids
-        prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
-        out = model.generate(prompt, max_tokens=128, stream=False, logits_processors=processor)
-        output_text = tokenizer.decode(out).strip()
-
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(output_text.encode('utf-8'))
+    return web.json_response({'response': output_text})
 
 
-def run_server(port=8080):
-    server_address = ('', port)
-    httpd = HTTPServer(server_address, MyRequestHandler)
-    print(f"Server running on port {port}")
-    httpd.serve_forever()
+def run_server(port=6969):
+    app = web.Application()
+    app.add_routes([web.post('/', handle)])
+    web.run_app(app, port=port)
 
 
 if __name__ == '__main__':
