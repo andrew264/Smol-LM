@@ -79,9 +79,9 @@ class Attention(nn.Module):
             value_states = value_states.contiguous()
 
         kv_seq_len = key_states.shape[1]
-        use_sliding_windows = 0 < self.config.sliding_window < kv_seq_len
 
         if self.training:
+            use_sliding_windows = 0 < self.config.sliding_window < kv_seq_len
             attn_output = self._flash_attn_forward(query_states, key_states, value_states, mask, seqlen,
                                                    use_sliding_windows=use_sliding_windows, )
         else:
@@ -94,6 +94,7 @@ class Attention(nn.Module):
                 self.v_cache = torch.zeros(cache_shape, dtype=x.dtype, device=x.device, )
             self.k_cache = torch.cat([self.k_cache, key_states], dim=1)
             self.v_cache = torch.cat([self.v_cache, value_states], dim=1)
+            use_sliding_windows = 0 < self.config.sliding_window < self.k_cache.shape[1]
 
             attn_output = self._flash_attn_forward(query_states, self.k_cache, self.v_cache, mask, seqlen,
                                                    use_sliding_windows=use_sliding_windows, )
