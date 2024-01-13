@@ -59,7 +59,6 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> Tensor:
 class Transformer(nn.Module):
     def __init__(self, config: ModelConfig, device=torch.device('cuda')) -> None:
         super().__init__()
-        self.causal_mask = None
         self.config = config
 
         self.tok_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
@@ -73,7 +72,6 @@ class Transformer(nn.Module):
         self.router_aux_loss_coef = config.router_aux_loss_coef
         self.num_experts = config.num_local_experts
 
-        self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).to(device)
         self.freqs_cis = precompute_freqs_cis(self.config.hidden_size // self.config.num_attention_heads,
                                               self.config.max_position_embeddings * 2,
                                               self.config.rope_theta).to(device)
@@ -99,9 +97,9 @@ class Transformer(nn.Module):
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
             if self.gradient_checkpointing and self.training:
-                x, router_logits = checkpoint(layer.__call__, x, start_pos, mask, freqs_cis, use_reentrant=False)
+                x, router_logits = checkpoint(layer.__call__, x, mask, freqs_cis, use_reentrant=False)
             else:
-                x, router_logits = layer(x, start_pos, mask, freqs_cis=freqs_cis)
+                x, router_logits = layer(x, mask, freqs_cis=freqs_cis)
             all_router_logits += (router_logits,)
         x = self.norm(x)
         logits = self.output(x)
@@ -122,7 +120,7 @@ class Transformer(nn.Module):
         pad_id, eos_id = 0, 1
         tokens = prompt.unsqueeze(0)
         for cur_pos in range(prompt.shape[-1], max_tokens):
-            logits, _ = self(tokens, start_pos=prev_pos)
+            logits, _ = self(tokens[:, prev_pos: cur_pos], start_pos=prev_pos)
             logits = logits[:, -1]
             # logits = F.log_softmax(logits, dim=-1)
 
@@ -136,7 +134,7 @@ class Transformer(nn.Module):
 
             idx = next_token.item()
             tokens = torch.cat([tokens, next_token], dim=-1)
-            # prev_pos = cur_pos
+            prev_pos = cur_pos
             if idx in [pad_id, eos_id]:
                 break
             return_output += [idx]

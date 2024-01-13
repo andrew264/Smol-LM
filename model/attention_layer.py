@@ -61,40 +61,17 @@ class Attention(nn.Module):
         self.v_proj = FusedDense(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=False)
 
-        cache_shape = (config.max_batch_size, config.max_position_embeddings, self.num_key_value_heads, self.head_dim)
-        device = self.q_proj.weight.device
-        self.register_buffer('k_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device=device),
-                             persistent=False)
-        self.register_buffer('v_cache', torch.zeros(cache_shape, dtype=torch.bfloat16, device=device),
-                             persistent=False)
+        self.k_cache = None
+        self.v_cache = None
 
-    @torch.no_grad()
-    def update_cache(self, start_pos, k_val, v_val):
-        seqlen = k_val.size(1)
-        self.k_cache[:, start_pos: start_pos + seqlen] = k_val
-        self.v_cache[:, start_pos: start_pos + seqlen] = v_val
-
-        keys = self.k_cache[:, : start_pos + seqlen]
-        values = self.v_cache[:, : start_pos + seqlen]
-
-        return keys, values
-
-    def forward(self, x: Tensor, mask: Optional[Tensor],
-                freqs_cis: Tensor, start_pos: Optional[Tensor] = None, ) -> Tensor:
+    def forward(self, x: Tensor, mask: Optional[Tensor], freqs_cis: Tensor) -> Tensor:
         bsz, seqlen, _ = x.size()
 
-        query_states: Tensor = self.q_proj(x)
-        key_states: Tensor = self.k_proj(x)
-        value_states: Tensor = self.v_proj(x)
-
-        query_states = query_states.view(bsz, seqlen, self.num_heads, self.head_dim)
-        key_states = key_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
-        value_states = value_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
+        query_states: Tensor = self.q_proj(x).view(bsz, seqlen, self.num_heads, self.head_dim)
+        key_states: Tensor = self.k_proj(x).view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
+        value_states: Tensor = self.v_proj(x).view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
 
         query_states, key_states = apply_rotary_emb(query_states, key_states, freqs_cis)
-
-        # if not self.training:
-        #     key_states, value_states = self.update_cache(start_pos, key_states, value_states)
 
         if query_states.device.type == "cuda" and mask is not None:
             query_states = query_states.contiguous()
@@ -103,8 +80,21 @@ class Attention(nn.Module):
 
         kv_seq_len = key_states.shape[1]
         use_sliding_windows = 0 < self.config.sliding_window < kv_seq_len
-        attn_output = self._flash_attn_forward(query_states, key_states, value_states, mask, seqlen, dropout=0.0,
-                                               softmax_scale=None, use_sliding_windows=use_sliding_windows, )
+
+        if self.training:
+            attn_output = self._flash_attn_forward(query_states, key_states, value_states, mask, seqlen,
+                                                   use_sliding_windows=use_sliding_windows, )
+        else:
+            # key value caching
+            if self.k_cache is None or self.v_cache is None:
+                cache_shape = [bsz, 0, self.num_key_value_heads, self.head_dim]
+                self.k_cache = torch.zeros(cache_shape, dtype=x.dtype, device=x.device, )
+                self.v_cache = torch.zeros(cache_shape, dtype=x.dtype, device=x.device, )
+            self.k_cache = torch.cat([self.k_cache, key_states], dim=1)
+            self.v_cache = torch.cat([self.v_cache, value_states], dim=1)
+
+            attn_output = self._flash_attn_forward(query_states, self.k_cache, self.v_cache, mask, seqlen,
+                                                   use_sliding_windows=use_sliding_windows, )
 
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
 
@@ -114,6 +104,7 @@ class Attention(nn.Module):
     def _flash_attn_forward(self, query_states, key_states, value_states, attention_mask, query_length, dropout=0.0,
                             softmax_scale=None, use_sliding_windows=False, ) -> Tensor:
         causal = True
+        sliding_window = (self.config.sliding_window, self.config.sliding_window) if use_sliding_windows else (-1, -1)
         if attention_mask is not None:
             batch_size = query_states.shape[0]
             query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self._upad_input(
@@ -123,55 +114,31 @@ class Attention(nn.Module):
             cu_seqlens_q, cu_seqlens_k = cu_seq_lens
             max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
 
-            if not use_sliding_windows:
-                attn_output_unpad = flash_attn_varlen_func(
-                    query_states,
-                    key_states,
-                    value_states,
-                    cu_seqlens_q=cu_seqlens_q,
-                    cu_seqlens_k=cu_seqlens_k,
-                    max_seqlen_q=max_seqlen_in_batch_q,
-                    max_seqlen_k=max_seqlen_in_batch_k,
-                    dropout_p=dropout,
-                    softmax_scale=softmax_scale,
-                    causal=causal,
-                )
-            else:
-                attn_output_unpad = flash_attn_varlen_func(
-                    query_states,
-                    key_states,
-                    value_states,
-                    cu_seqlens_q=cu_seqlens_q,
-                    cu_seqlens_k=cu_seqlens_k,
-                    max_seqlen_q=max_seqlen_in_batch_q,
-                    max_seqlen_k=max_seqlen_in_batch_k,
-                    dropout_p=dropout,
-                    softmax_scale=softmax_scale,
-                    causal=causal,
-                    window_size=(self.config.sliding_window, self.config.sliding_window),
-                )
+            attn_output_unpad = flash_attn_varlen_func(
+                query_states,
+                key_states,
+                value_states,
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=max_seqlen_in_batch_q,
+                max_seqlen_k=max_seqlen_in_batch_k,
+                dropout_p=dropout,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                window_size=sliding_window
+            )
 
             attn_output = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
         else:
-            if not use_sliding_windows:
-                attn_output = flash_attn_func(
-                    query_states,
-                    key_states,
-                    value_states,
-                    dropout,
-                    softmax_scale=softmax_scale,
-                    causal=causal,
-                )
-            else:
-                attn_output = flash_attn_func(
-                    query_states,
-                    key_states,
-                    value_states,
-                    dropout,
-                    softmax_scale=softmax_scale,
-                    causal=causal,
-                    window_size=(self.config.sliding_window, self.config.sliding_window),
-                )
+            attn_output = flash_attn_func(
+                query_states,
+                key_states,
+                value_states,
+                dropout,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                window_size=sliding_window
+            )
 
         return attn_output
 
