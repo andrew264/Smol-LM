@@ -119,16 +119,15 @@ class Transformer(nn.Module):
                  stream: bool = True) -> list[int]:
         return_output = []
         prev_pos = 0
-        pad_id, eos_id = 0, 2
-        tokens = torch.full((1, max_tokens), 0, dtype=torch.long, device=prompt.device)
-        tokens[:, :prompt.shape[-1]] = prompt
+        pad_id, eos_id = 0, 1
+        tokens = prompt.unsqueeze(0)
         for cur_pos in range(prompt.shape[-1], max_tokens):
-            logits, _ = self(tokens[:, prev_pos: cur_pos], start_pos=prev_pos)
+            logits, _ = self(tokens, start_pos=prev_pos)
             logits = logits[:, -1]
-            logits = F.log_softmax(logits, dim=-1)
+            # logits = F.log_softmax(logits, dim=-1)
 
             if logits_processors is not None:
-                logits = logits_processors(input_ids=tokens[:, ], scores=logits)
+                logits = logits_processors(input_ids=tokens, scores=logits)
 
                 probs = F.softmax(logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
@@ -136,8 +135,8 @@ class Transformer(nn.Module):
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
             idx = next_token.item()
-            tokens[:, cur_pos] = idx
-            prev_pos = cur_pos
+            tokens = torch.cat([tokens, next_token], dim=-1)
+            # prev_pos = cur_pos
             if idx in [pad_id, eos_id]:
                 break
             return_output += [idx]

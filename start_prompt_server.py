@@ -3,8 +3,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import torch
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper, \
-    RepetitionPenaltyLogitsProcessor
+from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig
 from utils import load_model
@@ -18,17 +17,13 @@ config.max_batch_size = 1
 
 model = load_model(config, weights, device)
 
-GENERATION_FORMAT = """<|USER|>
-{instruction}<|endoftext|>
-<|ASSISTANT|>
-"""
+GENERATION_FORMAT = """<|USER|>{instruction}<|endoftext|>
+<|ASSISTANT|>"""
 
 # Logits processor
 processor: LogitsProcessorList = LogitsProcessorList()
-processor.append(TemperatureLogitsWarper(0.6))
-processor.append(TopKLogitsWarper(40))
-processor.append(TopPLogitsWarper(0.90))
-processor.append(RepetitionPenaltyLogitsProcessor(1.2))
+processor.append(RepetitionPenaltyLogitsProcessor(1.1))
+processor.append(TopKLogitsWarper(20))
 
 
 class MyRequestHandler(BaseHTTPRequestHandler):

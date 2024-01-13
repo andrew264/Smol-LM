@@ -93,8 +93,8 @@ class Attention(nn.Module):
 
         query_states, key_states = apply_rotary_emb(query_states, key_states, freqs_cis)
 
-        if not self.training:
-            key_states, value_states = self.update_cache(start_pos, key_states, value_states)
+        # if not self.training:
+        #     key_states, value_states = self.update_cache(start_pos, key_states, value_states)
 
         if query_states.device.type == "cuda" and mask is not None:
             query_states = query_states.contiguous()

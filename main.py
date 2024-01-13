@@ -43,12 +43,13 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     model.eval()
 
     losses = []
-    start_time = time.time()
-    for i, (x, y) in tqdm.tqdm(enumerate(validation_data), total=len(validation_data) if full_validation else 100,
-                               desc="Validating"):
-        x = x.to(device)
-        y = y.to(device)
-        logits, loss = model(x=x, y=y)
+    for i, item in tqdm.tqdm(enumerate(validation_data),
+                             total=len(validation_data) if full_validation or len(validation_data) < 100 else 100,
+                             desc="Validating"):
+        x = item[0].to(device)
+        y = item[1].to(device)
+        mask = item[2].to(device) if len(item) > 2 else None
+        logits, loss = model(x=x, y=y, mask=mask)
         losses.append(loss.item())
 
         if not full_validation and i > 99:
@@ -56,8 +57,7 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
 
     avg_loss = sum(losses) / len(losses)
     avg_perplexity = torch.exp(torch.tensor(avg_loss))
-    print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f}"
-          f" | Time {time.time() - start_time:.1f}s")
+    print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f}")
     model.train()
 
 

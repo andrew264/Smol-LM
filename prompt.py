@@ -1,7 +1,6 @@
 import torch
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper, \
-    RepetitionPenaltyLogitsProcessor
+from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig
 from utils import load_model
@@ -9,10 +8,8 @@ from utils import load_model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 
-GENERATION_FORMAT = """<|USER|>
-{instruction}<|endoftext|>
-<|ASSISTANT|>
-"""
+GENERATION_FORMAT = """<|USER|>{instruction}<|endoftext|>
+<|ASSISTANT|>"""
 
 if __name__ == '__main__':
     weights = './finetuned-weights/model_ckpt.pt'
@@ -24,10 +21,8 @@ if __name__ == '__main__':
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
-    processor.append(TemperatureLogitsWarper(0.6))
-    processor.append(TopKLogitsWarper(40))
-    processor.append(TopPLogitsWarper(0.90))
-    processor.append(RepetitionPenaltyLogitsProcessor(1.2))
+    processor.append(RepetitionPenaltyLogitsProcessor(1.1))
+    processor.append(TopKLogitsWarper(20))
 
 
     def multiline_input():
