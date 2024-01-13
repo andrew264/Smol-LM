@@ -86,6 +86,8 @@ class Attention(nn.Module):
                                                    use_sliding_windows=use_sliding_windows, )
         else:
             # key value caching
+            if kv_seq_len > 1:  # reset cache when kv_seq_len > 1
+                self.k_cache, self.v_cache = None, None
             if self.k_cache is None or self.v_cache is None:
                 cache_shape = [bsz, 0, self.num_key_value_heads, self.head_dim]
                 self.k_cache = torch.zeros(cache_shape, dtype=x.dtype, device=x.device, )

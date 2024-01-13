@@ -37,7 +37,7 @@ def count_parameters(m: nn.Module):
 
 @torch.no_grad()
 def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full_validation: bool = False):
-    if model is None:
+    if not model:
         model = load_model(ModelConfig.from_json('./weights/config.json'),
                            './weights/model_ckpt.pt', device)
     model.eval()
@@ -49,8 +49,9 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
         x = item[0].to(device)
         y = item[1].to(device)
         mask = item[2].to(device) if len(item) > 2 else None
-        logits, loss = model(x=x, y=y, mask=mask)
-        losses.append(loss.item())
+        with torch.no_grad():
+            logits, loss = model(x=x, y=y, mask=mask)
+            losses.append(loss.item())
 
         if not full_validation and i > 99:
             break
