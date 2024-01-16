@@ -118,6 +118,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     losses = []
     start_time = time.time()
     model.train()
+    print_step = 250
     for epoch in range(config.max_epochs):
         print(f"Epoch {epoch + 1} / {config.max_epochs}")
         print(f"Starting from step {start_step} / {total_steps}")
@@ -142,11 +143,11 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                     scheduler.step()
                 optimizer.zero_grad()
 
-            if i % 100 == 0 and i > 0:
+            if i % print_step == 0 and i > 0:
                 time_delta = time.time() - start_time
                 avg_loss = sum(losses) / len(losses)
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
-                tokens_per_sec = 100 * config.max_batch_size * config.max_position_embeddings / time_delta
+                tokens_per_sec = print_step * config.max_batch_size * config.max_position_embeddings / time_delta
                 print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
                       f"Time {time_delta:.1f}s | "
                       f"Tokens/s {tokens_per_sec:.1f}")

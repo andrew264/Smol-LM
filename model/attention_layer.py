@@ -4,31 +4,12 @@ import torch
 import torch.nn as nn
 from flash_attn import flash_attn_func, flash_attn_varlen_func
 from flash_attn.bert_padding import pad_input, unpad_input, index_first_axis
+from flash_attn.layers.rotary import RotaryEmbedding
 from flash_attn.ops.fused_dense import FusedDense
 from torch import Tensor
 from torch.nn import functional as F
 
 from model import ModelConfig
-
-
-def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
-    """
-    Reshape frequency tensor for broadcasting it with another tensor.
-    """
-    ndim = x.ndim
-    assert 0 <= 1 < ndim
-    assert freqs_cis.shape == (x.shape[1], x.shape[-1])
-    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
-    return freqs_cis.view(*shape)
-
-
-def apply_rotary_emb(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> tuple[Tensor, Tensor]:
-    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
-    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
-    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
-    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
-    return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
 def _get_unpad_data(attention_mask):
@@ -53,49 +34,66 @@ class Attention(nn.Module):
         self.num_heads = config.num_attention_heads
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.max_position_embeddings = config.max_position_embeddings
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
                 f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
                 f" and `num_heads`: {self.num_heads})."
             )
-
-        self.q_proj = FusedDense(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = FusedDense(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = FusedDense(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
+        if (self.num_heads % self.num_key_value_heads) != 0:
+            raise ValueError(
+                f"num_key_value_heads must divide evenly into num_heads (got `num_key_value_heads`: "
+                f"{self.num_key_value_heads} and `num_heads`: {self.num_heads})."
+            )
+        total_head_dim = (self.num_heads + 2 * self.num_key_value_heads) * self.head_dim
+        self.qkv_proj = FusedDense(self.hidden_size, total_head_dim, bias=False)
         self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+
+        self.rotary_emb = RotaryEmbedding(dim=self.head_dim, interleaved=True)
 
         self.k_cache = None
         self.v_cache = None
 
-    def forward(self, x: Tensor, mask: Optional[Tensor], freqs_cis: Tensor) -> Tensor:
+    def update_kv_cache(self, key_states: Tensor, value_states: Tensor, input_pos: int) -> tuple[Tensor, Tensor]:
+        if self.k_cache is None or self.v_cache is None:
+            bsz = key_states.shape[0]
+            device = key_states.device
+            dtype = key_states.dtype
+            cache_shape = [bsz, self.max_position_embeddings, self.num_key_value_heads, self.head_dim]
+            self.k_cache = torch.zeros(cache_shape, dtype=dtype, device=device, )
+            self.v_cache = torch.zeros(cache_shape, dtype=dtype, device=device, )
+        seqlen = key_states.shape[1]
+        total_len = input_pos + seqlen
+        self.k_cache[:, input_pos:total_len] = key_states
+        self.v_cache[:, input_pos:total_len] = value_states
+        return self.k_cache[:, :total_len], self.v_cache[:, :total_len]
+
+    def forward(self, x: Tensor, mask: Optional[Tensor], input_pos: Optional[int] = None) -> Tensor:
         bsz, seqlen, _ = x.size()
 
-        query_states: Tensor = self.q_proj(x).view(bsz, seqlen, self.num_heads, self.head_dim)
-        key_states: Tensor = self.k_proj(x).view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
-        value_states: Tensor = self.v_proj(x).view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
+        if self.num_heads != self.num_key_value_heads:
+            kv_size = self.num_key_value_heads * self.head_dim
+            query_states, kv_states = self.qkv_proj(x).split([self.hidden_size, 2 * kv_size], dim=-1)
+            query_states = query_states.view(bsz, seqlen, self.num_heads, self.head_dim)
+            kv_states: Tensor = kv_states.view(bsz, seqlen, 2, self.num_key_value_heads, self.head_dim)
 
-        query_states, key_states = apply_rotary_emb(query_states, key_states, freqs_cis)
+            query_states, kv_states = self.rotary_emb(query_states, kv_states, seqlen_offset=input_pos or 0)
+            key_states, value_states = kv_states.unbind(dim=2)
+        else:
+            qkv_states = self.qkv_proj(x).view(bsz, seqlen, 3, self.num_heads, self.head_dim)
+            qkv_states = self.rotary_emb(qkv_states, seqlen_offset=input_pos or 0)
+            query_states, key_states, value_states = qkv_states.unbind(dim=2)
 
-        kv_seq_len = key_states.shape[1]
-        if not self.training:
-            # key value caching
-            if kv_seq_len > 1:  # reset cache when kv_seq_len > 1
-                self.k_cache, self.v_cache = None, None
-            if self.k_cache is None or self.v_cache is None:
-                cache_shape = [bsz, 0, self.num_key_value_heads, self.head_dim]
-                self.k_cache = torch.zeros(cache_shape, dtype=x.dtype, device=x.device, )
-                self.v_cache = torch.zeros(cache_shape, dtype=x.dtype, device=x.device, )
-            self.k_cache = torch.cat([self.k_cache, key_states], dim=1)
-            self.v_cache = torch.cat([self.v_cache, value_states], dim=1)
-            key_states, value_states = self.k_cache, self.v_cache
+        if not self.training and input_pos is not None:
+            key_states, value_states = self.update_kv_cache(key_states, value_states, input_pos=input_pos)
 
         if query_states.device.type == "cuda" and mask is not None:
             query_states = query_states.contiguous()
             key_states = key_states.contiguous()
             value_states = value_states.contiguous()
 
-        use_sliding_windows = 0 < self.config.sliding_window < kv_seq_len
+        use_sliding_windows = 0 < self.config.sliding_window < key_states.shape[1]
         attn_output = self._flash_attn_forward(query_states, key_states, value_states, mask,
                                                use_sliding_windows=use_sliding_windows, )
 

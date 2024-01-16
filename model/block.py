@@ -22,11 +22,11 @@ class TransformerBlock(nn.Module):
         self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
-    def forward(self, x: Tensor, mask: Optional[Tensor], freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, mask: Optional[Tensor], input_pos: Optional[int]) -> Tuple[Tensor, Tensor]:
         # Self-attention
         residual = x
         x = self.input_layernorm(x)
-        x = residual + self.attention(x, mask, freqs_cis=freqs_cis)
+        x = residual + self.attention(x, mask, input_pos=input_pos)
 
         # Block-sparse MoE
         residual = x

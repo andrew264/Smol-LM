@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from flash_attn.losses.cross_entropy import CrossEntropyLoss
 from flash_attn.ops.fused_dense import FusedDense
 from flash_attn.ops.rms_norm import RMSNorm
 from tokenizers import Tokenizer
@@ -48,16 +49,8 @@ def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = Non
     return overall_loss * num_experts
 
 
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> Tensor:
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    t = torch.arange(end, device=freqs.device)
-    freqs = torch.outer(t, freqs).float()
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
-    return freqs_cis
-
-
 class Transformer(nn.Module):
-    def __init__(self, config: ModelConfig, device=torch.device('cuda')) -> None:
+    def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.config = config
 
@@ -72,9 +65,7 @@ class Transformer(nn.Module):
         self.router_aux_loss_coef = config.router_aux_loss_coef
         self.num_experts = config.num_local_experts
 
-        self.freqs_cis = precompute_freqs_cis(self.config.hidden_size // self.config.num_attention_heads,
-                                              self.config.max_position_embeddings * 2,
-                                              self.config.rope_theta).to(device)
+        self.loss_fn = CrossEntropyLoss(inplace_backward=True)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -87,27 +78,28 @@ class Transformer(nn.Module):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def forward(self, x: Tensor, y: Optional[Tensor] = None, start_pos: int = 0,
+    def forward(self, x: Tensor, y: Optional[Tensor] = None, input_pos: Optional[int] = None,
                 mask: Optional[Tensor] = None) -> tuple[Tensor, Optional[Tensor]]:
-        seq_length = x.shape[1]
-
         x = self.tok_embeddings(x)
-        freqs_cis = self.freqs_cis[start_pos: start_pos + seq_length]
 
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
             if self.gradient_checkpointing and self.training:
-                x, router_logits = checkpoint(layer.__call__, x, mask, freqs_cis, use_reentrant=False)
+                x, router_logits = checkpoint(layer.__call__, x, mask, input_pos, use_reentrant=False)
             else:
-                x, router_logits = layer(x, mask, freqs_cis=freqs_cis)
+                x, router_logits = layer(x, mask, input_pos=input_pos)
             all_router_logits += (router_logits,)
         x = self.norm(x)
         logits = self.output(x)
         loss = None
         if y is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
-            aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
-            loss += self.router_aux_loss_coef * aux_loss
+            batch_size, seq_length, vocab_size = logits.shape
+            loss = self.loss_fn(logits.view(batch_size * seq_length, vocab_size),
+                                y.view(batch_size * seq_length),
+                                )
+            if self.config.is_moe:
+                aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
+                loss += self.router_aux_loss_coef * aux_loss
 
         return logits, loss
 
@@ -120,7 +112,7 @@ class Transformer(nn.Module):
         pad_id, eos_id = 0, 1
         tokens = prompt.unsqueeze(0)
         for cur_pos in range(prompt.shape[-1], max_tokens):
-            logits, _ = self(tokens[:, prev_pos: cur_pos], start_pos=prev_pos)
+            logits, _ = self(tokens[:, prev_pos: cur_pos], input_pos=prev_pos)
             logits = logits[:, -1]
             # logits = F.log_softmax(logits, dim=-1)
 

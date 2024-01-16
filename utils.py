@@ -13,7 +13,7 @@ def load_model(config: ModelConfig, path: str, device: torch.device = torch.devi
     :param device: (torch.device) The device to load the model to.
     :return: (torch.nn.Module) The model.
     """
-    model = Transformer(config, device=device)
+    model = Transformer(config)
     model.to(dtype=torch.bfloat16, device=device)
     if os.path.exists(path):
         model.load_state_dict(torch.load(path, map_location=device))
