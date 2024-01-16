@@ -2,7 +2,8 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from flash_attn import flash_attn_func, flash_attn_varlen_func
+from flash_attn import flash_attn_func, flash_attn_varlen_func, flash_attn_qkvpacked_func, \
+    flash_attn_kvpacked_func
 from flash_attn.bert_padding import pad_input, unpad_input, index_first_axis
 from flash_attn.layers.rotary import RotaryEmbedding
 from flash_attn.ops.fused_dense import FusedDense
@@ -33,8 +34,9 @@ class Attention(nn.Module):
         self.head_dim = config.hidden_size // config.num_attention_heads
         self.num_heads = config.num_attention_heads
         self.num_key_value_heads = config.num_key_value_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
+        use_sliding_windows = 0 < self.config.sliding_window < self.max_position_embeddings
+        self.sliding_window = (config.sliding_window, config.sliding_window) if use_sliding_windows else (-1, -1)
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -52,60 +54,70 @@ class Attention(nn.Module):
 
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim, interleaved=True)
 
-        self.k_cache = None
-        self.v_cache = None
+        self.kv_cache = None
 
-    def update_kv_cache(self, key_states: Tensor, value_states: Tensor, input_pos: int) -> tuple[Tensor, Tensor]:
-        if self.k_cache is None or self.v_cache is None:
-            bsz = key_states.shape[0]
-            device = key_states.device
-            dtype = key_states.dtype
-            cache_shape = [bsz, self.max_position_embeddings, self.num_key_value_heads, self.head_dim]
-            self.k_cache = torch.zeros(cache_shape, dtype=dtype, device=device, )
-            self.v_cache = torch.zeros(cache_shape, dtype=dtype, device=device, )
-        seqlen = key_states.shape[1]
-        total_len = input_pos + seqlen
-        self.k_cache[:, input_pos:total_len] = key_states
-        self.v_cache[:, input_pos:total_len] = value_states
-        return self.k_cache[:, :total_len], self.v_cache[:, :total_len]
+    def update_kv_cache(self, kv_states: Tensor, input_pos: int) -> Tensor:
+        if self.kv_cache is None:
+            bsz = kv_states.shape[0]
+            device = kv_states.device
+            dtype = kv_states.dtype
+            cache_shape = [bsz, self.max_position_embeddings, 2, self.num_key_value_heads, self.head_dim]
+            self.kv_cache = torch.zeros(cache_shape, dtype=dtype, device=device, )
+        total_len = input_pos + kv_states.shape[1]
+        self.kv_cache[:, input_pos:total_len] = kv_states
+        return self.kv_cache[:, :total_len]
 
     def forward(self, x: Tensor, mask: Optional[Tensor], input_pos: Optional[int] = None) -> Tensor:
         bsz, seqlen, _ = x.size()
 
-        if self.num_heads != self.num_key_value_heads:
-            kv_size = self.num_key_value_heads * self.head_dim
-            query_states, kv_states = self.qkv_proj(x).split([self.hidden_size, 2 * kv_size], dim=-1)
-            query_states = query_states.view(bsz, seqlen, self.num_heads, self.head_dim)
-            kv_states: Tensor = kv_states.view(bsz, seqlen, 2, self.num_key_value_heads, self.head_dim)
-
-            query_states, kv_states = self.rotary_emb(query_states, kv_states, seqlen_offset=input_pos or 0)
-            key_states, value_states = kv_states.unbind(dim=2)
-        else:
+        if self.num_heads == self.num_key_value_heads:  # self-attention
             qkv_states = self.qkv_proj(x).view(bsz, seqlen, 3, self.num_heads, self.head_dim)
             qkv_states = self.rotary_emb(qkv_states, seqlen_offset=input_pos or 0)
-            query_states, key_states, value_states = qkv_states.unbind(dim=2)
-
-        if not self.training and input_pos is not None:
-            key_states, value_states = self.update_kv_cache(key_states, value_states, input_pos=input_pos)
-
-        if query_states.device.type == "cuda" and mask is not None:
-            query_states = query_states.contiguous()
-            key_states = key_states.contiguous()
-            value_states = value_states.contiguous()
-
-        use_sliding_windows = 0 < self.config.sliding_window < key_states.shape[1]
-        attn_output = self._flash_attn_forward(query_states, key_states, value_states, mask,
-                                               use_sliding_windows=use_sliding_windows, )
+            if self.training:
+                attn_output = (
+                    flash_attn_qkvpacked_func(qkv_states, causal=True,
+                                              window_size=self.sliding_window)  # training - no mask
+                    if mask is None
+                    else self._flash_attn_forward(*qkv_states.unbind(dim=2), mask)  # training - mask
+                )
+            else:  # inference in self-attention
+                if input_pos is not None:
+                    kv_states = self.update_kv_cache(qkv_states[:, :, 1:], input_pos)
+                    use_sliding_windows = 0 < self.config.sliding_window < kv_states.shape[1]
+                    attn_output = flash_attn_kvpacked_func(qkv_states[:, :, 0], kv_states,
+                                                           causal=True, )  # inference - with cache
+                else:
+                    attn_output = flash_attn_qkvpacked_func(qkv_states, causal=True,
+                                                            window_size=self.sliding_window)  # inference - no cache
+        else:  # MQ/GQ Attention
+            kv_size = self.num_key_value_heads * self.head_dim
+            q_state, kv_states = self.qkv_proj(x).split([self.hidden_size, 2 * kv_size], dim=-1)
+            q_state = q_state.view(bsz, seqlen, self.num_heads, self.head_dim)
+            kv_states: Tensor = kv_states.view(bsz, seqlen, 2, self.num_key_value_heads, self.head_dim)
+            q_state, kv_states = self.rotary_emb(q_state, kv_states, seqlen_offset=input_pos or 0)
+            if self.training:
+                attn_output = (
+                    flash_attn_kvpacked_func(q_state, kv_states, causal=True,
+                                             window_size=self.sliding_window)  # training - no mask
+                    if mask is None
+                    else self._flash_attn_forward(q_state, *kv_states.unbind(dim=2), mask)  # training - mask
+                )
+            else:  # inference in MQ/GQ Attention
+                if input_pos is not None:
+                    kv_states = self.update_kv_cache(kv_states, input_pos)
+                    use_sliding_windows = 0 < self.config.sliding_window < kv_states.shape[1]
+                    attn_output = flash_attn_kvpacked_func(q_state, kv_states, causal=True,
+                                                           window_size=self.sliding_window)  # inference - with cache
+                else:
+                    attn_output = flash_attn_kvpacked_func(q_state, kv_states, causal=True,
+                                                           window_size=self.sliding_window)  # inference - no cache
 
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
-
         attn_output = self.o_proj(attn_output)
         return attn_output
 
-    def _flash_attn_forward(self, query_states, key_states, value_states, attention_mask, dropout=0.0,
-                            use_sliding_windows=False, ) -> Tensor:
-        causal = True
-        sliding_window = (self.config.sliding_window, self.config.sliding_window) if use_sliding_windows else (-1, -1)
+    def _flash_attn_forward(self, query_states: Tensor, key_states: Tensor, value_states: Tensor,
+                            attention_mask: Tensor, dropout=0.0, ) -> Tensor:
         if attention_mask is not None:
             batch_size, query_length = query_states.shape[:2]
             query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self._upad_input(
@@ -124,18 +136,20 @@ class Attention(nn.Module):
                 max_seqlen_q=max_seqlen_in_batch_q,
                 max_seqlen_k=max_seqlen_in_batch_k,
                 dropout_p=dropout,
-                causal=causal,
-                window_size=sliding_window
+                causal=True,
+                window_size=self.sliding_window
             )
             attn_output = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
         else:
+            # should not reach here but just in case
+            print("WARNING: no attention mask provided, something is wrong.")
             attn_output = flash_attn_func(
                 query_states,
                 key_states,
                 value_states,
                 dropout,
-                causal=causal,
-                window_size=sliding_window
+                causal=True,
+                window_size=self.sliding_window
             )
 
         return attn_output
