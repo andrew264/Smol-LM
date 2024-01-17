@@ -52,7 +52,7 @@ class Attention(nn.Module):
         self.qkv_proj = FusedDense(self.hidden_size, total_head_dim, bias=False)
         self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=False)
 
-        self.rotary_emb = RotaryEmbedding(dim=self.head_dim, interleaved=True)
+        self.rotary_emb = RotaryEmbedding(dim=self.head_dim, )
 
         self.kv_cache = None
 
@@ -83,9 +83,9 @@ class Attention(nn.Module):
             else:  # inference in self-attention
                 if input_pos is not None:
                     kv_states = self.update_kv_cache(qkv_states[:, :, 1:], input_pos)
-                    use_sliding_windows = 0 < self.config.sliding_window < kv_states.shape[1]
                     attn_output = flash_attn_kvpacked_func(qkv_states[:, :, 0], kv_states,
-                                                           causal=True, )  # inference - with cache
+                                                           causal=True,
+                                                           window_size=self.sliding_window)  # inference - with cache
                 else:
                     attn_output = flash_attn_qkvpacked_func(qkv_states, causal=True,
                                                             window_size=self.sliding_window)  # inference - no cache

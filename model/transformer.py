@@ -8,7 +8,6 @@ from flash_attn.ops.fused_dense import FusedDense
 from flash_attn.ops.rms_norm import RMSNorm
 from tokenizers import Tokenizer
 from torch import Tensor
-from torch.utils.checkpoint import checkpoint
 from transformers import LogitsProcessorList
 
 from model import ModelConfig
@@ -84,10 +83,7 @@ class Transformer(nn.Module):
 
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
-            if self.gradient_checkpointing and self.training:
-                x, router_logits = checkpoint(layer.__call__, x, mask, input_pos, use_reentrant=False)
-            else:
-                x, router_logits = layer(x, mask, input_pos=input_pos)
+            x, router_logits = layer(x, mask, input_pos=input_pos)
             all_router_logits += (router_logits,)
         x = self.norm(x)
         logits = self.output(x)

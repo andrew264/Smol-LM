@@ -107,7 +107,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     # scheduler
     scheduler = None
     if not disable_scheduler:
-        scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5000,
+        scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=10000,
                                                                  num_training_steps=total_steps * config.max_epochs)
         scheduler.last_epoch = start_step
 
@@ -203,6 +203,6 @@ if __name__ == '__main__':
           config=params,
           start_step=step,
           save_step_count=True,
-          disable_scheduler=True
+          disable_scheduler=False
           )
     # validate_model(None, val_data, True)

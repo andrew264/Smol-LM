@@ -11,7 +11,7 @@ if __name__ == '__main__':
     tokenizer.post_processor = processors.ByteLevel()
     tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC(), ])
     trainer = trainers.BpeTrainer(
-        vocab_size=16000,
+        vocab_size=32000,
         min_frequency=2,
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
         special_tokens=["<|pad|>", "<|endoftext|>", "<|USER|>", "<|SYSTEM|>", "<|ASSISTANT|>"],
@@ -20,13 +20,13 @@ if __name__ == '__main__':
     )
 
     num_proc = 20
-    minipile = '/run/media/andrew264/nvme1n1p5/minipile'
-    simple_wikipedia = '/run/media/andrew264/nvme1n1p5/simple_wikipedia_LM'
-    refinedweb = '/run/media/andrew264/nvme1n1p5/refinedweb-3m'
+    minipile = '/mnt/Ddrive/minipile'
+    simple_wikipedia = '/mnt/Ddrive/simple_wikipedia_LM'
+    refinedweb = '/mnt/Ddrive/refinedweb-3m'
     d1 = datasets.load_dataset(path=minipile, num_proc=num_proc)['train']
     d2 = datasets.load_dataset(path=simple_wikipedia, num_proc=num_proc)['train']
     d3 = datasets.load_dataset(path=refinedweb, num_proc=num_proc)['train']
-    dataset = datasets.concatenate_datasets([d1, d2, d3])
+    dataset = datasets.concatenate_datasets([d3, d2, d1])
 
 
     def batch_iterator(batch_size=10000):

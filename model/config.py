@@ -18,7 +18,7 @@ class ModelConfig:
     num_local_experts = 2
     num_experts_per_tok = 1
     router_aux_loss_coef = 0.001
-    hidden_act = "silu"
+    hidden_act = "gelu_new"
     max_position_embeddings = 1024
     initializer_range = 0.02
     rms_norm_eps = 1e-5

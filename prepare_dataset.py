@@ -12,9 +12,9 @@ if __name__ == '__main__':
     tokenizer = tokenizers.Tokenizer.from_file("weights/tokenizer.json")
     eot = tokenizer.encode("<|endoftext|>").ids[0]
 
-    minipile = '/run/media/andrew264/nvme1n1p5/minipile'
-    simple_wikipedia = '/run/media/andrew264/nvme1n1p5/simple_wikipedia_LM'
-    refinedweb = '/run/media/andrew264/nvme1n1p5/refinedweb-3m'
+    minipile = '/mnt/Ddrive/minipile'
+    simple_wikipedia = '/mnt/Ddrive/simple_wikipedia_LM'
+    refinedweb = '/mnt/Ddrive/refinedweb-3m'
     d1 = datasets.load_dataset(path=minipile, num_proc=num_proc)['train']
     d2 = datasets.load_dataset(path=simple_wikipedia, num_proc=num_proc)['train']  # id, url, title, text
     # remove the url and id and combine title and text
