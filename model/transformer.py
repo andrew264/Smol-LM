@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from flash_attn.losses.cross_entropy import CrossEntropyLoss
 from flash_attn.ops.fused_dense import FusedDense
-from flash_attn.ops.rms_norm import RMSNorm
+from flash_attn.ops.triton.layernorm import RMSNorm
 from tokenizers import Tokenizer
 from torch import Tensor
 from transformers import LogitsProcessorList
