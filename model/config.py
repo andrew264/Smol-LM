@@ -23,6 +23,7 @@ class ModelConfig:
     initializer_range = 0.02
     rms_norm_eps = 1e-5
     use_cache = True
+    use_qkv_bias = True
     pad_token_id = 0
     rope_theta = 10000.0
     rope_scaling = None
