@@ -58,6 +58,7 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.output = FusedDense(config.hidden_size, config.vocab_size, bias=False)
 
+        self.vocab_size = config.vocab_size
         self.max_batch_size = config.max_batch_size
         self.max_seq_length = config.max_position_embeddings
         self.gradient_checkpointing = config.gradient_checkpointing
@@ -77,9 +78,9 @@ class Transformer(nn.Module):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def forward(self, x: Tensor, y: Optional[Tensor] = None, input_pos: Optional[int] = None,
+    def forward(self, input_ids: Tensor, labels: Optional[Tensor] = None, input_pos: Optional[int] = None,
                 mask: Optional[Tensor] = None) -> tuple[Tensor, Optional[Tensor]]:
-        x = self.tok_embeddings(x)
+        x = self.tok_embeddings(input_ids)
 
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
@@ -88,11 +89,11 @@ class Transformer(nn.Module):
         x = self.norm(x)
         logits = self.output(x)
         loss = None
-        if y is not None:
-            batch_size, seq_length, vocab_size = logits.shape
-            loss = self.loss_fn(logits.view(batch_size * seq_length, vocab_size),
-                                y.view(batch_size * seq_length),
-                                )
+        if labels is not None:
+            logits = logits[..., :-1, :].contiguous()
+            labels = labels[..., 1:].contiguous()
+            loss = self.loss_fn(logits.view(-1, self.vocab_size),
+                                labels.view(-1),)
             if self.config.is_moe:
                 aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
                 loss += self.router_aux_loss_coef * aux_loss

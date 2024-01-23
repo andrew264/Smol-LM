@@ -20,15 +20,15 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class NPDataset(Dataset):
     def __init__(self, path, block_size=1024):
         self.data = np.memmap(path, dtype=np.uint16, mode='r')
-        self.num_samples = len(self.data) // (block_size + 1)
-        self.data = np.reshape(self.data[:self.num_samples * (block_size + 1)], (-1, block_size + 1))
+        self.num_samples = len(self.data) // block_size
+        self.data = np.reshape(self.data[:self.num_samples * block_size], (-1, block_size))
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, index) -> (np.ndarray, np.ndarray):
-        x, y = np.int64(self.data[index][:-1]), np.int64(self.data[index][1:])
-        return x, y
+        ids = np.int64(self.data[index])
+        return ids, ids
 
 
 def count_parameters(m: nn.Module):
@@ -46,11 +46,11 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     for i, item in tqdm.tqdm(enumerate(validation_data),
                              total=len(validation_data) if full_validation or len(validation_data) < 100 else 100,
                              desc="Validating"):
-        x = item[0].to(device)
-        y = item[1].to(device)
+        ids = item[0].to(device)
+        labels = item[1].to(device)
         mask = item[2].to(device) if len(item) > 2 else None
         with torch.no_grad():
-            logits, loss = model(x=x, y=y, mask=mask)
+            logits, loss = model(input_ids=ids, labels=labels, mask=mask)
             losses.append(loss.item())
 
         if not full_validation and i > 99:
@@ -64,7 +64,7 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
 
 def train(model_path: str, training_data: DataLoader, config: ModelConfig,
           validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False,
-          disable_grads_for_embeddings: bool = False, disable_scheduler: bool = False):
+          disable_grads_for_embeddings: bool = False, disable_scheduler: bool = False, learning_rate: float = 3e-4):
     """
 
     :param model_path: Model path to save model weights
@@ -75,6 +75,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :param save_step_count: Save the current step count to model_path/step.txt
     :param disable_grads_for_embeddings: Disable gradients for embedding layer and the output layer
     :param disable_scheduler: Disable the learning rate scheduler
+    :param learning_rate: Learning rate for the optimizer
     :return:
     """
 
@@ -98,10 +99,9 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
         total_steps = int(1e6)
 
     # optimizer
-    lr = 3e-4
     betas = (0.9, 0.95)
     weight_decay = 0.1
-    optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=lr, betas=betas,
+    optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=learning_rate, betas=betas,
                                          weight_decay=weight_decay, min_8bit_size=config.hidden_size, )
 
     # scheduler
@@ -128,13 +128,13 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
             if i == start_step + 1:
                 start_time = time.time()
 
-            x = item[0]
-            y = item[1]
-            mask = item[2] if len(item) > 2 else None
+            ids = item[0]
+            labels = item[1]
+            mask = item[2].to(device) if len(item) > 2 else None
 
             # train step
             with accelerator.accumulate(model):
-                logits, loss = model(x=x, y=y, mask=mask)  # forward pass
+                logits, loss = model(input_ids=ids, labels=labels, mask=mask)  # forward pass
                 losses.append(loss.item())
                 accelerator.backward(loss)  # backward pass
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
