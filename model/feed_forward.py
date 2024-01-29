@@ -14,12 +14,13 @@ class FeedForward(nn.Module):
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
 
+        self.gate_proj = FusedDense(self.hidden_size, self.intermediate_size, bias=False)
         self.up_proj = FusedDense(self.hidden_size, self.intermediate_size, bias=False)
         self.down_proj = FusedDense(self.intermediate_size, self.hidden_size, bias=False)
         self.act = get_activation(config.hidden_act)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.down_proj(self.act(self.up_proj(x)))
+        return self.down_proj(self.act(self.gate_proj(x)) * self.up_proj(x))
 
 
 class SparseMoEBlock(nn.Module):
