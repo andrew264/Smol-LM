@@ -120,8 +120,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     model.train()
     print_step = 250
     for epoch in range(config.max_epochs):
-        print(f"Epoch {epoch + 1} / {config.max_epochs}")
-        print(f"Starting from step {start_step} / {total_steps}")
+        print(f"Starting Epoch: {epoch + 1} of {config.max_epochs}")
+        print(f"Training Step: {start_step} of {total_steps}")
         for i, item in enumerate(data):
             if i <= start_step:
                 continue
@@ -148,9 +148,9 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 avg_loss = sum(losses) / len(losses)
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
                 tokens_per_sec = print_step * config.max_batch_size * config.max_position_embeddings / time_delta
-                print(f"Step {i} | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f} | "
-                      f"Time {time_delta:.1f}s | "
-                      f"Tokens/s {tokens_per_sec:.1f}")
+                print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
+                      f"Elapsed Time: {time_delta:.1f}s | "
+                      f"Tokens per Second: {tokens_per_sec:.1f}")
                 start_time = time.time()
                 losses = []
             if i % 1000 == 0 and i > 0:
@@ -203,6 +203,7 @@ if __name__ == '__main__':
           config=params,
           start_step=step,
           save_step_count=True,
-          disable_scheduler=False
+          disable_scheduler=True,
+          learning_rate=5e-5
           )
     # validate_model(None, val_data, True)

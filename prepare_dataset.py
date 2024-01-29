@@ -12,17 +12,12 @@ if __name__ == '__main__':
     tokenizer = tokenizers.Tokenizer.from_file("weights/tokenizer.json")
     eot = tokenizer.encode("<|endoftext|>").ids[0]
 
-    minipile = '/mnt/Ddrive/minipile'
-    simple_wikipedia = '/mnt/Ddrive/simple_wikipedia_LM'
-    refinedweb = '/mnt/Ddrive/refinedweb-3m'
+    minipile = '/mnt/d/minipile'
+    refinedweb = '/mnt/d/refinedweb-3m'
     d1 = datasets.load_dataset(path=minipile, num_proc=num_proc)['train']
-    d2 = datasets.load_dataset(path=simple_wikipedia, num_proc=num_proc)['train']  # id, url, title, text
-    # remove the url and id and combine title and text
-    d2 = d2.map(lambda x: {'text': x['title'] + '\n' + x['text']}, num_proc=num_proc)
-    d2 = d2.remove_columns(['id', 'url', 'title'])
-
+    d2 = datasets.load_dataset("BEE-spoke-data/wikipedia-20230901.en-deduped", "text-only", num_proc=num_proc)
     d3 = datasets.load_dataset(path=refinedweb, num_proc=num_proc)['train']
-    dataset = datasets.concatenate_datasets([d1, d2, d3])
+    dataset = datasets.concatenate_datasets([d1, d2['train'], d2['validation'], d2['test'], d3])
     split_dataset = dataset.train_test_split(test_size=0.001, shuffle=True)
     split_dataset['val'] = split_dataset.pop('test')
 

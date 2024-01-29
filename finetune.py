@@ -38,4 +38,5 @@ if __name__ == '__main__':
           config=params,
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
+          learning_rate=1e-5,
           )

@@ -77,23 +77,3 @@ class CSVDataset(HFDataset):
             data.append(PROMPT_FORMAT.format(instruction=instruction, response=response))
         self.tokenized = tokenizer.encode_batch(data)
         del df, data
-
-
-class InstructMixDataset(Dataset):
-    def __init__(self, max_length: int, tokenizer: Tokenizer):
-        self.dataset = load_dataset("Locutusque/InstructMix-V2")['train']
-        self.max_length = max_length
-        self.tokenizer = tokenizer
-        self.tokenizer.enable_padding(pad_id=0, pad_token='<|pad|>', length=max_length + 1)
-        tokenizer.enable_truncation(max_length=max_length + 1)
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor, Tensor]:
-        row = self.dataset[index]
-        prompt = PROMPT_FORMAT.format(instruction=row['Input'], response=row['Output'])
-        tokenized = self.tokenizer.encode(prompt)
-        ids = tokenized.ids
-        mask = tokenized.attention_mask
-        return torch.tensor(ids[:-1]), torch.tensor(ids[1:]), torch.tensor(mask[:-1])  # x, y, mask
