@@ -1,15 +1,15 @@
 import os
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 import bitsandbytes as bnb
 import numpy as np
 import torch
 import tqdm
-import transformers
 from accelerate import Accelerator
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+from transformers import get_cosine_schedule_with_warmup
 
 from model import ModelConfig
 from utils import load_model
@@ -21,12 +21,12 @@ class NPDataset(Dataset):
     def __init__(self, path, block_size=1024):
         self.data = np.memmap(path, dtype=np.uint16, mode='r')
         self.num_samples = len(self.data) // block_size
-        self.data = np.reshape(self.data[:self.num_samples * block_size], (-1, block_size))
+        self.data = self.data[:self.num_samples * block_size].reshape(self.num_samples, block_size)
 
     def __len__(self):
-        return len(self.data)
+        return self.num_samples
 
-    def __getitem__(self, index) -> (np.ndarray, np.ndarray):
+    def __getitem__(self, index) -> Tuple[np.ndarray, np.ndarray]:
         ids = np.int64(self.data[index])
         return ids, ids
 
@@ -38,17 +38,14 @@ def count_parameters(m: nn.Module):
 @torch.no_grad()
 def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full_validation: bool = False):
     if not model:
-        model = load_model(ModelConfig.from_json('./weights/config.json'),
-                           './weights/model_ckpt.pt', device)
+        model = load_model(ModelConfig.from_json('./weights/config.json'), './weights/model_ckpt.pt', device)
     model.eval()
 
     losses = []
     for i, item in tqdm.tqdm(enumerate(validation_data),
                              total=len(validation_data) if full_validation or len(validation_data) < 100 else 100,
                              desc="Validating"):
-        ids = item[0].to(device)
-        labels = item[1].to(device)
-        mask = item[2].to(device) if len(item) > 2 else None
+        ids, labels, mask = item[0].to(device), item[1].to(device), item[2].to(device) if len(item) > 2 else None
         with torch.no_grad():
             logits, loss = model(input_ids=ids, labels=labels, mask=mask)
             losses.append(loss.item())
@@ -58,7 +55,7 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
 
     avg_loss = sum(losses) / len(losses)
     avg_perplexity = torch.exp(torch.tensor(avg_loss))
-    print(f"Validation | Loss {avg_loss:.3f} | Perplexity {avg_perplexity:.3f}")
+    print(f"Validation | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f}")
     model.train()
 
 
@@ -93,10 +90,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
         print("Disabled gradients for embedding layer and output layer.")
 
     # total steps
-    try:
-        total_steps = len(training_data)
-    except TypeError:
-        total_steps = int(1e6)
+    total_steps = len(training_data) if isinstance(training_data, DataLoader) else None
+    if total_steps is None:
+        print("Could not determine total steps. Disabling scheduler.")
+        disable_scheduler = True
 
     # optimizer
     betas = (0.9, 0.95)
@@ -107,9 +104,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     # scheduler
     scheduler = None
     if not disable_scheduler:
-        scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=10000,
-                                                                 num_training_steps=total_steps * config.max_epochs)
-        scheduler.last_epoch = start_step
+        assert total_steps is not None
+        scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.01),
+                                                    num_training_steps=total_steps * config.max_epochs)
+        scheduler.last_epoch = start_step - 1
 
     # accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
@@ -117,20 +115,20 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
     losses = []
     start_time = time.time()
-    model.train()
     print_step = 250
+    model.train()
+
     for epoch in range(config.max_epochs):
         print(f"Starting Epoch: {epoch + 1} of {config.max_epochs}")
         print(f"Training Step: {start_step} of {total_steps}")
+
         for i, item in enumerate(data):
             if i <= start_step:
                 continue
             if i == start_step + 1:
                 start_time = time.time()
 
-            ids = item[0]
-            labels = item[1]
-            mask = item[2].to(device) if len(item) > 2 else None
+            ids, labels, mask = item[0], item[1], item[2].to(device) if len(item) > 2 else None
 
             # train step
             with accelerator.accumulate(model):
@@ -139,8 +137,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 accelerator.backward(loss)  # backward pass
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
+
                 if not disable_scheduler:
                     scheduler.step()
+
                 optimizer.zero_grad()
 
             if i % print_step == 0 and i > 0:
@@ -148,26 +148,34 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 avg_loss = sum(losses) / len(losses)
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
                 tokens_per_sec = print_step * config.max_batch_size * config.max_position_embeddings / time_delta
+
                 print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                      f"Elapsed Time: {time_delta:.1f}s | "
-                      f"Tokens per Second: {tokens_per_sec:.1f}")
+                      f"Elapsed Time: {time_delta:.1f}s | Tokens per Second: {tokens_per_sec:.1f}")
+
                 start_time = time.time()
                 losses = []
+
             if i % 1000 == 0 and i > 0:
                 torch.save(model.state_dict(), model_weights_path)
+
                 if save_step_count:
                     with open(model_path + 'step.txt', 'w') as step_file:
                         step_file.write(f"{i}\n")
+
                 if validation_data is not None:
                     if i % 10000 == 0:
                         validate_model(model, validation_data, full_validation=True)
                     else:
                         validate_model(model, validation_data)
+
                 start_time = time.time()
+
         torch.save(model.state_dict(), model_weights_path)
         start_step = 0
+
         if validation_data is not None:
             validate_model(model, validation_data, full_validation=True)
+
     print("Training complete.")
 
 
@@ -203,7 +211,7 @@ if __name__ == '__main__':
           config=params,
           start_step=step,
           save_step_count=True,
-          disable_scheduler=True,
+          disable_scheduler=False,
           learning_rate=5e-5
           )
     # validate_model(None, val_data, True)
