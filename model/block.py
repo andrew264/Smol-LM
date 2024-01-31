@@ -1,8 +1,7 @@
 from typing import Tuple, Optional
 
 import torch.nn as nn
-from flash_attn.ops.triton.layernorm import RMSNorm
-
+from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 

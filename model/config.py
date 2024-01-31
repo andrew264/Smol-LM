@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -14,7 +15,7 @@ class ModelConfig:
     num_attention_heads = 8
     num_key_value_heads = 8
     is_moe = True
-    sliding_window = -1
+    sliding_window: Optional[int] = None
     num_local_experts = 2
     num_experts_per_tok = 1
     router_aux_loss_coef = 0.001
@@ -48,6 +49,8 @@ class ModelConfig:
             setattr(conf, k, v)
         if conf.num_local_experts == 1:
             conf.is_moe = False
+        if conf.sliding_window < 1:
+            conf.sliding_window = None
         if conf.is_moe and conf.num_experts_per_tok > conf.num_local_experts:
             raise ValueError("num_experts_per_tok must be less than or equal to num_local_experts.")
         return conf

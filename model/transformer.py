@@ -5,10 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from flash_attn.losses.cross_entropy import CrossEntropyLoss
 from flash_attn.ops.fused_dense import FusedDense
-from flash_attn.ops.triton.layernorm import RMSNorm
+from flash_attn.ops.triton.layer_norm import RMSNorm
 from tokenizers import Tokenizer
 from torch import Tensor
 from transformers import LogitsProcessorList
+from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
 
 from model import ModelConfig
 from model.block import TransformerBlock
@@ -64,6 +65,7 @@ class Transformer(nn.Module):
         self.gradient_checkpointing = config.gradient_checkpointing
         self.router_aux_loss_coef = config.router_aux_loss_coef
         self.num_experts = config.num_local_experts
+        self.sliding_window = config.sliding_window
 
         self.loss_fn = CrossEntropyLoss(inplace_backward=True)
 
@@ -82,6 +84,15 @@ class Transformer(nn.Module):
                 mask: Optional[Tensor] = None) -> tuple[Tensor, Optional[Tensor]]:
         x = self.tok_embeddings(input_ids)
 
+        if mask is not None:
+            # prepare the mask for F.scaled_dot_product_attention
+            bs, seq_len = mask.shape
+            mask = _prepare_4d_causal_attention_mask_for_sdpa(attention_mask=mask,
+                                                              input_shape=(bs, seq_len),
+                                                              inputs_embeds=x,
+                                                              past_key_values_length=input_pos if input_pos else 0,
+                                                              sliding_window=self.sliding_window, )
+
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
             x, router_logits = layer(x, mask, input_pos=input_pos)
@@ -93,7 +104,7 @@ class Transformer(nn.Module):
             logits = logits[..., :-1, :].contiguous()
             labels = labels[..., 1:].contiguous()
             loss = self.loss_fn(logits.view(-1, self.vocab_size),
-                                labels.view(-1),)
+                                labels.view(-1), )
             if self.config.is_moe:
                 aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
                 loss += self.router_aux_loss_coef * aux_loss
