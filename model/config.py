@@ -49,7 +49,7 @@ class ModelConfig:
             setattr(conf, k, v)
         if conf.num_local_experts == 1:
             conf.is_moe = False
-        if conf.sliding_window < 1:
+        if conf.sliding_window is not None and conf.sliding_window < 1:
             conf.sliding_window = None
         if conf.is_moe and conf.num_experts_per_tok > conf.num_local_experts:
             raise ValueError("num_experts_per_tok must be less than or equal to num_local_experts.")

@@ -40,20 +40,19 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     if not model:
         model = load_model(ModelConfig.from_json('./weights/config.json'), './weights/model_ckpt.pt', device)
     model.eval()
+    total = len(validation_data) if full_validation or len(validation_data) < 100 else 100
+    accumulated_loss = 0
 
-    losses = []
-    for i, item in tqdm.tqdm(enumerate(validation_data),
-                             total=len(validation_data) if full_validation or len(validation_data) < 100 else 100,
-                             desc="Validating"):
+    for i, item in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
         ids, labels, mask = item[0].to(device), item[1].to(device), item[2].to(device) if len(item) > 2 else None
         with torch.no_grad():
             logits, loss = model(input_ids=ids, labels=labels, mask=mask)
-            losses.append(loss.item())
+            accumulated_loss += loss.item()
 
         if not full_validation and i > 99:
             break
 
-    avg_loss = sum(losses) / len(losses)
+    avg_loss = accumulated_loss / total
     avg_perplexity = torch.exp(torch.tensor(avg_loss))
     print(f"Validation | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f}")
     model.train()
@@ -77,6 +76,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     """
 
     model_weights_path = model_path + "model_ckpt.pt"
+    optimizer_path = model_path + "optimizer.pt"
     model = load_model(config, model_weights_path, device)
 
     torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
@@ -85,9 +85,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     if disable_grads_for_embeddings:
         for param in model.tok_embeddings.parameters():
             param.requires_grad = False
-        for param in model.output.parameters():
-            param.requires_grad = False
-        print("Disabled gradients for embedding layer and output layer.")
+        print("Disabled gradients for embedding layer.")
 
     # total steps
     total_steps = len(training_data) if isinstance(training_data, DataLoader) else None
@@ -98,8 +96,14 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     # optimizer
     betas = (0.9, 0.95)
     weight_decay = 0.1
-    optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=learning_rate, betas=betas,
-                                         weight_decay=weight_decay, min_8bit_size=config.hidden_size, )
+    optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=learning_rate, betas=betas,
+                                    weight_decay=weight_decay, )
+    #  Load optimizer states if resuming training
+    if start_step > 0 and os.path.exists(optimizer_path):
+        checkpoint = torch.load(optimizer_path, map_location=torch.device('cpu'))
+        optimizer.load_state_dict(checkpoint)
+        print(f"Loaded optimizer states from {optimizer_path}.")
+        del checkpoint
 
     # scheduler
     scheduler = None
@@ -111,29 +115,31 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
     # accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
-    model, optimizer, data, scheduler = accelerator.prepare(model, optimizer, training_data, scheduler)
+    model, scheduler = accelerator.prepare(model, scheduler)
 
-    losses = []
+    accumulated_loss = 0
     start_time = time.time()
     print_step = 250
     model.train()
+    print(f"Simulated Batch Size: {config.max_batch_size * config.grad_accumulation_steps}")
 
     for epoch in range(config.max_epochs):
         print(f"Starting Epoch: {epoch + 1} of {config.max_epochs}")
-        print(f"Training Step: {start_step} of {total_steps}")
+        print(f"Training Step: {start_step} of {total_steps} | {start_step / total_steps * 100:.2f}%")
 
-        for i, item in enumerate(data):
+        for i, item in enumerate(training_data):
             if i <= start_step:
                 continue
             if i == start_step + 1:
                 start_time = time.time()
 
-            ids, labels, mask = item[0], item[1], item[2].to(device) if len(item) > 2 else None
+            ids, labels, mask = item[0], item[1], item[2] if len(item) > 2 else None
+            ids, labels, mask = ids.to(device), labels.to(device), mask.to(device) if mask is not None else None
 
             # train step
             with accelerator.accumulate(model):
                 logits, loss = model(input_ids=ids, labels=labels, mask=mask)  # forward pass
-                losses.append(loss.item())
+                accumulated_loss += loss.item()
                 accelerator.backward(loss)  # backward pass
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
@@ -145,18 +151,19 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
             if i % print_step == 0 and i > 0:
                 time_delta = time.time() - start_time
-                avg_loss = sum(losses) / len(losses)
+                avg_loss = accumulated_loss / print_step
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
-                tokens_per_sec = print_step * config.max_batch_size * config.max_position_embeddings / time_delta
+                items_per_min = print_step * config.max_batch_size / (time_delta / 60)
 
                 print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                      f"Elapsed Time: {time_delta:.1f}s | Tokens per Second: {tokens_per_sec:.1f}")
+                      f"Elapsed Time: {time_delta:.1f}s | Items/Min: {items_per_min:.1f}")
 
                 start_time = time.time()
-                losses = []
+                accumulated_loss = 0
 
             if i % 1000 == 0 and i > 0:
                 torch.save(model.state_dict(), model_weights_path)
+                torch.save(optimizer.state_dict(), optimizer_path)
 
                 if save_step_count:
                     with open(model_path + 'step.txt', 'w') as step_file:
@@ -171,6 +178,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 start_time = time.time()
 
         torch.save(model.state_dict(), model_weights_path)
+        torch.save(optimizer.state_dict(), optimizer_path)
         start_step = 0
 
         if validation_data is not None:
@@ -194,10 +202,11 @@ if __name__ == '__main__':
 
     # training
     dataset = NPDataset('./data/processed/train.bin', params.max_position_embeddings)
-    train_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
+    train_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True,
+                            pin_memory=True)
     # validation
     dataset = NPDataset('./data/processed/val.bin', params.max_position_embeddings)
-    val_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
+    val_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True, pin_memory=True)
 
     # resume training
     step = 0
@@ -212,6 +221,7 @@ if __name__ == '__main__':
           start_step=step,
           save_step_count=True,
           disable_scheduler=False,
+          disable_grads_for_embeddings=False,
           learning_rate=5e-5
           )
     # validate_model(None, val_data, True)
