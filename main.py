@@ -76,7 +76,6 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     """
 
     model_weights_path = model_path + "model_ckpt.pt"
-    optimizer_path = model_path + "optimizer.pt"
     model = load_model(config, model_weights_path, device)
 
     torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
@@ -97,25 +96,21 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     betas = (0.9, 0.95)
     weight_decay = 0.1
     optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=learning_rate, betas=betas,
-                                    weight_decay=weight_decay, )
-    #  Load optimizer states if resuming training
-    if start_step > 0 and os.path.exists(optimizer_path):
-        checkpoint = torch.load(optimizer_path, map_location=torch.device('cpu'))
-        optimizer.load_state_dict(checkpoint)
-        print(f"Loaded optimizer states from {optimizer_path}.")
-        del checkpoint
+                                    weight_decay=weight_decay)
 
     # scheduler
     scheduler = None
     if not disable_scheduler:
         assert total_steps is not None
-        scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.01),
-                                                    num_training_steps=total_steps * config.max_epochs)
-        scheduler.last_epoch = start_step - 1
+        scheduler = get_cosine_schedule_with_warmup(optimizer,
+                                                    num_warmup_steps=int(
+                                                        total_steps // config.grad_accumulation_steps * 0.02),
+                                                    num_training_steps=total_steps // config.grad_accumulation_steps)
+        scheduler.last_epoch = start_step // config.grad_accumulation_steps
 
     # accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
-    model, scheduler = accelerator.prepare(model, scheduler)
+    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
 
     accumulated_loss = 0
     start_time = time.time()
@@ -144,7 +139,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
 
-                if not disable_scheduler:
+                if scheduler is not None:
                     scheduler.step()
 
                 optimizer.zero_grad()
@@ -153,17 +148,16 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 time_delta = time.time() - start_time
                 avg_loss = accumulated_loss / print_step
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
-                items_per_min = print_step * config.max_batch_size / (time_delta / 60)
+                samples_per_min = print_step * config.max_batch_size / (time_delta / 60)
 
                 print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                      f"Elapsed Time: {time_delta:.1f}s | Items/Min: {items_per_min:.1f}")
+                      f"Elapsed Time: {time_delta:.1f}s | Samples/Min: {samples_per_min:.1f}")
 
                 start_time = time.time()
                 accumulated_loss = 0
 
-            if i % 1000 == 0 and i > 0:
+            if i % 2000 == 0 and i > 0:
                 torch.save(model.state_dict(), model_weights_path)
-                torch.save(optimizer.state_dict(), optimizer_path)
 
                 if save_step_count:
                     with open(model_path + 'step.txt', 'w') as step_file:
@@ -178,7 +172,6 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 start_time = time.time()
 
         torch.save(model.state_dict(), model_weights_path)
-        torch.save(optimizer.state_dict(), optimizer_path)
         start_step = 0
 
         if validation_data is not None:
