@@ -6,10 +6,10 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, \
 from model import ModelConfig
 from utils import load_model
 
-weights = './weights/model_ckpt.pt'
+weights = './weights/accelerator_states/model.safetensors'
 tokenizer_path = 'weights/tokenizer.json'
 config = './weights/config.json'
-device = torch.device("cuda")
+device = torch.device("cuda:0")
 
 if __name__ == '__main__':
 

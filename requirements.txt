@@ -10,3 +10,4 @@ tqdm
 transformers
 aiohttp
 datasets
+safetensors

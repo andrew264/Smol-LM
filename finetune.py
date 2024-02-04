@@ -7,7 +7,7 @@ from finetune_datasets import CSVDataset, DollyDataset, HFnoRobotsDataset, Alpac
 from main import train
 from model import ModelConfig
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 if __name__ == '__main__':
     from tokenizers import Tokenizer

@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 import bitsandbytes as bnb
 import numpy as np
@@ -11,10 +11,10 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import get_cosine_schedule_with_warmup
 
-from model import ModelConfig
+from model import ModelConfig, Transformer
 from utils import load_model
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class NPDataset(Dataset):
@@ -26,9 +26,8 @@ class NPDataset(Dataset):
     def __len__(self):
         return self.num_samples
 
-    def __getitem__(self, index) -> Tuple[np.ndarray, np.ndarray]:
-        ids = np.int64(self.data[index])
-        return ids, ids
+    def __getitem__(self, index) -> [np.ndarray]:
+        return [np.int64(self.data[index])]
 
 
 def count_parameters(m: nn.Module):
@@ -38,15 +37,17 @@ def count_parameters(m: nn.Module):
 @torch.no_grad()
 def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full_validation: bool = False):
     if not model:
-        model = load_model(ModelConfig.from_json('./weights/config.json'), './weights/model_ckpt.pt', device)
+        model = load_model(config=ModelConfig.from_json('./weights/config.json'),
+                           path='./weights/accelerator_states/model.safetensors',
+                           device=device)
     model.eval()
     total = len(validation_data) if full_validation or len(validation_data) < 100 else 100
     accumulated_loss = 0
 
     for i, item in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
-        ids, labels, mask = item[0].to(device), item[1].to(device), item[2].to(device) if len(item) > 2 else None
+        ids, mask = item[0], item[1] if len(item) > 1 else None
         with torch.no_grad():
-            logits, loss = model(input_ids=ids, labels=labels, mask=mask)
+            logits, loss = model(input_ids=ids, labels=ids, mask=mask)
             accumulated_loss += loss.item()
 
         if not full_validation and i > 99:
@@ -75,8 +76,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :return:
     """
 
-    model_weights_path = model_path + "model_ckpt.pt"
-    model = load_model(config, model_weights_path, device)
+    model = Transformer(config)
+    model.to(dtype=torch.bfloat16, device=device)
 
     torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
@@ -106,11 +107,18 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                                                     num_warmup_steps=int(
                                                         total_steps // config.grad_accumulation_steps * 0.02),
                                                     num_training_steps=total_steps // config.grad_accumulation_steps)
-        scheduler.last_epoch = start_step // config.grad_accumulation_steps
 
     # accelerator
-    accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
+    checkpoint = model_path + "accelerator_states"
+    accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps, project_dir=model_path)
     model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    if os.path.exists(checkpoint):
+        # on God this fixes OOM while loading scheduler states on a single GPU
+        accelerator.load_state(checkpoint, map_location='on_device')
+        print("Loaded accelerator state from file.")
+    else:
+        accelerator.save_state(output_dir=checkpoint)
+        print("Saved accelerator state to file.")
 
     accumulated_loss = 0
     start_time = time.time()
@@ -128,12 +136,12 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
             if i == start_step + 1:
                 start_time = time.time()
 
-            ids, labels, mask = item[0], item[1], item[2] if len(item) > 2 else None
-            ids, labels, mask = ids.to(device), labels.to(device), mask.to(device) if mask is not None else None
+            ids, mask = item[0], item[1] if len(item) > 1 else None
+            ids, mask = ids.to(device), mask.to(device) if mask is not None else None
 
             # train step
             with accelerator.accumulate(model):
-                logits, loss = model(input_ids=ids, labels=labels, mask=mask)  # forward pass
+                logits, loss = model(input_ids=ids, labels=ids, mask=mask)  # forward pass
                 accumulated_loss += loss.item()
                 accelerator.backward(loss)  # backward pass
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -150,14 +158,14 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
                 samples_per_min = print_step * config.max_batch_size / (time_delta / 60)
 
-                print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                      f"Elapsed Time: {time_delta:.1f}s | Samples/Min: {samples_per_min:.1f}")
+                accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
+                                  f"Elapsed Time: {time_delta:.1f}s | Samples/Min: {samples_per_min:.1f}")
 
                 start_time = time.time()
                 accumulated_loss = 0
 
             if i % 2000 == 0 and i > 0:
-                torch.save(model.state_dict(), model_weights_path)
+                accelerator.save_state(output_dir=checkpoint)
 
                 if save_step_count:
                     with open(model_path + 'step.txt', 'w') as step_file:
@@ -171,7 +179,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
                 start_time = time.time()
 
-        torch.save(model.state_dict(), model_weights_path)
+        accelerator.save_state(output_dir=checkpoint)
         start_step = 0
 
         if validation_data is not None:

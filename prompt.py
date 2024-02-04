@@ -5,14 +5,14 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
 from model import ModelConfig
 from utils import load_model
 
-device = torch.device("cuda")
+device = torch.device("cuda:0")
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 
 GENERATION_FORMAT = """<|USER|>{instruction}<|endoftext|>
 <|ASSISTANT|>"""
 
 if __name__ == '__main__':
-    weights = './finetuned-weights/model_ckpt.pt'
+    weights = './finetuned-weights/accelerator_states/model.safetensors'
 
     config = ModelConfig.from_json('./weights/config.json')
     config.max_batch_size = 1
