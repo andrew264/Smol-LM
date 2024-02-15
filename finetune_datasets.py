@@ -12,16 +12,16 @@ PROMPT_FORMAT = """<|USER|>{instruction}<|endoftext|>
 class HFDataset(Dataset):
     def __init__(self, max_length: int, tokenizer: Tokenizer):
         self.tokenized = []
-        tokenizer.enable_padding(pad_id=0, pad_token='<|pad|>', length=max_length + 1)
-        tokenizer.enable_truncation(max_length=max_length + 1)
+        tokenizer.enable_truncation(max_length=max_length)
 
     def __len__(self):
         return len(self.tokenized)
 
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor, Tensor]:
-        ids = self.tokenized[index].ids
-        mask = self.tokenized[index].attention_mask
-        return torch.tensor(ids[:-1]), torch.tensor(ids[1:]), torch.tensor(mask[:-1])
+    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
+        item = self.tokenized[index]
+        ids = torch.tensor(item.ids)
+        mask = torch.tensor(item.attention_mask)
+        return ids, mask
 
 
 class DollyDataset(HFDataset):

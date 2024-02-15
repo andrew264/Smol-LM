@@ -223,6 +223,6 @@ if __name__ == '__main__':
           save_step_count=True,
           disable_scheduler=False,
           disable_grads_for_embeddings=False,
-          learning_rate=5e-5
+          learning_rate=3e-4
           )
     # validate_model(None, val_data, True)
