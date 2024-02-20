@@ -61,7 +61,8 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
 
 def train(model_path: str, training_data: DataLoader, config: ModelConfig,
           validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False,
-          disable_grads_for_embeddings: bool = False, disable_scheduler: bool = False, learning_rate: float = 3e-4):
+          disable_grads_for_embeddings: bool = False, disable_scheduler: bool = False, learning_rate: float = 3e-4,
+          save_every: int = 2000):
     """
 
     :param model_path: Model path to save model weights
@@ -73,6 +74,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :param disable_grads_for_embeddings: Disable gradients for embedding layer and the output layer
     :param disable_scheduler: Disable the learning rate scheduler
     :param learning_rate: Learning rate for the optimizer
+    :param save_every: Save the model weights every `save_every` steps
     :return:
     """
 
@@ -122,7 +124,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
     accumulated_loss = 0
     start_time = time.time()
-    print_step = 250
+    print_step = save_every // 10
     model.train()
     print(f"Simulated Batch Size: {config.max_batch_size * config.grad_accumulation_steps}")
 
@@ -164,7 +166,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 start_time = time.time()
                 accumulated_loss = 0
 
-            if i % 2000 == 0 and i > 0:
+            if i % save_every == 0 and i > 0:
                 accelerator.save_state(output_dir=checkpoint)
 
                 if save_step_count:

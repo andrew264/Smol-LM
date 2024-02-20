@@ -20,6 +20,7 @@ class Attention(nn.Module):
         self.num_heads = config.num_attention_heads
         self.num_key_value_heads = config.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -50,20 +51,20 @@ class Attention(nn.Module):
         self.kv_cache[:, input_pos:total_len] = kv_states
         return self.kv_cache[:, :total_len]
 
-    def forward(self, x: Tensor, mask: Optional[Tensor], input_pos: Optional[int] = None) -> Tensor:
+    def forward(self, x: Tensor, attention_mask: Optional[Tensor], input_pos: Optional[int] = None) -> Tensor:
         bsz, seqlen, _ = x.size()
-        is_causal = mask is None and seqlen > 1
+        is_causal = attention_mask is None and seqlen > 1
         qkv_states = self.qkv_proj(x)
 
         if self.num_heads == self.num_key_value_heads:  # self-attention
             qkv_states = qkv_states.view(bsz, seqlen, 3, self.num_heads, self.head_dim)
             qkv_states = self.rotary_emb(qkv_states, seqlen_offset=input_pos or 0)
             if input_pos is None:
-                attn_output = self._sdpa(*qkv_states.unbind(dim=2), attention_mask=mask, is_causal=is_causal)
+                attn_output = self._sdpa(*qkv_states.unbind(dim=2), attention_mask=attention_mask, is_causal=is_causal)
             else:  # inference in self-attention
                 kv_states = self.update_kv_cache(qkv_states[:, :, 1:], input_pos)
                 attn_output = self._sdpa(qkv_states[:, :, 0], *kv_states.unbind(dim=2),
-                                         attention_mask=mask, is_causal=is_causal)
+                                         attention_mask=attention_mask, is_causal=is_causal)
         else:  # MQ/GQ Attention
             kv_size = self.num_key_value_heads * self.head_dim
             q_state, kv_states = qkv_states.split([self.hidden_size, 2 * kv_size], dim=-1)
@@ -73,7 +74,7 @@ class Attention(nn.Module):
             if input_pos is not None:
                 kv_states = self.update_kv_cache(kv_states, input_pos)
             attn_output = self._sdpa(q_state, *kv_states.unbind(dim=2),
-                                     attention_mask=mask, is_causal=is_causal)
+                                     attention_mask=attention_mask, is_causal=is_causal)
 
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
         attn_output = self.o_proj(attn_output)
@@ -86,8 +87,16 @@ class Attention(nn.Module):
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
 
-        key_states = key_states.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
-        value_states = value_states.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
+        key_states = key_states.repeat_interleave(self.num_key_value_groups, dim=1)
+        value_states = value_states.repeat_interleave(self.num_key_value_groups, dim=1)
+
+        if attention_mask is not None:
+            bsz, seqlen = query_states.size(0), query_states.size(2)
+            kv_seq_len = key_states.size(2)
+            if attention_mask.size() != (bsz, 1, seqlen, kv_seq_len):
+                raise ValueError(
+                    f"Attention mask should be of size {(bsz, 1, seqlen, kv_seq_len)}, but is {attention_mask.size()}"
+                )
 
         attn_output = F.scaled_dot_product_attention(
             query_states,
