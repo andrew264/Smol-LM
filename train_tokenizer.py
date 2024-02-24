@@ -1,40 +1,43 @@
 import time
 
 import datasets
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, processors, normalizers
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, processors
 
 if __name__ == '__main__':
     tokenizer = Tokenizer(models.BPE())
-    tokenizer.pre_tokenizer = pre_tokenizers.Sequence([pre_tokenizers.ByteLevel(add_prefix_space=True),
-                                                       pre_tokenizers.Digits(individual_digits=False)])
+    tokenizer.pre_tokenizer = pre_tokenizers.Sequence([pre_tokenizers.ByteLevel(add_prefix_space=False),
+                                                       pre_tokenizers.Digits(individual_digits=True)])
     tokenizer.decoder = decoders.ByteLevel()
     tokenizer.post_processor = processors.ByteLevel()
-    tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC(), ])
     trainer = trainers.BpeTrainer(
-        vocab_size=16000,
-        min_frequency=2,
+        vocab_size=24000,
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
-        special_tokens=["<|pad|>", "<|endoftext|>", "<|USER|>", "<|SYSTEM|>", "<|ASSISTANT|>"],
+        special_tokens=["<|pad|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>",  # Special tokens
+                        "<|user|>", "<|assistant|>", "<|system|>",  # Prompt tokens
+                        "```", "##", "###", "**"],  # Markdown tokens
         show_progress=True,
-        max_token_length=16,
+        max_token_length=24,
     )
 
-    num_proc = 20
-    minipile = '/mnt/d/minipile'
-    refinedweb = '/mnt/d/refinedweb-3m'
-    d1 = datasets.load_dataset(path=minipile, num_proc=num_proc)['train']
-    d2 = datasets.load_dataset("BEE-spoke-data/wikipedia-20230901.en-deduped", "text-only", num_proc=num_proc)
-    d3 = datasets.load_dataset(path=refinedweb, num_proc=num_proc)['train']
-    dataset = datasets.concatenate_datasets([d3, d2['train'], d2['validation'], d2['test'], d1])
+    cosmopedia = '/mnt/d/Datasets/cosmopedia'
+    dataset = datasets.load_dataset(path=cosmopedia, split='train', streaming=True).shuffle(seed=42)
+    batch_size = 25_000
+    length = 31_064_744
 
 
-    def batch_iterator(batch_size=20000):
-        for i in range(0, len(dataset), batch_size):
-            yield dataset[i:i + batch_size]["text"]
+    def batch_iterator():
+        batch = []
+        for sample in dataset:
+            batch.append(sample['text'])
+            if len(batch) == batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
 
     print("Training tokenizer...")
     start = time.time()
-    tokenizer.train_from_iterator(batch_iterator(), trainer=trainer, length=len(dataset), )
+    tokenizer.train_from_iterator(batch_iterator(), trainer=trainer, length=length)
     tokenizer.save('./weights/tokenizer.json')
     print(f"Finished training in {(time.time() - start):.2f} seconds")

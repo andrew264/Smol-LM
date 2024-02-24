@@ -5,8 +5,7 @@ from tokenizers import Tokenizer
 from torch import Tensor
 from torch.utils.data import Dataset
 
-PROMPT_FORMAT = """<|USER|>{instruction}<|endoftext|>
-<|ASSISTANT|>{response}<|endoftext|>"""
+from prompt_format import Prompt
 
 
 class HFDataset(Dataset):
@@ -24,18 +23,15 @@ class HFDataset(Dataset):
         return ids, mask
 
 
-class DollyDataset(HFDataset):
+class OpenInstruct(HFDataset):
     def __init__(self, max_length: int, tokenizer: Tokenizer):
         super().__init__(max_length, tokenizer)
-        dataset = load_dataset("databricks/databricks-dolly-15k")['train']
+        dataset = load_dataset("VMware/open-instruct", streaming=True, split='train')
         data = []
         for row in dataset:
-            instruction = row['instruction']
-            context = row['context']
-            response = row['response']
-            if context != '':
-                instruction = "Context: " + context + '\n' + instruction
-            data.append(PROMPT_FORMAT.format(instruction=instruction, response=response))
+            prompt = Prompt()
+            prompt.add_messages([row['instruction'], row['response']])
+            data.append(prompt.get_tokens())
         self.tokenized = tokenizer.encode_batch(data)
         del dataset, data
 
@@ -43,12 +39,13 @@ class DollyDataset(HFDataset):
 class AlpacaGpt4Dataset(HFDataset):
     def __init__(self, max_length: int, tokenizer: Tokenizer):
         super().__init__(max_length, tokenizer)
-        dataset = load_dataset("vicgalle/alpaca-gpt4")
+        dataset = load_dataset("vicgalle/alpaca-gpt4", streaming=True, split='train')
         data = []
-        for row in dataset['train']:
+        for row in dataset:
             instruction = row['instruction'] + '\n' + row['input']
-            response = row['output']
-            data.append(PROMPT_FORMAT.format(instruction=instruction, response=response))
+            prompt = Prompt()
+            prompt.add_messages([instruction, row['output']])
+            data.append(prompt.get_tokens())
         self.tokenized = tokenizer.encode_batch(data)
         del dataset, data
 
@@ -56,12 +53,14 @@ class AlpacaGpt4Dataset(HFDataset):
 class HFnoRobotsDataset(HFDataset):
     def __init__(self, max_length: int, tokenizer: Tokenizer):
         super().__init__(max_length, tokenizer)
-        dataset = load_dataset("HuggingFaceH4/no_robots")
+        dataset = load_dataset("HuggingFaceH4/no_robots", streaming=True)
+        dataset['train_sft'] = dataset['train_sft'] + dataset['test_sft']
         data = []
         for row in dataset['train_sft']:
-            instruction = row['prompt']
-            response = row['messages'][-1]["content"]
-            data.append(PROMPT_FORMAT.format(instruction=instruction, response=response))
+            prompt = Prompt()
+            conversation = [c['content'] for c in row['messages']]
+            prompt.add_messages(conversation)
+            data.append(prompt.get_tokens())
         self.tokenized = tokenizer.encode_batch(data)
         del dataset, data
 
@@ -72,8 +71,8 @@ class CSVDataset(HFDataset):
         data = []
         df = pd.read_csv(path).sample(frac=sample_frac, replace=True)
         for row in df.itertuples():
-            instruction = row[1]
-            response = row[2]
-            data.append(PROMPT_FORMAT.format(instruction=instruction, response=response))
+            prompt = Prompt()
+            prompt.add_messages([row[1], row[2]])
+            data.append(prompt.get_tokens())
         self.tokenized = tokenizer.encode_batch(data)
         del df, data

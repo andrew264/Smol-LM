@@ -3,7 +3,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import CSVDataset, DollyDataset, HFnoRobotsDataset, AlpacaGpt4Dataset
+from finetune_datasets import CSVDataset, HFnoRobotsDataset, AlpacaGpt4Dataset, OpenInstruct
 from main import train
 from model import ModelConfig
 
@@ -23,7 +23,7 @@ if __name__ == '__main__':
         raise ValueError("Config not found.")
 
     print("Loading datasets...")
-    dataset1 = DollyDataset(params.max_position_embeddings, tokenizer)
+    dataset1 = OpenInstruct(params.max_position_embeddings, tokenizer)
     dataset2 = CSVDataset(path="data/finetune/DankDataset.csv",  # custom dataset
                           max_length=params.max_position_embeddings, tokenizer=tokenizer,
                           sample_frac=3.0)
@@ -39,4 +39,5 @@ if __name__ == '__main__':
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
           learning_rate=1e-5,
+          save_every=20000,
           )

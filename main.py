@@ -118,15 +118,13 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
         # on God this fixes OOM while loading scheduler states on a single GPU
         accelerator.load_state(checkpoint, map_location='on_device')
         print("Loaded accelerator state from file.")
-    else:
-        accelerator.save_state(output_dir=checkpoint)
-        print("Saved accelerator state to file.")
 
     accumulated_loss = 0
-    start_time = time.time()
-    print_step = save_every // 10
+    start_time, time_delta = time.time(), 0.
+    print_step = max(save_every // 10, config.grad_accumulation_steps)
     model.train()
-    print(f"Simulated Batch Size: {config.max_batch_size * config.grad_accumulation_steps}")
+    print(
+        f"Tokens per batch: {config.max_batch_size * config.grad_accumulation_steps * config.max_position_embeddings}")
 
     for epoch in range(config.max_epochs):
         print(f"Starting Epoch: {epoch + 1} of {config.max_epochs}")
@@ -158,16 +156,18 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 time_delta = time.time() - start_time
                 avg_loss = accumulated_loss / print_step
                 avg_perplexity = torch.exp(torch.tensor(avg_loss))
-                samples_per_min = print_step * config.max_batch_size / (time_delta / 60)
+                tokens_per_sec = print_step * config.max_batch_size * config.max_position_embeddings / time_delta
 
                 accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                                  f"Elapsed Time: {time_delta:.1f}s | Samples/Min: {samples_per_min:.1f}")
+                                  f"Elapsed Time: {time_delta:.1f}s | Tokens/sec: {tokens_per_sec:.0f}")
 
                 start_time = time.time()
                 accumulated_loss = 0
 
             if i % save_every == 0 and i > 0:
                 accelerator.save_state(output_dir=checkpoint)
+                print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
+                      f"Time left: {((total_steps - i) * (time_delta / print_step)) / 60:.2f} minutes")
 
                 if save_step_count:
                     with open(model_path + 'step.txt', 'w') as step_file:
@@ -205,11 +205,14 @@ if __name__ == '__main__':
 
     # training
     dataset = NPDataset('./data/processed/train.bin', params.max_position_embeddings)
-    train_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True,
-                            pin_memory=True)
-    # validation
-    dataset = NPDataset('./data/processed/val.bin', params.max_position_embeddings)
-    val_data = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=False, drop_last=True, pin_memory=True)
+    gen = torch.Generator().manual_seed(42)
+    training, validation = torch.utils.data.random_split(dataset,
+                                                         [int(len(dataset) * 0.9995),
+                                                          len(dataset) - int(len(dataset) * 0.9995)],
+                                                         generator=gen)
+    train_data = DataLoader(training, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
+    val_data = DataLoader(validation, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
+    print("Train: ", len(train_data), "Validation: ", len(val_data))
 
     # resume training
     step = 0
@@ -223,8 +226,8 @@ if __name__ == '__main__':
           config=params,
           start_step=step,
           save_step_count=True,
-          disable_scheduler=False,
+          disable_scheduler=True,
           disable_grads_for_embeddings=False,
-          learning_rate=3e-4
+          learning_rate=5e-4
           )
     # validate_model(None, val_data, True)

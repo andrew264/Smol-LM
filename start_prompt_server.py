@@ -6,19 +6,17 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig
+from prompt_format import Prompt
 from utils import load_model
 
 device = torch.device("cuda")
-weights = './finetuned-weights/model_ckpt.pt'
+weights = './finetuned-weights/accelerator_states/model.safetensors'
 
 config = ModelConfig.from_json('./weights/config.json')
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 config.max_batch_size = 1
 
 model = load_model(config, weights, device)
-
-GENERATION_FORMAT = """<|USER|>{instruction}<|endoftext|>
-<|ASSISTANT|>"""
 
 
 def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
@@ -30,8 +28,9 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
         processor.append(TopKLogitsWarper(top_k=top_k))
 
     # Process the input text (You can replace this with your processing logic)
-    prompt = GENERATION_FORMAT.format(instruction=input_text)
-    prompt = tokenizer.encode(prompt).ids
+    prompt = Prompt()
+    prompt.add_user_message(input_text)
+    prompt = prompt.get_tokens_for_completion(tokenizer)
     prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
     out = model.generate(prompt, max_tokens=1024, stream=False, logits_processors=processor)
     output_text = tokenizer.decode(out).strip()

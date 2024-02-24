@@ -3,13 +3,11 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig
+from prompt_format import Prompt
 from utils import load_model
 
 device = torch.device("cuda:0")
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
-
-GENERATION_FORMAT = """<|USER|>{instruction}<|endoftext|>
-<|ASSISTANT|>"""
 
 if __name__ == '__main__':
     weights = './finetuned-weights/accelerator_states/model.safetensors'
@@ -21,8 +19,8 @@ if __name__ == '__main__':
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
-    processor.append(RepetitionPenaltyLogitsProcessor(1.1))
-    processor.append(TopKLogitsWarper(20))
+    processor.append(RepetitionPenaltyLogitsProcessor(1.05))
+    processor.append(TopKLogitsWarper(10))
 
 
     def multiline_input():
@@ -40,9 +38,9 @@ if __name__ == '__main__':
         inp = multiline_input()
         if inp == '':
             break
-        prompt = GENERATION_FORMAT.format(instruction=inp)
-        prompt = tokenizer.encode(prompt).ids
-        prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
+        prompt = Prompt()
+        prompt.add_user_message(inp)
+        prompt = torch.tensor(prompt.get_tokens_for_completion(tokenizer=tokenizer), dtype=torch.int64, device=device)
         out = model.generate(prompt, max_tokens=512, stream=False, logits_processors=processor)
         out = tokenizer.decode(out)
         print(f"Response: {out.strip()}")
