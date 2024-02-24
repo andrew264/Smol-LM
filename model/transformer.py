@@ -15,7 +15,7 @@ from model import ModelConfig
 from model.block import TransformerBlock
 
 
-def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = None, top_k=2) -> float:
+def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = None, top_k=2) -> Tensor:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
     """
@@ -54,18 +54,19 @@ class Transformer(nn.Module):
         super().__init__()
         self.config = config
 
-        self.tok_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
-        self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(config.num_hidden_layers))
-        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.output = FusedDense(config.hidden_size, config.vocab_size, bias=False)
-
+        self.hidden_size = config.hidden_size
         self.vocab_size = config.vocab_size
-        self.max_batch_size = config.max_batch_size
-        self.max_seq_length = config.max_position_embeddings
-        self.gradient_checkpointing = config.gradient_checkpointing
+        self.num_hidden_layers = config.num_hidden_layers
         self.router_aux_loss_coef = config.router_aux_loss_coef
         self.num_experts = config.num_local_experts
         self.sliding_window = config.sliding_window
+        self.tie_word_embeddings = config.tie_word_embeddings
+
+        self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
+        self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(self.num_hidden_layers))
+        self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
+        if not self.tie_word_embeddings:
+            self.output = FusedDense(self.hidden_size, self.vocab_size, bias=False)
 
         self.loss_fn = CrossEntropyLoss(inplace_backward=True)
 
@@ -98,7 +99,10 @@ class Transformer(nn.Module):
             x, router_logits = layer(x, mask, input_pos=input_pos)
             all_router_logits += (router_logits,)
         x = self.norm(x)
-        logits = self.output(x)
+        if self.tie_word_embeddings:
+            logits = F.linear(x, self.tok_embeddings.weight)
+        else:
+            logits = self.output(x)
         loss = None
         if labels is not None:
             logits = logits[..., :-1, :].contiguous()

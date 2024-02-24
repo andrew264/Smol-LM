@@ -22,12 +22,13 @@ class ModelConfig:
     hidden_act = "silu"
     max_position_embeddings = 1024
     initializer_range = 0.02
-    rms_norm_eps = 1e-5
+    rms_norm_eps = 1e-06
     use_cache = True
     use_qkv_bias = True
     pad_token_id = 0
     rope_theta = 10000.0
     rope_scaling = None
+    tie_word_embeddings = False
     attention_bias = False
     attention_dropout = 0.0
     gradient_checkpointing = True
