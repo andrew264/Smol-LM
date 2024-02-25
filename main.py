@@ -102,7 +102,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     optimizer = bnb.optim.AdamW8bit(model.get_optimizer_grouped_parameters(weight_decay),
                                     lr=learning_rate, betas=betas, )
     optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
-    # TODO: figure you why loading optimizer states is using more memory
+    # TODO: figure out why loading optimizer states is using more memory
     # TODO: figure out why setting device to CPU or GPU use different amount of memory [GPU uses more]
     optimizer = load_optimizer(optimizer, model_path + 'optimizer.bin', device=device)
     optimizer.optimizer.to_gpu()
