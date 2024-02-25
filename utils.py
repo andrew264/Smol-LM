@@ -51,8 +51,7 @@ def load_optimizer(optimizer, path: str, device: torch.device = torch.device('cu
     :return: (torch.optim.Optimizer) The optimizer.
     """
     if os.path.exists(path):
-        state_dict = torch.load(path, map_location=device)
-        optimizer.load_state_dict(state_dict)
+        optimizer.load_state_dict(torch.load(path, map_location=device))
         print("Loaded optimizer from weights file.")
     else:
         print("Weights file not found. Created new optimizer.")

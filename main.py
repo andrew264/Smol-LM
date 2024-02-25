@@ -86,6 +86,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
             param.requires_grad = False
         print("Disabled gradients for embedding layer.")
 
+    # accelerator
+    accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
+    model = accelerator.prepare_model(model)
+
     # total steps
     total_steps = len(training_data) if isinstance(training_data, DataLoader) else None
     if total_steps is None:
@@ -97,8 +101,11 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     weight_decay = 0.1
     optimizer = bnb.optim.AdamW8bit(model.get_optimizer_grouped_parameters(weight_decay),
                                     lr=learning_rate, betas=betas, )
+    optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
+    # TODO: figure you why loading optimizer states is using more memory
+    # TODO: figure out why setting device to CPU or GPU use different amount of memory [GPU uses more]
     optimizer = load_optimizer(optimizer, model_path + 'optimizer.bin', device=device)
-    optimizer.to_gpu()
+    optimizer.optimizer.to_gpu()
 
     # scheduler
     scheduler = None
@@ -108,16 +115,6 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                                                     num_warmup_steps=int(
                                                         total_steps // config.grad_accumulation_steps * 0.02),
                                                     num_training_steps=total_steps // config.grad_accumulation_steps)
-
-    # accelerator
-    checkpoint = model_path + "accelerator_states"
-    accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps, project_dir=model_path)
-    scheduler = accelerator.prepare(scheduler)
-    if os.path.exists(checkpoint):
-        accelerator.load_state(checkpoint)
-        print("Loaded accelerator state from file.")
-    else:
-        print("No accelerator state found.")
 
     torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
@@ -148,11 +145,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 accumulated_loss += loss.item()
                 accelerator.backward(loss)  # backward pass
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
 
+                optimizer.step()
                 if scheduler is not None:
                     scheduler.step()
-
                 optimizer.zero_grad()
 
             if i % print_step == 0 and i > 0:
@@ -168,7 +164,6 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 accumulated_loss = 0
 
             if i % save_every == 0 and i > 0:
-                accelerator.save_state(output_dir=checkpoint)
                 save_model(model, model_path + 'model.safetensors')
                 save_optimizer(optimizer, model_path + 'optimizer.bin')
                 print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
@@ -186,7 +181,6 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
                 start_time = time.time()
 
-        accelerator.save_state(output_dir=checkpoint)
         save_model(model, model_path + 'model.safetensors')
         save_optimizer(optimizer, model_path + 'optimizer.bin')
         start_step = 0
