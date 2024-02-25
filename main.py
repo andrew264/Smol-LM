@@ -11,8 +11,8 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import get_cosine_schedule_with_warmup
 
-from model import ModelConfig, Transformer
-from utils import load_model
+from model import ModelConfig
+from utils import load_model, load_optimizer, save_model, save_optimizer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -38,7 +38,7 @@ def count_parameters(m: nn.Module):
 def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full_validation: bool = False):
     if not model:
         model = load_model(config=ModelConfig.from_json('./weights/config.json'),
-                           path='./weights/accelerator_states/model.safetensors',
+                           path='weights/model.safetensors',
                            device=device)
     model.eval()
     total = len(validation_data) if full_validation or len(validation_data) < 100 else 100
@@ -78,11 +78,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :return:
     """
 
-    model = Transformer(config)
-    model.to(dtype=torch.bfloat16, device=device)
-
-    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
-    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
+    model = load_model(config, model_path + 'model.safetensors', device=device)
+    model.train()
 
     if disable_grads_for_embeddings:
         for param in model.tok_embeddings.parameters():
@@ -98,8 +95,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     # optimizer
     betas = (0.9, 0.95)
     weight_decay = 0.1
-    optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=learning_rate, betas=betas,
-                                    weight_decay=weight_decay)
+    optimizer = bnb.optim.AdamW8bit(model.get_optimizer_grouped_parameters(weight_decay),
+                                    lr=learning_rate, betas=betas, )
+    optimizer = load_optimizer(optimizer, model_path + 'optimizer.bin', device=device)
+    optimizer.to_gpu()
 
     # scheduler
     scheduler = None
@@ -113,11 +112,15 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     # accelerator
     checkpoint = model_path + "accelerator_states"
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps, project_dir=model_path)
-    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    scheduler = accelerator.prepare(scheduler)
     if os.path.exists(checkpoint):
-        # on God this fixes OOM while loading scheduler states on a single GPU
-        accelerator.load_state(checkpoint, map_location='on_device')
+        accelerator.load_state(checkpoint)
         print("Loaded accelerator state from file.")
+    else:
+        print("No accelerator state found.")
+
+    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
+    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
 
     accumulated_loss = 0
     start_time, time_delta = time.time(), 0.
@@ -166,6 +169,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
             if i % save_every == 0 and i > 0:
                 accelerator.save_state(output_dir=checkpoint)
+                save_model(model, model_path + 'model.safetensors')
+                save_optimizer(optimizer, model_path + 'optimizer.bin')
                 print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
                       f"Time left: {((total_steps - i) * (time_delta / print_step)) / 60:.2f} minutes")
 
@@ -182,6 +187,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                 start_time = time.time()
 
         accelerator.save_state(output_dir=checkpoint)
+        save_model(model, model_path + 'model.safetensors')
+        save_optimizer(optimizer, model_path + 'optimizer.bin')
         start_step = 0
 
         if validation_data is not None:
@@ -199,7 +206,6 @@ if __name__ == '__main__':
         print("Loaded config from file.")
     else:
         params = ModelConfig()
-        params.vocab_size = 32000
         print("Created new config.")
         params.to_json(path + 'config.json')
 
@@ -210,8 +216,8 @@ if __name__ == '__main__':
                                                          [int(len(dataset) * 0.9995),
                                                           len(dataset) - int(len(dataset) * 0.9995)],
                                                          generator=gen)
-    train_data = DataLoader(training, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
-    val_data = DataLoader(validation, batch_size=params.max_batch_size, shuffle=False, drop_last=True)
+    train_data = DataLoader(training, batch_size=params.max_batch_size, shuffle=False, drop_last=True, pin_memory=True)
+    val_data = DataLoader(validation, batch_size=params.max_batch_size, shuffle=False, drop_last=True, pin_memory=True)
     print("Train: ", len(train_data), "Validation: ", len(val_data))
 
     # resume training

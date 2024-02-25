@@ -65,10 +65,12 @@ class Transformer(nn.Module):
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
         self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(self.num_hidden_layers))
         self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
-        if not self.tie_word_embeddings:
-            self.output = FusedDense(self.hidden_size, self.vocab_size, bias=False)
+        self.output = FusedDense(self.hidden_size, self.vocab_size, bias=False)
+        if self.tie_word_embeddings:  # TODO: model does not converge if we tie the weights
+            self.output.weight = self.tok_embeddings.weight
 
         self.loss_fn = CrossEntropyLoss(inplace_backward=True)
+        self.apply(self._init_weights)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -80,6 +82,33 @@ class Transformer(nn.Module):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
+    def get_optimizer_grouped_parameters(self, weight_decay) -> list[dict]:
+        decay_denylist = ["tok_embeddings.weight"]
+        # start with all the candidate parameters
+        decay = set()
+        no_decay = set()
+        param_dict = {}
+        for name, param in self.named_parameters():
+            param_dict[name] = param
+            if param.ndimension() == 1 or any(nd in name for nd in decay_denylist):
+                no_decay.add(name)
+            else:
+                decay.add(name)
+
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
+        assert len(param_dict.keys() - union_params) == 0, \
+            "parameters %s were not separated into either decay/no_decay set!" \
+            % (str(param_dict.keys() - union_params),)
+
+        optim_groups = [
+            {'params': [param_dict[pn] for pn in sorted(list(no_decay))], 'weight_decay': 0.0},
+            {'params': [param_dict[pn] for pn in sorted(list(decay))], 'weight_decay': weight_decay},
+        ]
+
+        return optim_groups
 
     def forward(self, input_ids: Tensor, labels: Optional[Tensor] = None, input_pos: Optional[int] = None,
                 mask: Optional[Tensor] = None) -> tuple[Tensor, Optional[Tensor]]:
@@ -99,10 +128,7 @@ class Transformer(nn.Module):
             x, router_logits = layer(x, mask, input_pos=input_pos)
             all_router_logits += (router_logits,)
         x = self.norm(x)
-        if self.tie_word_embeddings:
-            logits = F.linear(x, self.tok_embeddings.weight)
-        else:
-            logits = self.output(x)
+        logits = self.output(x)
         loss = None
         if labels is not None:
             logits = logits[..., :-1, :].contiguous()

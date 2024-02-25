@@ -6,7 +6,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, \
 from model import ModelConfig
 from utils import load_model
 
-weights = './weights/accelerator_states/model.safetensors'
+weights = './weights/model.safetensors'
 tokenizer_path = 'weights/tokenizer.json'
 config = './weights/config.json'
 device = torch.device("cuda:0")

@@ -10,7 +10,7 @@ device = torch.device("cuda:0")
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 
 if __name__ == '__main__':
-    weights = './finetuned-weights/accelerator_states/model.safetensors'
+    weights = './finetuned-weights/model.safetensors'
 
     config = ModelConfig.from_json('./weights/config.json')
     config.max_batch_size = 1

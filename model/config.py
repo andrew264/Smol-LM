@@ -8,23 +8,22 @@ class ModelConfig:
     """
     The model configuration class.
     """
-    vocab_size = -1
-    hidden_size = 1024
-    intermediate_size = 4096
-    num_hidden_layers = 8
-    num_attention_heads = 8
-    num_key_value_heads = 8
-    is_moe = True
+    vocab_size = 512
+    hidden_size = 256
+    intermediate_size = 1024
+    num_hidden_layers = 1
+    num_attention_heads = 4
+    num_key_value_heads = 4
+    is_moe = False
     sliding_window: Optional[int] = None
-    num_local_experts = 2
+    num_local_experts = 1
     num_experts_per_tok = 1
     router_aux_loss_coef = 0.001
     hidden_act = "silu"
-    max_position_embeddings = 1024
+    max_position_embeddings = 128
     initializer_range = 0.02
     rms_norm_eps = 1e-06
     use_cache = True
-    use_qkv_bias = True
     pad_token_id = 0
     rope_theta = 10000.0
     rope_scaling = None

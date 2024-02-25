@@ -8,6 +8,7 @@
     - Added Gradient Accumulation (with accelerate)
     - Added Mixture of Experts (MoE) from Mixtral
     - Flash Attention - 2
+    - Weight Decay Denylist for LayerNorm and Bias and Embedding
 
 ### Usage
 

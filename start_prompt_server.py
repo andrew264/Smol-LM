@@ -10,7 +10,7 @@ from prompt_format import Prompt
 from utils import load_model
 
 device = torch.device("cuda")
-weights = './finetuned-weights/accelerator_states/model.safetensors'
+weights = './finetuned-weights/model.safetensors'
 
 config = ModelConfig.from_json('./weights/config.json')
 tokenizer = Tokenizer.from_file('./weights/tokenizer.json')

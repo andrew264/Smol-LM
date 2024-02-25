@@ -33,11 +33,10 @@ class Attention(nn.Module):
                 f"{self.num_key_value_heads} and `num_heads`: {self.num_heads})."
             )
         total_head_dim = (self.num_heads + 2 * self.num_key_value_heads) * self.head_dim
-        self.qkv_proj = FusedDense(self.hidden_size, total_head_dim, bias=config.use_qkv_bias)
-        self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        self.qkv_proj = FusedDense(self.hidden_size, total_head_dim, bias=config.attention_bias)
+        self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim, )
-
         self.kv_cache = None
 
     def update_kv_cache(self, kv_states: Tensor, input_pos: int) -> Tensor:
