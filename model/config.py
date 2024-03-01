@@ -33,7 +33,6 @@ class ModelConfig:
     gradient_checkpointing = True
     grad_accumulation_steps = 1
     max_batch_size = 1
-    max_epochs = 1
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
