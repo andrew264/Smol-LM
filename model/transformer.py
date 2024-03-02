@@ -149,7 +149,7 @@ class Transformer(nn.Module):
         prev_pos = 0
         pad_id, eos_id = 0, 1
         tokens = prompt.unsqueeze(0)
-        for cur_pos in range(prompt.shape[-1], max_tokens):
+        for cur_pos in range(prompt.shape[-1], min(prompt.shape[-1] + max_tokens, self.config.max_position_embeddings)):
             logits, _ = self(tokens[:, prev_pos: cur_pos], input_pos=prev_pos)
             logits = logits[:, -1]
             # logits = F.log_softmax(logits, dim=-1)

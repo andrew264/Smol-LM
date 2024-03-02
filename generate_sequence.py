@@ -18,6 +18,7 @@ if __name__ == '__main__':
 
     tokenizer = Tokenizer.from_file(tokenizer_path)
     model = load_model(config, weights, device)
+    _eot_token_id = tokenizer.token_to_id("<|endoftext|>")
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
@@ -29,7 +30,7 @@ if __name__ == '__main__':
         prompt = input("Enter a prompt: ")
         if prompt == '':
             break
-        tokens = tokenizer.encode(prompt).ids
+        tokens = [_eot_token_id] + tokenizer.encode(prompt).ids
 
         model.generate(torch.tensor(tokens, device=device, dtype=torch.int64), tokenizer=tokenizer,
-                       max_tokens=350, logits_processors=processor)
+                       max_tokens=350, logits_processors=processor, )
