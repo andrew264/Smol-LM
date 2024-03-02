@@ -139,7 +139,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
         # train step
         with accelerator.accumulate(model):
-            logits, loss = model(input_ids=ids, labels=ids, mask=mask)  # forward pass
+            out = model(input_ids=ids, labels=ids, mask=mask)  # forward pass
+            logits, loss = out.logits, out.loss
             accumulated_loss += loss.item()
             accelerator.backward(loss)  # backward pass
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -214,7 +215,7 @@ if __name__ == '__main__':
         with open(path + 'step.txt', 'r') as f:
             step = int(f.read())
 
-    train_data = DataLoader(training, batch_size=params.max_batch_size, shuffle=False, drop_last=True, num_workers=20,)
+    train_data = DataLoader(training, batch_size=params.max_batch_size, shuffle=False, drop_last=True, num_workers=20, )
     val_data = DataLoader(validation, batch_size=params.max_batch_size, shuffle=False, drop_last=True,
                           pin_memory=True)
     print("Train: ", len(train_data), "Validation: ", len(val_data))
