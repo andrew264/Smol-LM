@@ -1,19 +1,20 @@
 from typing import Optional
 
-import torch
 import torch.nn as nn
 from flash_attn.layers.rotary import RotaryEmbedding
 from flash_attn.ops.fused_dense import FusedDense
 from torch import Tensor
 from torch.nn import functional as F
+from transformers import Cache
 
 from model import ModelConfig
 
 
 class Attention(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, layer_idx: int) -> None:
         super().__init__()
         self.config = config
+        self.layer_idx = layer_idx
 
         self.hidden_size = config.hidden_size
         self.head_dim = config.hidden_size // config.num_attention_heads
@@ -37,42 +38,37 @@ class Attention(nn.Module):
         self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim, )
-        self.kv_cache = None
 
-    def update_kv_cache(self, kv_states: Tensor, input_pos: int) -> Tensor:
-        if self.kv_cache is None:
-            bsz = kv_states.shape[0]
-            device = kv_states.device
-            dtype = kv_states.dtype
-            cache_shape = [bsz, self.max_position_embeddings, 2, self.num_key_value_heads, self.head_dim]
-            self.kv_cache = torch.zeros(cache_shape, dtype=dtype, device=device, )
-        total_len = input_pos + kv_states.shape[1]
-        self.kv_cache[:, input_pos:total_len] = kv_states
-        return self.kv_cache[:, :total_len]
-
-    def forward(self, x: Tensor, attention_mask: Optional[Tensor], input_pos: Optional[int] = None) -> Tensor:
-        bsz, seqlen, _ = x.size()
+    def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
+                position_ids: Optional[int] = None,
+                past_key_value: Optional[Cache] = None, ) -> Tensor:
+        bsz, seqlen, _ = hidden_states.size()
         is_causal = attention_mask is None and seqlen > 1
-        qkv_states = self.qkv_proj(x)
+        qkv_states = self.qkv_proj(hidden_states)
 
         if self.num_heads == self.num_key_value_heads:  # self-attention
             qkv_states = qkv_states.view(bsz, seqlen, 3, self.num_heads, self.head_dim)
-            qkv_states = self.rotary_emb(qkv_states, seqlen_offset=input_pos or 0)
-            if input_pos is None:
+            qkv_states = self.rotary_emb(qkv_states, seqlen_offset=position_ids or 0)
+            if position_ids is None:
                 attn_output = self._sdpa(*qkv_states.unbind(dim=2), attention_mask=attention_mask, is_causal=is_causal)
             else:  # inference in self-attention
-                kv_states = self.update_kv_cache(qkv_states[:, :, 1:], input_pos)
-                attn_output = self._sdpa(qkv_states[:, :, 0], *kv_states.unbind(dim=2),
+                key_states, value_states = past_key_value.update(
+                    key_states=qkv_states[:, :, 1], value_states=qkv_states[:, :, 2], layer_idx=self.layer_idx
+                )
+                attn_output = self._sdpa(qkv_states[:, :, 0], key_states, value_states,
                                          attention_mask=attention_mask, is_causal=is_causal)
         else:  # MQ/GQ Attention
             kv_size = self.num_key_value_heads * self.head_dim
             q_state, kv_states = qkv_states.split([self.hidden_size, 2 * kv_size], dim=-1)
             q_state = q_state.view(bsz, seqlen, self.num_heads, self.head_dim)
             kv_states: Tensor = kv_states.view(bsz, seqlen, 2, self.num_key_value_heads, self.head_dim)
-            q_state, kv_states = self.rotary_emb(q_state, kv_states, seqlen_offset=input_pos or 0)
-            if input_pos is not None:
-                kv_states = self.update_kv_cache(kv_states, input_pos)
-            attn_output = self._sdpa(q_state, *kv_states.unbind(dim=2),
+            q_state, kv_states = self.rotary_emb(q_state, kv_states, seqlen_offset=position_ids or 0)
+            key_states, value_states = kv_states.unbind(dim=2)
+            if position_ids is not None:
+                key_states, value_states = past_key_value.update(
+                    key_states=key_states, value_states=value_states, layer_idx=self.layer_idx
+                )
+            attn_output = self._sdpa(q_state, key_states, value_states,
                                      attention_mask=attention_mask, is_causal=is_causal)
 
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)

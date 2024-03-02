@@ -4,6 +4,7 @@ import torch.nn as nn
 from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
+from transformers import Cache
 
 from model import ModelConfig
 from model.attention_layer import Attention
@@ -11,10 +12,11 @@ from model.feed_forward import SparseMoEBlock, FeedForward
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, layer_idx: int) -> None:
         super().__init__()
         self.gradient_checkpointing = config.gradient_checkpointing
-        self.attention = Attention(config)
+        self.layer_idx = layer_idx
+        self.attention = Attention(config, layer_idx)
         self.is_moe = config.is_moe
         if self.is_moe:
             self.block_sparse_moe = SparseMoEBlock(config)
@@ -24,11 +26,14 @@ class TransformerBlock(nn.Module):
         self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
-    def forward(self, x: Tensor, mask: Optional[Tensor], input_pos: Optional[int]) -> Tuple[Tensor, Tensor]:
+    def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
+                position_ids: Optional[int] = None,
+                past_key_value: Optional[Cache] = None, ) -> Tuple[Tensor, Tensor]:
         # Self-attention
-        residual = x
-        x = self.input_layernorm(x)
-        x = residual + self.attention(x, mask, input_pos=input_pos)
+        residual = hidden_states
+        x = self.input_layernorm(hidden_states)
+        x = residual + self.attention(x, attention_mask=attention_mask,
+                                      position_ids=position_ids, past_key_value=past_key_value)
 
         # Block-sparse MoE
         residual = x

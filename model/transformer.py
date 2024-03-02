@@ -8,11 +8,12 @@ from flash_attn.ops.fused_dense import FusedDense
 from flash_attn.ops.triton.layer_norm import RMSNorm
 from tokenizers import Tokenizer
 from torch import Tensor
-from transformers import LogitsProcessorList
+from transformers import LogitsProcessorList, Cache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
 
 from model import ModelConfig
 from model.block import TransformerBlock
+from model.cache import DynamicCache
 
 
 def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = None, top_k=2) -> Tensor:
@@ -63,7 +64,7 @@ class Transformer(nn.Module):
         self.tie_word_embeddings = config.tie_word_embeddings
 
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
-        self.layers = nn.ModuleList(TransformerBlock(config) for _ in range(self.num_hidden_layers))
+        self.layers = nn.ModuleList(TransformerBlock(config, idx) for idx in range(self.num_hidden_layers))
         self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
         self.output = FusedDense(self.hidden_size, self.vocab_size, bias=False)
         if self.tie_word_embeddings:  # TODO: model does not converge if we tie the weights
@@ -110,22 +111,25 @@ class Transformer(nn.Module):
 
         return optim_groups
 
-    def forward(self, input_ids: Tensor, labels: Optional[Tensor] = None, input_pos: Optional[int] = None,
-                mask: Optional[Tensor] = None) -> tuple[Tensor, Optional[Tensor]]:
+    def forward(self, input_ids: Tensor, labels: Optional[Tensor] = None, attention_mask: Optional[Tensor] = None,
+                position_ids: Optional[int] = None,
+                past_key_value: Optional[Cache] = None, ) -> tuple[Tensor, Optional[Tensor]]:
         x = self.tok_embeddings(input_ids)
 
-        if mask is not None:
+        if attention_mask is not None:
             # prepare the mask for F.scaled_dot_product_attention
-            bs, seq_len = mask.shape
-            mask = _prepare_4d_causal_attention_mask_for_sdpa(attention_mask=mask,
-                                                              input_shape=(bs, seq_len),
-                                                              inputs_embeds=x,
-                                                              past_key_values_length=input_pos if input_pos else 0,
-                                                              sliding_window=self.sliding_window, )
+            bs, seq_len = attention_mask.shape
+            attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
+                attention_mask=attention_mask,
+                input_shape=(bs, seq_len),
+                inputs_embeds=x,
+                past_key_values_length=past_key_value if past_key_value else 0,
+                sliding_window=self.sliding_window, )
 
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
-            x, router_logits = layer(x, mask, input_pos=input_pos)
+            x, router_logits = layer(x, attention_mask=attention_mask,
+                                     position_ids=position_ids, past_key_value=past_key_value)
             all_router_logits += (router_logits,)
         x = self.norm(x)
         logits = self.output(x)
@@ -149,8 +153,9 @@ class Transformer(nn.Module):
         prev_pos = 0
         pad_id, eos_id = 0, 1
         tokens = prompt.unsqueeze(0)
+        past_key_value = DynamicCache()
         for cur_pos in range(prompt.shape[-1], min(prompt.shape[-1] + max_tokens, self.config.max_position_embeddings)):
-            logits, _ = self(tokens[:, prev_pos: cur_pos], input_pos=prev_pos)
+            logits, _ = self(tokens[:, prev_pos: cur_pos], position_ids=prev_pos, past_key_value=past_key_value)
             logits = logits[:, -1]
             # logits = F.log_softmax(logits, dim=-1)
 
