@@ -7,7 +7,7 @@ from safetensors.torch import save_file as safe_save_file
 from model import ModelConfig, Transformer
 
 
-def load_model(config: ModelConfig, path: str, device: torch.device = torch.device('cuda:0')) -> torch.nn.Module:
+def load_model(config: ModelConfig, path: str, device: torch.device = torch.device('cuda:0')) -> Transformer:
     """
     Loads a model from a path.
     :param config: (ModelConfig) The model configuration.

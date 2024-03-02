@@ -1,9 +1,9 @@
 import torch
 from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, \
-    RepetitionPenaltyLogitsProcessor
+    RepetitionPenaltyLogitsProcessor, GenerationConfig
 
-from model import ModelConfig
+from model import ModelConfig, DynamicCache
 from utils import load_model
 
 weights = './weights/model.safetensors'
@@ -25,12 +25,27 @@ if __name__ == '__main__':
     processor.append(RepetitionPenaltyLogitsProcessor(1.1))
     processor.append(TopKLogitsWarper(8))
 
+    generation_config: GenerationConfig = GenerationConfig(
+        max_length=350,
+        do_sample=True,
+        use_cache=True,
+        pad_token_id=0,
+        bos_token_id=_eot_token_id,
+        eos_token_id=_eot_token_id,
+        cache_implementation=DynamicCache
+    )
+    model.generation_config = generation_config
+
     print('model loaded')
     while True:
         prompt = input("Enter a prompt: ")
         if prompt == '':
             break
-        tokens = [_eot_token_id] + tokenizer.encode(prompt).ids
+        encoded_prompt = tokenizer.encode(f"<|endoftext|>{prompt}")
+        tokens = torch.tensor(encoded_prompt.ids).unsqueeze(0).to(device)
+        attention_mask = torch.tensor(encoded_prompt.attention_mask).unsqueeze(0).to(device)
 
-        model.generate(torch.tensor(tokens, device=device, dtype=torch.int64), tokenizer=tokenizer,
-                       max_tokens=350, logits_processors=processor, )
+        inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
+                                                   past_key_values=DynamicCache())
+        out = model.generate(**inps, logits_processor=processor, generation_config=generation_config)
+        print(tokenizer.decode(out[0].tolist()))

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch.nn as nn
 from flash_attn.layers.rotary import RotaryEmbedding
@@ -41,15 +41,21 @@ class Attention(nn.Module):
 
     def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
                 position_ids: Optional[int] = None,
-                past_key_value: Optional[Cache] = None, ) -> Tensor:
+                past_key_value: Optional[Cache] = None,
+                output_attentions: bool = False,
+                use_cache: bool = False,
+                ) -> Tuple[Tensor, Optional[Tensor], Optional[Tuple[Tensor]]]:
+        if output_attentions:
+            raise NotImplementedError("No, I ain't doing that")
         bsz, seqlen, _ = hidden_states.size()
         is_causal = attention_mask is None and seqlen > 1
         qkv_states = self.qkv_proj(hidden_states)
 
         if self.num_heads == self.num_key_value_heads:  # self-attention
             qkv_states = qkv_states.view(bsz, seqlen, 3, self.num_heads, self.head_dim)
-            qkv_states = self.rotary_emb(qkv_states, seqlen_offset=position_ids or 0)
-            if position_ids is None:
+            qkv_states = self.rotary_emb(qkv_states, seqlen_offset=past_key_value.get_seq_length(
+                self.layer_idx) if past_key_value else 0)
+            if past_key_value is None:
                 attn_output = self._sdpa(*qkv_states.unbind(dim=2), attention_mask=attention_mask, is_causal=is_causal)
             else:  # inference in self-attention
                 key_states, value_states = past_key_value.update(
@@ -62,9 +68,10 @@ class Attention(nn.Module):
             q_state, kv_states = qkv_states.split([self.hidden_size, 2 * kv_size], dim=-1)
             q_state = q_state.view(bsz, seqlen, self.num_heads, self.head_dim)
             kv_states: Tensor = kv_states.view(bsz, seqlen, 2, self.num_key_value_heads, self.head_dim)
-            q_state, kv_states = self.rotary_emb(q_state, kv_states, seqlen_offset=position_ids or 0)
+            q_state, kv_states = self.rotary_emb(q_state, kv_states, seqlen_offset=past_key_value.get_seq_length(
+                self.layer_idx) if past_key_value else 0)
             key_states, value_states = kv_states.unbind(dim=2)
-            if position_ids is not None:
+            if past_key_value is not None:
                 key_states, value_states = past_key_value.update(
                     key_states=key_states, value_states=value_states, layer_idx=self.layer_idx
                 )
@@ -73,7 +80,7 @@ class Attention(nn.Module):
 
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
         attn_output = self.o_proj(attn_output)
-        return attn_output
+        return attn_output, None, past_key_value
 
     def _sdpa(self, query_states: Tensor, key_states: Tensor, value_states: Tensor,
               attention_mask: Tensor, dropout: float = 0.0, is_causal: bool = False) -> Tensor:

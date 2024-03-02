@@ -1,15 +1,15 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from flash_attn.losses.cross_entropy import CrossEntropyLoss
 from flash_attn.ops.fused_dense import FusedDense
 from flash_attn.ops.triton.layer_norm import RMSNorm
-from tokenizers import Tokenizer
 from torch import Tensor
-from transformers import LogitsProcessorList, Cache
+from transformers import GenerationMixin, Cache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
+from transformers.modeling_outputs import CausalLMOutputWithPast, MoeCausalLMOutputWithPast
+from transformers.modeling_utils import ModuleUtilsMixin
 
 from model import ModelConfig
 from model.block import TransformerBlock
@@ -50,7 +50,10 @@ def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = Non
     return overall_loss * num_experts
 
 
-class Transformer(nn.Module):
+class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
+    main_input_name = "inputs_embeds"
+    _supports_cache_class = True
+
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.config = config
@@ -111,10 +114,26 @@ class Transformer(nn.Module):
 
         return optim_groups
 
-    def forward(self, input_ids: Tensor, labels: Optional[Tensor] = None, attention_mask: Optional[Tensor] = None,
-                position_ids: Optional[int] = None,
-                past_key_value: Optional[Cache] = None, ) -> tuple[Tensor, Optional[Tensor]]:
-        x = self.tok_embeddings(input_ids)
+    def forward(
+            self,
+            input_ids: torch.LongTensor = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
+            past_key_values: Optional[Cache] = None,
+            inputs_embeds: Optional[torch.FloatTensor] = None,
+            labels: Optional[torch.LongTensor] = None,
+            use_cache: Optional[bool] = True,
+            output_attentions: Optional[bool] = False,
+            output_hidden_states: Optional[bool] = False,
+            output_router_logits: Optional[bool] = False,
+            **kwargs,
+    ) -> Union[Tuple, CausalLMOutputWithPast, MoeCausalLMOutputWithPast]:
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
+        if input_ids is not None:
+            x = self.tok_embeddings(input_ids)
+        else:
+            x = inputs_embeds
 
         if attention_mask is not None:
             # prepare the mask for F.scaled_dot_product_attention
@@ -123,15 +142,36 @@ class Transformer(nn.Module):
                 attention_mask=attention_mask,
                 input_shape=(bs, seq_len),
                 inputs_embeds=x,
-                past_key_values_length=past_key_value if past_key_value else 0,
+                past_key_values_length=past_key_values.get_usable_length(seq_len) if past_key_values else 0,
                 sliding_window=self.sliding_window, )
 
-        all_router_logits = ()
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+        all_router_logits = () if output_router_logits else None
+        next_decoder_cache = None
         for i, layer in enumerate(self.layers):
-            x, router_logits = layer(x, attention_mask=attention_mask,
-                                     position_ids=position_ids, past_key_value=past_key_value)
-            all_router_logits += (router_logits,)
+            if output_hidden_states:
+                all_hidden_states += (x,)
+            layer_outputs = layer(x, attention_mask=attention_mask,
+                                  position_ids=position_ids,
+                                  past_key_value=past_key_values,
+                                  output_attentions=False,
+                                  output_router_logits=self.config.is_moe,
+                                  use_cache=True, )
+            x = layer_outputs[0]
+            if use_cache:
+                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
+
+            if output_attentions:
+                all_self_attns += (layer_outputs[1],)
+
+            if output_router_logits:
+                all_router_logits += (layer_outputs[-1],)
+
         x = self.norm(x)
+        if output_hidden_states:
+            all_hidden_states += (x,)
+
         logits = self.output(x)
         loss = None
         if labels is not None:
@@ -143,41 +183,58 @@ class Transformer(nn.Module):
                 aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
                 loss += self.router_aux_loss_coef * aux_loss
 
-        return logits, loss
+        if self.config.is_moe:
+            return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits,
+                                             past_key_values=next_decoder_cache,
+                                             hidden_states=all_hidden_states,
+                                             attentions=all_self_attns,
+                                             router_logits=all_router_logits)
+        else:
+            return CausalLMOutputWithPast(loss=loss, logits=logits,
+                                          past_key_values=next_decoder_cache,
+                                          hidden_states=all_hidden_states,
+                                          attentions=all_self_attns)
 
-    @torch.no_grad()
-    def generate(self, prompt: Tensor, max_tokens: int, logits_processors: Optional[LogitsProcessorList] = None,
-                 tokenizer: Optional[Tokenizer] = None,
-                 stream: bool = True) -> list[int]:
-        return_output = []
-        prev_pos = 0
-        pad_id, eos_id = 0, 1
-        tokens = prompt.unsqueeze(0)
-        past_key_value = DynamicCache()
-        for cur_pos in range(prompt.shape[-1], min(prompt.shape[-1] + max_tokens, self.config.max_position_embeddings)):
-            logits, _ = self(tokens[:, prev_pos: cur_pos], position_ids=prev_pos, past_key_value=past_key_value)
-            logits = logits[:, -1]
-            # logits = F.log_softmax(logits, dim=-1)
-
-            if logits_processors is not None:
-                logits = logits_processors(input_ids=tokens, scores=logits)
-
-                probs = F.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
+    def prepare_inputs_for_generation(
+            self, input_ids, past_key_values=None, attention_mask=None, **kwargs
+    ):
+        if past_key_values is not None:
+            if isinstance(past_key_values, DynamicCache):
+                cache_length = past_key_values.get_seq_length()
+                past_length = past_key_values.seen_tokens
+                max_cache_length = past_key_values.get_max_length()
             else:
-                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+                raise ValueError("past_key_values must be an instance of DynamicCache")
+            if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
+                input_ids = input_ids[:, -(attention_mask.shape[1] - past_length):]
+            elif past_length < input_ids.shape[1]:
+                input_ids = input_ids[:, past_length:]
+                attention_mask = attention_mask[:, past_length:]
+            if (
+                    max_cache_length is not None
+                    and attention_mask is not None
+                    and cache_length + input_ids.shape[1] > max_cache_length
+            ):
+                attention_mask = attention_mask[:, -max_cache_length:]
 
-            idx = next_token.item()
-            tokens = torch.cat([tokens, next_token], dim=-1)
-            prev_pos = cur_pos
-            if idx in [pad_id, eos_id]:
-                break
-            return_output += [idx]
-            if stream:
-                if tokenizer is None:
-                    raise ValueError("Tokenizer must be provided if stream is True.")
-                print(tokenizer.decode([idx]), end='', flush=True)
-            prompt = torch.cat([prompt, next_token.squeeze(1)], dim=-1)
-        if stream:
-            print()
-        return return_output
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                position_ids = position_ids[:, -input_ids.shape[1]:]
+
+        model_inputs = {"input_ids": input_ids.contiguous()}
+        model_inputs.update(
+            {
+                "position_ids": position_ids,
+                "past_key_values": past_key_values,
+                "use_cache": True,
+                "attention_mask": attention_mask,
+            }
+        )
+        return model_inputs
+
+    @classmethod
+    def can_generate(cls) -> bool:
+        return True
