@@ -210,8 +210,6 @@ if __name__ == '__main__':
     # training
     training = NPDataset('./data/processed/train.bin', params.max_position_embeddings)
     validation = NPDataset('./data/processed/train.bin', params.max_position_embeddings, validation_split=True)
-    gen = torch.Generator().manual_seed(42)
-    num_items_in_valid = 2500 * params.max_batch_size
 
     # resume training
     step = 0
