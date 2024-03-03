@@ -18,8 +18,13 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class NPDataset(Dataset):
-    def __init__(self, path, block_size=1024):
+    def __init__(self, path, block_size=1024, validation_split=False):
+        validation_size = 5000 * block_size
         self.data = np.memmap(path, dtype=np.uint16, mode='r')
+        if validation_split:
+            self.data = self.data[-validation_size:]
+        else:
+            self.data = self.data[:-validation_size]
         self.num_samples = len(self.data) // block_size
         self.data = self.data[:self.num_samples * block_size].reshape(self.num_samples, block_size)
 
@@ -203,12 +208,10 @@ if __name__ == '__main__':
         params.to_json(path + 'config.json')
 
     # training
-    dataset = NPDataset('./data/processed/train.bin', params.max_position_embeddings)
+    training = NPDataset('./data/processed/train.bin', params.max_position_embeddings)
+    validation = NPDataset('./data/processed/train.bin', params.max_position_embeddings, validation_split=True)
     gen = torch.Generator().manual_seed(42)
-    training, validation = torch.utils.data.random_split(dataset,
-                                                         [int(len(dataset) * 0.9995),
-                                                          len(dataset) - int(len(dataset) * 0.9995)],
-                                                         generator=gen)
+    num_items_in_valid = 2500 * params.max_batch_size
 
     # resume training
     step = 0
@@ -216,7 +219,7 @@ if __name__ == '__main__':
         with open(path + 'step.txt', 'r') as f:
             step = int(f.read())
 
-    train_data = DataLoader(training, batch_size=params.max_batch_size, shuffle=False, drop_last=True, num_workers=20, )
+    train_data = DataLoader(training, batch_size=params.max_batch_size, shuffle=False, drop_last=True, )
     val_data = DataLoader(validation, batch_size=params.max_batch_size, shuffle=False, drop_last=True,
                           pin_memory=True)
     print("Train: ", len(train_data), "Validation: ", len(val_data))
