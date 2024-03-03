@@ -155,9 +155,9 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         logits = self.output(x)
         loss = None
         if labels is not None:
-            logits = logits[..., :-1, :].contiguous()
+            _logits = logits[..., :-1, :].contiguous()
             labels = labels[..., 1:].contiguous()
-            loss = self.loss_fn(logits.view(-1, self.vocab_size),
+            loss = self.loss_fn(_logits.view(-1, self.vocab_size),
                                 labels.view(-1), )
             if self.config.is_moe:
                 aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
@@ -204,3 +204,6 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
     @classmethod
     def can_generate(cls) -> bool:
         return True
+
+    def tie_weights(self):
+        pass
