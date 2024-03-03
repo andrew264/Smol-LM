@@ -28,6 +28,7 @@ if __name__ == '__main__':
     generation_config: GenerationConfig = GenerationConfig(
         max_length=350,
         do_sample=True,
+        num_beams=1,
         use_cache=True,
         pad_token_id=0,
         bos_token_id=_eot_token_id,

@@ -47,7 +47,7 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     for i, item in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
         ids, mask = item[0].to(device), item[1].to(device) if len(item) > 1 else None
         with torch.no_grad():
-            out = model(input_ids=ids, labels=ids, mask=mask)
+            out = model(input_ids=ids, labels=ids, attention_mask=mask)
             logits, loss = out.logits, out.loss
             accumulated_loss += loss.item()
 
@@ -140,7 +140,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
         # train step
         with accelerator.accumulate(model):
-            out = model(input_ids=ids, labels=ids, mask=mask)  # forward pass
+            out = model(input_ids=ids, labels=ids, attention_mask=mask)  # forward pass
             logits, loss = out.logits, out.loss
             accumulated_loss += loss.item()
             accelerator.backward(loss)  # backward pass

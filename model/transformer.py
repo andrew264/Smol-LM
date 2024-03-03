@@ -118,16 +118,11 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             self,
             input_ids: torch.LongTensor = None,
             attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
             past_key_values: Optional[Cache] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
             labels: Optional[torch.LongTensor] = None,
-            use_cache: Optional[bool] = True,
-            output_attentions: Optional[bool] = False,
-            output_hidden_states: Optional[bool] = False,
-            output_router_logits: Optional[bool] = False,
             **kwargs,
-    ) -> Union[Tuple, CausalLMOutputWithPast, MoeCausalLMOutputWithPast]:
+    ) -> Union[CausalLMOutputWithPast, MoeCausalLMOutputWithPast]:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You have to specify either input_ids or inputs_embeds")
         if input_ids is not None:
@@ -145,32 +140,17 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
                 past_key_values_length=past_key_values.get_usable_length(seq_len) if past_key_values else 0,
                 sliding_window=self.sliding_window, )
 
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
-        all_router_logits = () if output_router_logits else None
+        all_router_logits = ()
         next_decoder_cache = None
         for i, layer in enumerate(self.layers):
-            if output_hidden_states:
-                all_hidden_states += (x,)
             layer_outputs = layer(x, attention_mask=attention_mask,
-                                  position_ids=position_ids,
-                                  past_key_value=past_key_values,
-                                  output_attentions=False,
-                                  output_router_logits=self.config.is_moe,
-                                  use_cache=True, )
+                                  past_key_value=past_key_values, )
             x = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
-
-            if output_attentions:
-                all_self_attns += (layer_outputs[1],)
-
-            if output_router_logits:
-                all_router_logits += (layer_outputs[-1],)
+            if self.config.is_moe:
+                router_logits = layer_outputs[1]
+                all_router_logits += (router_logits,)
 
         x = self.norm(x)
-        if output_hidden_states:
-            all_hidden_states += (x,)
 
         logits = self.output(x)
         loss = None
@@ -185,15 +165,10 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         if self.config.is_moe:
             return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits,
-                                             past_key_values=next_decoder_cache,
-                                             hidden_states=all_hidden_states,
-                                             attentions=all_self_attns,
-                                             router_logits=all_router_logits)
+                                             past_key_values=next_decoder_cache,)
         else:
             return CausalLMOutputWithPast(loss=loss, logits=logits,
-                                          past_key_values=next_decoder_cache,
-                                          hidden_states=all_hidden_states,
-                                          attentions=all_self_attns)
+                                          past_key_values=next_decoder_cache,)
 
     def prepare_inputs_for_generation(
             self, input_ids, past_key_values=None, attention_mask=None, **kwargs
@@ -217,19 +192,10 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             ):
                 attention_mask = attention_mask[:, -max_cache_length:]
 
-        position_ids = kwargs.get("position_ids", None)
-        if attention_mask is not None and position_ids is None:
-            position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 1)
-            if past_key_values:
-                position_ids = position_ids[:, -input_ids.shape[1]:]
-
         model_inputs = {"input_ids": input_ids.contiguous()}
         model_inputs.update(
             {
-                "position_ids": position_ids,
                 "past_key_values": past_key_values,
-                "use_cache": True,
                 "attention_mask": attention_mask,
             }
         )

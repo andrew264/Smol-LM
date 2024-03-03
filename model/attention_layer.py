@@ -40,13 +40,8 @@ class Attention(nn.Module):
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim, )
 
     def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
-                position_ids: Optional[int] = None,
                 past_key_value: Optional[Cache] = None,
-                output_attentions: bool = False,
-                use_cache: bool = False,
-                ) -> Tuple[Tensor, Optional[Tensor], Optional[Tuple[Tensor]]]:
-        if output_attentions:
-            raise NotImplementedError("No, I ain't doing that")
+                ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
         is_causal = attention_mask is None and seqlen > 1
         qkv_states = self.qkv_proj(hidden_states)
@@ -80,7 +75,7 @@ class Attention(nn.Module):
 
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
         attn_output = self.o_proj(attn_output)
-        return attn_output, None, past_key_value
+        return attn_output
 
     def _sdpa(self, query_states: Tensor, key_states: Tensor, value_states: Tensor,
               attention_mask: Tensor, dropout: float = 0.0, is_causal: bool = False) -> Tensor:
