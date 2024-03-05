@@ -94,6 +94,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
 
     # accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
+    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     model = accelerator.prepare_model(model)
 
     # total steps
@@ -122,7 +123,6 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                                                         total_steps // config.grad_accumulation_steps * 0.02),
                                                     num_training_steps=total_steps // config.grad_accumulation_steps)
 
-    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
 
     accumulated_loss = 0
@@ -160,10 +160,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
             time_delta = time.time() - start_time
             avg_loss = accumulated_loss / print_step
             avg_perplexity = torch.exp(torch.tensor(avg_loss))
-            tokens_per_sec = print_step * config.max_batch_size * config.max_position_embeddings / time_delta
+            batch_per_sec = print_step / time_delta
 
             accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                              f"Elapsed Time: {time_delta:.1f}s | Tokens/sec: {tokens_per_sec:.0f}")
+                              f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.0f}")
 
             start_time = time.time()
             accumulated_loss = 0

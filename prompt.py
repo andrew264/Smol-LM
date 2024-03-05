@@ -1,13 +1,32 @@
 import torch
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
+from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
+    StoppingCriteria, StoppingCriteriaList
 
-from model import ModelConfig
+from model import ModelConfig, DynamicCache
 from prompt_format import Prompt
 from utils import load_model
 
 device = torch.device("cuda:0")
-tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
+
+
+class StoppingCriteriaSub(StoppingCriteria):
+
+    def __init__(self, stops=None, encounters=1):
+        super().__init__()
+        if stops is None:
+            stops = []
+        self.stops = stops
+        self.ENCOUNTERS = encounters
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
+        stop_count = 0
+        for stop in self.stops:
+            if stop in input_ids[:, -1]:
+                stop_count += 1
+
+        return stop_count >= self.ENCOUNTERS
+
 
 if __name__ == '__main__':
     weights = './finetuned-weights/model.safetensors'
@@ -15,32 +34,74 @@ if __name__ == '__main__':
     config = ModelConfig.from_json('./weights/config.json')
     config.max_batch_size = 1
 
+    tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
     model = load_model(config, weights, device)
+    _eot_token_id = tokenizer.token_to_id("<|endoftext|>")
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
     processor.append(RepetitionPenaltyLogitsProcessor(1.05))
-    processor.append(TopKLogitsWarper(10))
+    processor.append(TopKLogitsWarper(8))
+
+    generation_config: GenerationConfig = GenerationConfig(
+        max_length=512,
+        do_sample=True,
+        num_beams=1,
+        use_cache=True,
+        pad_token_id=0,
+        bos_token_id=_eot_token_id,
+        eos_token_id=_eot_token_id,
+        cache_implementation=DynamicCache
+    )
+    model.generation_config = generation_config
+
+    stopping_tokens = [i for i in range(7)]
+    stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
 
     def multiline_input():
         lines = []
         print('Instruction: ', end="", flush=True)
         while True:
-            line = input()
+            try:
+                line = input()
+            except KeyboardInterrupt:
+                print()
+                break
             if line == '':
                 break
             lines.append(line)
         return '\n'.join(lines)
 
 
+    prompt = Prompt()
+
     while True:
         inp = multiline_input()
         if inp == '':
             break
-        prompt = Prompt()
+        if inp.casefold() == 'reset':
+            prompt = Prompt()
+            continue
+
+        # prompt
         prompt.add_user_message(inp)
-        prompt = torch.tensor(prompt.get_tokens_for_completion(tokenizer=tokenizer), dtype=torch.int64, device=device)
-        out = model.generate(prompt, max_tokens=512, stream=False, logits_processors=processor)
-        out = tokenizer.decode(out)
-        print(f"Response: {out.strip()}")
+        inp = prompt.get_tokens_for_completion()
+
+        # tokenization
+        encoded = tokenizer.encode(inp)
+        tokens = torch.tensor(encoded.ids).unsqueeze(0).to(device)
+        attention_mask = torch.tensor(encoded.attention_mask).unsqueeze(0).to(device)
+
+        # generation
+        inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
+                                                   past_key_values=DynamicCache())
+        out = model.generate(**inps, logits_processor=processor,
+                             generation_config=generation_config,
+                             stopping_criteria=stopping_criteria)
+
+        # output
+        out_tokens = out[0].tolist()[len(encoded.ids):]
+        decoded = tokenizer.decode(out_tokens)
+        prompt.add_assistant_message(decoded)
+        print(f"Assistant: {decoded}")

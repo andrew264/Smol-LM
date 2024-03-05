@@ -1,8 +1,10 @@
+from itertools import chain
+from typing import List, Union
+
 import pandas as pd
 import torch
 from datasets import load_dataset
-from tokenizers import Tokenizer
-from torch import Tensor
+from tokenizers import Tokenizer, Encoding
 from torch.utils.data import Dataset
 
 from prompt_format import Prompt
@@ -16,17 +18,14 @@ class HFDataset(Dataset):
     def __len__(self):
         return len(self.tokenized)
 
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
-        item = self.tokenized[index]
-        ids = torch.tensor(item.ids)
-        mask = torch.tensor(item.attention_mask)
-        return ids, mask
+    def __getitem__(self, index: int) -> Union[Encoding, List[Encoding]]:
+        return self.tokenized[index]
 
 
 class OpenInstruct(HFDataset):
     def __init__(self, max_length: int, tokenizer: Tokenizer):
         super().__init__(max_length, tokenizer)
-        dataset = load_dataset("VMware/open-instruct", streaming=True, split='train')
+        dataset = load_dataset("VMware/open-instruct", split='train')
         data = []
         for row in dataset:
             prompt = Prompt()
@@ -39,7 +38,7 @@ class OpenInstruct(HFDataset):
 class AlpacaGpt4Dataset(HFDataset):
     def __init__(self, max_length: int, tokenizer: Tokenizer):
         super().__init__(max_length, tokenizer)
-        dataset = load_dataset("vicgalle/alpaca-gpt4", streaming=True, split='train')
+        dataset = load_dataset("vicgalle/alpaca-gpt4", split='train')
         data = []
         for row in dataset:
             instruction = row['instruction'] + '\n' + row['input']
@@ -53,10 +52,9 @@ class AlpacaGpt4Dataset(HFDataset):
 class HFnoRobotsDataset(HFDataset):
     def __init__(self, max_length: int, tokenizer: Tokenizer):
         super().__init__(max_length, tokenizer)
-        dataset = load_dataset("HuggingFaceH4/no_robots", streaming=True)
-        dataset['train_sft'] = dataset['train_sft'] + dataset['test_sft']
+        dataset = load_dataset("HuggingFaceH4/no_robots")
         data = []
-        for row in dataset['train_sft']:
+        for row in chain.from_iterable([dataset['train_sft'], dataset['test_sft']]):
             prompt = Prompt()
             conversation = [c['content'] for c in row['messages']]
             prompt.add_messages(conversation)
@@ -76,3 +74,54 @@ class CSVDataset(HFDataset):
             data.append(prompt.get_tokens())
         self.tokenized = tokenizer.encode_batch(data)
         del df, data
+
+
+class OrcaMath(HFDataset):
+    def __init__(self, max_length: int, tokenizer: Tokenizer):
+        super().__init__(max_length, tokenizer)
+        dataset = load_dataset("microsoft/orca-math-word-problems-200k", split='train')
+        data = []
+        for row in dataset:
+            prompt = Prompt()
+            prompt.add_messages([row['question'], row['answer']])
+            data.append(prompt.get_tokens())
+        self.tokenized = tokenizer.encode_batch(data)
+        del dataset, data
+
+
+class SortedPadded:
+    def __init__(self, dataset: HFDataset, batch_size: int):
+        self.dataset = dataset
+        self.dataset.tokenized.sort(key=lambda x: len(x.ids))
+        self.batch_size = batch_size
+        self.index = 0
+
+    def __iter__(self):
+        for i in range(0, len(self.dataset), self.batch_size):
+            batch: List[Encoding] = self.dataset[i:i + self.batch_size]
+            max_length = max([len(x.ids) for x in batch])
+            for i in range(len(batch)):
+                batch[i].pad(max_length)
+            yield torch.tensor([[x.ids, x.attention_mask] for x in batch])
+
+    def __len__(self):
+        return len(self.dataset) // self.batch_size
+
+    def __getitem__(self, index: int):
+        if index >= len(self):
+            raise IndexError
+        batch = self.dataset[index * self.batch_size:(index + 1) * self.batch_size]
+        max_length = max([len(x.ids) for x in batch])
+        for i in range(len(batch)):
+            batch[i].pad(max_length)
+        return torch.tensor([[x.ids, x.attention_mask] for x in batch])
+
+    def __next__(self):
+        if self.index >= len(self):
+            raise StopIteration
+        batch = self.dataset[self.index:self.index + self.batch_size]
+        max_length = max([len(x.ids) for x in batch])
+        for i in range(len(batch)):
+            batch[i].pad(max_length)
+        self.index += self.batch_size
+        return torch.tensor([[x.ids, x.attention_mask] for x in batch])

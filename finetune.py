@@ -3,7 +3,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import CSVDataset, HFnoRobotsDataset, AlpacaGpt4Dataset, OpenInstruct
+from finetune_datasets import CSVDataset, HFnoRobotsDataset, AlpacaGpt4Dataset, OpenInstruct, OrcaMath, SortedPadded
 from main import train
 from model import ModelConfig
 
@@ -23,14 +23,17 @@ if __name__ == '__main__':
         raise ValueError("Config not found.")
 
     print("Loading datasets...")
-    dataset1 = OpenInstruct(params.max_position_embeddings, tokenizer)
-    dataset2 = CSVDataset(path="data/finetune/DankDataset.csv",  # custom dataset
-                          max_length=params.max_position_embeddings, tokenizer=tokenizer,
-                          sample_frac=3.0)
-    dataset3 = HFnoRobotsDataset(params.max_position_embeddings, tokenizer)
-    dataset4 = AlpacaGpt4Dataset(params.max_position_embeddings, tokenizer)
-    dataset = torch.utils.data.ConcatDataset([dataset2, dataset1, dataset3, dataset4])
-    dataloader = DataLoader(dataset, batch_size=params.max_batch_size, shuffle=True, drop_last=True)
+    dataset1 = SortedPadded(OpenInstruct(params.max_position_embeddings, tokenizer), batch_size=params.max_batch_size)
+    dataset2 = SortedPadded(CSVDataset(path="data/finetune/DankDataset.csv",  # custom dataset
+                                       max_length=params.max_position_embeddings, tokenizer=tokenizer,
+                                       sample_frac=3.0), batch_size=params.max_batch_size)
+    dataset3 = SortedPadded(HFnoRobotsDataset(params.max_position_embeddings, tokenizer),
+                            batch_size=params.max_batch_size)
+    dataset4 = SortedPadded(AlpacaGpt4Dataset(params.max_position_embeddings, tokenizer),
+                            batch_size=params.max_batch_size)
+    dataset5 = SortedPadded(OrcaMath(params.max_position_embeddings, tokenizer), batch_size=params.max_batch_size)
+    dataset = torch.utils.data.ConcatDataset([dataset2, dataset1, dataset3, dataset4, dataset5])
+    dataloader = DataLoader(dataset, batch_size=None, shuffle=True)
     print("Loaded datasets.")
 
     train(path,
@@ -38,6 +41,6 @@ if __name__ == '__main__':
           config=params,
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
-          learning_rate=1e-5,
-          save_every=20000,
+          learning_rate=1e-7,
+          save_every=10000,
           )

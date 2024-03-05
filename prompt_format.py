@@ -23,6 +23,8 @@ DEFAULT_SYSTEM_PROMPT = \
 
 
 class Prompt:
+    EOT = '<|endoftext|>'
+
     def __init__(self, sys_prompt: Optional[str] = None):
         self.messages: List[Message] = []
         if sys_prompt:
@@ -47,7 +49,7 @@ class Prompt:
             self.messages.append({"role": role, "content": message, })
 
     def get_tokens(self, tokenizer: Optional[Tokenizer] = None):
-        dialog_tokens = ""
+        dialog_tokens = f"{self.EOT}"
         for message in self.messages:
             dialog_tokens += f"{START}{message['role'].value}\n{message['content']}{END}\n"
         dialog_tokens = dialog_tokens.strip()
