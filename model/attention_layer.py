@@ -22,6 +22,7 @@ class Attention(nn.Module):
         self.num_key_value_heads = config.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.attention_dropout = config.attention_dropout
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -71,7 +72,9 @@ class Attention(nn.Module):
                     key_states=key_states, value_states=value_states, layer_idx=self.layer_idx
                 )
             attn_output = self._sdpa(q_state, key_states, value_states,
-                                     attention_mask=attention_mask, is_causal=is_causal)
+                                     attention_mask=attention_mask,
+                                     dropout=self.attention_dropout,
+                                     is_causal=is_causal)
 
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
         attn_output = self.o_proj(attn_output)

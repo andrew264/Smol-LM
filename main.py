@@ -163,7 +163,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
             batch_per_sec = print_step / time_delta
 
             accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                              f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.0f}")
+                              f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.1f}")
 
             start_time = time.time()
             accumulated_loss = 0
