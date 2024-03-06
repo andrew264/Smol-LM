@@ -3,6 +3,7 @@ import os
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file as safe_save_file
+from transformers import StoppingCriteria
 
 from model import ModelConfig, Transformer
 
@@ -65,3 +66,21 @@ def save_optimizer(optimizer, path: str):
     :param path: (str) The path to save the optimizer to.
     """
     torch.save(optimizer.state_dict(), path)
+
+
+class StoppingCriteriaSub(StoppingCriteria):
+
+    def __init__(self, stops=None, encounters=1):
+        super().__init__()
+        if stops is None:
+            stops = []
+        self.stops = stops
+        self.ENCOUNTERS = encounters
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
+        stop_count = 0
+        for stop in self.stops:
+            if stop in input_ids[:, -1]:
+                stop_count += 1
+
+        return stop_count >= self.ENCOUNTERS

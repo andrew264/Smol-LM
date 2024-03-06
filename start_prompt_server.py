@@ -3,11 +3,12 @@ from typing import Optional
 import torch
 from aiohttp import web
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
+from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
+    StoppingCriteriaList
 
-from model import ModelConfig
+from model import ModelConfig, DynamicCache
 from prompt_format import Prompt
-from utils import load_model
+from utils import load_model, StoppingCriteriaSub
 
 device = torch.device("cuda")
 weights = './finetuned-weights/model.safetensors'
@@ -17,6 +18,22 @@ tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 config.max_batch_size = 1
 
 model = load_model(config, weights, device)
+_eot_token_id = tokenizer.token_to_id("<|endoftext|>")
+
+generation_config: GenerationConfig = GenerationConfig(
+    max_length=512,
+    do_sample=True,
+    num_beams=1,
+    use_cache=True,
+    pad_token_id=0,
+    bos_token_id=_eot_token_id,
+    eos_token_id=_eot_token_id,
+    cache_implementation=DynamicCache
+)
+model.generation_config = generation_config
+
+stopping_tokens = [i for i in range(7)]
+stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
 
 def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
@@ -27,21 +44,30 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
     if top_k is not None and top_k > 0:
         processor.append(TopKLogitsWarper(top_k=top_k))
 
-    # Process the input text (You can replace this with your processing logic)
     prompt = Prompt()
     prompt.add_user_message(input_text)
-    prompt = prompt.get_tokens_for_completion(tokenizer)
-    prompt = torch.tensor(prompt, dtype=torch.int64, device=device)
-    out = model.generate(prompt, max_tokens=1024, stream=False, logits_processors=processor)
-    output_text = tokenizer.decode(out).strip()
-    return output_text
+    encoded = tokenizer.encode(prompt.get_tokens_for_completion())
+    tokens = torch.tensor(encoded.ids).unsqueeze(0).to(device)
+    attention_mask = torch.tensor(encoded.attention_mask).unsqueeze(0).to(device)
+
+    # generation
+    inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
+                                               past_key_values=DynamicCache())
+    out = model.generate(**inps, logits_processor=processor,
+                         generation_config=generation_config,
+                         stopping_criteria=stopping_criteria)
+
+    # output
+    out_tokens = out[0].tolist()[len(encoded.ids):]
+    decoded = tokenizer.decode(out_tokens)
+    return decoded
 
 
 async def handle(request):
     data = await request.json()
     input_text = data['input']
-    top_k = data.get('top_k', None)
-    penalty = data.get('penalty', None)
+    top_k = data.get('top_k', 10)
+    penalty = data.get('penalty', 1.05)
     output_text = get_response(input_text, top_k, penalty)
 
     return web.json_response({'response': output_text})

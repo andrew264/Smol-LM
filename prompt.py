@@ -1,32 +1,13 @@
 import torch
 from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
-    StoppingCriteria, StoppingCriteriaList
+    StoppingCriteriaList
 
 from model import ModelConfig, DynamicCache
 from prompt_format import Prompt
-from utils import load_model
+from utils import load_model, StoppingCriteriaSub
 
 device = torch.device("cuda:0")
-
-
-class StoppingCriteriaSub(StoppingCriteria):
-
-    def __init__(self, stops=None, encounters=1):
-        super().__init__()
-        if stops is None:
-            stops = []
-        self.stops = stops
-        self.ENCOUNTERS = encounters
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
-        stop_count = 0
-        for stop in self.stops:
-            if stop in input_ids[:, -1]:
-                stop_count += 1
-
-        return stop_count >= self.ENCOUNTERS
-
 
 if __name__ == '__main__':
     weights = './finetuned-weights/model.safetensors'
