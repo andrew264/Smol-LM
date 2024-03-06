@@ -14,7 +14,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 def collate_pad_batch_fn(batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
     encoded = tokenizer(batch, return_tensors='pt',
                         max_length=2048, padding='longest',
-                        pad_to_multiple_of=8)
+                        pad_to_multiple_of=256)
     return encoded['input_ids'], encoded['attention_mask']
 
 
