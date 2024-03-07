@@ -1,13 +1,13 @@
-from typing import Optional, Tuple
+from typing import Optional
 
+import torch
 import torch.nn as nn
-from flash_attn.layers.rotary import RotaryEmbedding
-from flash_attn.ops.fused_dense import FusedDense
 from torch import Tensor
 from torch.nn import functional as F
 from transformers import Cache
 
 from model import ModelConfig
+from model.rotary import RotaryEmbedding, apply_rotary_pos_emb
 
 
 class Attention(nn.Module):
@@ -34,49 +34,37 @@ class Attention(nn.Module):
                 f"num_key_value_heads must divide evenly into num_heads (got `num_key_value_heads`: "
                 f"{self.num_key_value_heads} and `num_heads`: {self.num_heads})."
             )
-        total_head_dim = (self.num_heads + 2 * self.num_key_value_heads) * self.head_dim
-        self.qkv_proj = FusedDense(self.hidden_size, total_head_dim, bias=config.attention_bias)
-        self.o_proj = FusedDense(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
+        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_bias)
 
-        self.rotary_emb = RotaryEmbedding(dim=self.head_dim, )
+        self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
+                                          max_position_embeddings=self.max_position_embeddings,
+                                          base=self.config.rope_theta, )
 
     def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
+                position_ids: Optional[torch.LongTensor] = None,
                 past_key_value: Optional[Cache] = None,
                 ) -> Tensor:
-        bsz, seqlen, _ = hidden_states.size()
-        is_causal = attention_mask is None and seqlen > 1
-        qkv_states = self.qkv_proj(hidden_states)
+        bsz, q_len, _ = hidden_states.size()
+        is_causal = attention_mask is None and q_len > 1
+        query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim)
+        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim)
+        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim)
 
-        if self.num_heads == self.num_key_value_heads:  # self-attention
-            qkv_states = qkv_states.view(bsz, seqlen, 3, self.num_heads, self.head_dim)
-            qkv_states = self.rotary_emb(qkv_states, seqlen_offset=past_key_value.get_seq_length(
-                self.layer_idx) if past_key_value else 0)
-            if past_key_value is None:
-                attn_output = self._sdpa(*qkv_states.unbind(dim=2), attention_mask=attention_mask, is_causal=is_causal)
-            else:  # inference in self-attention
-                key_states, value_states = past_key_value.update(
-                    key_states=qkv_states[:, :, 1], value_states=qkv_states[:, :, 2], layer_idx=self.layer_idx
-                )
-                attn_output = self._sdpa(qkv_states[:, :, 0], key_states, value_states,
-                                         attention_mask=attention_mask, is_causal=is_causal)
-        else:  # MQ/GQ Attention
-            kv_size = self.num_key_value_heads * self.head_dim
-            q_state, kv_states = qkv_states.split([self.hidden_size, 2 * kv_size], dim=-1)
-            q_state = q_state.view(bsz, seqlen, self.num_heads, self.head_dim)
-            kv_states: Tensor = kv_states.view(bsz, seqlen, 2, self.num_key_value_heads, self.head_dim)
-            q_state, kv_states = self.rotary_emb(q_state, kv_states, seqlen_offset=past_key_value.get_seq_length(
-                self.layer_idx) if past_key_value else 0)
-            key_states, value_states = kv_states.unbind(dim=2)
-            if past_key_value is not None:
-                key_states, value_states = past_key_value.update(
-                    key_states=key_states, value_states=value_states, layer_idx=self.layer_idx
-                )
-            attn_output = self._sdpa(q_state, key_states, value_states,
-                                     attention_mask=attention_mask,
-                                     dropout=self.attention_dropout,
-                                     is_causal=is_causal)
+        cos, sin = self.rotary_emb(value_states, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
+        if past_key_value is not None:
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx)
+
+        attn_output = self._sdpa(query_states, key_states, value_states,
+                                 attention_mask=attention_mask,
+                                 dropout=self.attention_dropout,
+                                 is_causal=is_causal)
+
+        attn_output = attn_output.contiguous().view(bsz, q_len, self.hidden_size)
         attn_output = self.o_proj(attn_output)
         return attn_output
 

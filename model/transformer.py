@@ -3,7 +3,6 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from flash_attn.losses.cross_entropy import CrossEntropyLoss
-from flash_attn.ops.fused_dense import FusedDense
 from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
 from transformers import GenerationMixin, Cache
@@ -69,9 +68,9 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
         self.layers = nn.ModuleList(TransformerBlock(config, idx) for idx in range(self.num_hidden_layers))
         self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
-        self.output = FusedDense(self.hidden_size, self.vocab_size, bias=False)
+        self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
         if self.tie_word_embeddings:  # TODO: model does not converge if we tie the weights
-            self.output.weight = self.tok_embeddings.weight
+            self.lm_head.weight = self.tok_embeddings.weight
 
         self.loss_fn = CrossEntropyLoss(inplace_backward=True)
         self.apply(self._init_weights)
@@ -118,6 +117,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             self,
             input_ids: torch.LongTensor = None,
             attention_mask: Optional[torch.Tensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
             past_key_values: Optional[Cache] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
             labels: Optional[torch.LongTensor] = None,
@@ -140,10 +140,15 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
                 past_key_values_length=past_key_values.get_usable_length(seq_len) if past_key_values else 0,
                 sliding_window=self.sliding_window, )
 
+        if position_ids is None:
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values else 0
+            position_ids = torch.arange(past_seen_tokens, past_seen_tokens + x.shape[1], device=x.device)
+            position_ids = position_ids.unsqueeze(0)
+
         all_router_logits = ()
-        next_decoder_cache = None
         for i, layer in enumerate(self.layers):
             layer_outputs = layer(x, attention_mask=attention_mask,
+                                  position_ids=position_ids,
                                   past_key_value=past_key_values, )
             x = layer_outputs[0]
             if self.config.is_moe:
@@ -152,7 +157,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         x = self.norm(x)
 
-        logits = self.output(x)
+        logits = self.lm_head(x)
         loss = None
         if labels is not None:
             _logits = logits[..., :-1, :].contiguous()
@@ -165,10 +170,10 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         if self.config.is_moe:
             return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits,
-                                             past_key_values=next_decoder_cache,)
+                                             past_key_values=past_key_values, )
         else:
             return CausalLMOutputWithPast(loss=loss, logits=logits,
-                                          past_key_values=next_decoder_cache,)
+                                          past_key_values=past_key_values, )
 
     def prepare_inputs_for_generation(
             self, input_ids, past_key_values=None, attention_mask=None, **kwargs
@@ -191,10 +196,18 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
                     and cache_length + input_ids.shape[1] > max_cache_length
             ):
                 attention_mask = attention_mask[:, -max_cache_length:]
+        else:
+            past_length = 0
+
+        position_ids = torch.arange(
+            past_length, past_length + input_ids.shape[1], device=input_ids.device
+        ).unsqueeze(0)
+        position_ids = position_ids.contiguous() if position_ids is not None else None
 
         model_inputs = {"input_ids": input_ids.contiguous()}
         model_inputs.update(
             {
+                "position_ids": position_ids,
                 "past_key_values": past_key_values,
                 "attention_mask": attention_mask,
             }

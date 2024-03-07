@@ -17,7 +17,7 @@ if __name__ == '__main__':
 
     tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
     model = load_model(config, weights, device)
-    _eot_token_id = tokenizer.token_to_id("<|endoftext|>")
+    model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
@@ -30,8 +30,8 @@ if __name__ == '__main__':
         num_beams=1,
         use_cache=True,
         pad_token_id=0,
-        bos_token_id=_eot_token_id,
-        eos_token_id=_eot_token_id,
+        bos_token_id=1,
+        eos_token_id=2,
         cache_implementation=DynamicCache
     )
     model.generation_config = generation_config

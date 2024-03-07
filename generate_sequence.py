@@ -18,7 +18,8 @@ if __name__ == '__main__':
 
     tokenizer = Tokenizer.from_file(tokenizer_path)
     model = load_model(config, weights, device)
-    _eot_token_id = tokenizer.token_to_id("<|endoftext|>")
+    _eot_token_id = tokenizer.token_to_id("</s>")
+    model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
@@ -31,8 +32,8 @@ if __name__ == '__main__':
         num_beams=1,
         use_cache=True,
         pad_token_id=0,
-        bos_token_id=_eot_token_id,
-        eos_token_id=_eot_token_id,
+        bos_token_id=1,
+        eos_token_id=2,
         cache_implementation=DynamicCache
     )
     model.generation_config = generation_config
@@ -42,11 +43,12 @@ if __name__ == '__main__':
         prompt = input("Enter a prompt: ")
         if prompt == '':
             break
-        encoded_prompt = tokenizer.encode(f"<|endoftext|>{prompt}")
+        encoded_prompt = tokenizer.encode(f"{prompt}")
         tokens = torch.tensor(encoded_prompt.ids).unsqueeze(0).to(device)
         attention_mask = torch.tensor(encoded_prompt.attention_mask).unsqueeze(0).to(device)
+        kv_cache = DynamicCache()
 
         inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
-                                                   past_key_values=DynamicCache())
-        out = model.generate(**inps, logits_processor=processor, generation_config=generation_config)
+                                                   past_key_values=kv_cache)
+        out = model.generate(**inps, logits_processor=processor, generation_config=generation_config, )
         print(tokenizer.decode(out[0].tolist()))

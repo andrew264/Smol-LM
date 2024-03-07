@@ -29,12 +29,13 @@ class TransformerBlock(nn.Module):
 
     def forward(self, hidden_states: Tensor,
                 attention_mask: Optional[Tensor],
+                position_ids: Optional[torch.LongTensor] = None,
                 past_key_value: Optional[Cache] = None,
                 ) -> Tuple[torch.FloatTensor, Optional[torch.FloatTensor]]:
         # Self-attention
         residual = hidden_states
         x = self.input_layernorm(hidden_states)
-        x = self.attention(x, attention_mask=attention_mask, past_key_value=past_key_value,)
+        x = self.attention(x, attention_mask=attention_mask, position_ids=position_ids, past_key_value=past_key_value, )
         x = residual + x
 
         # Block-sparse MoE

@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from flash_attn.ops.fused_dense import FusedDense
 from torch import Tensor
 from torch.nn import functional as F
 from transformers.activations import get_activation
@@ -14,9 +13,9 @@ class FeedForward(nn.Module):
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
 
-        self.gate_proj = FusedDense(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = FusedDense(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = FusedDense(self.intermediate_size, self.hidden_size, bias=False)
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act = get_activation(config.hidden_act)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -31,7 +30,7 @@ class SparseMoEBlock(nn.Module):
         self.num_experts = config.num_local_experts
         self.top_k = config.num_experts_per_tok
 
-        self.gate = FusedDense(self.hidden_dim, self.num_experts, bias=False)
+        self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
 
         self.experts = nn.ModuleList([FeedForward(config) for _ in range(self.num_experts)])
 

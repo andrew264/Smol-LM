@@ -3,9 +3,6 @@ from typing import TypedDict, List, Optional
 
 from tokenizers import Tokenizer
 
-START = "<|im_start|>"
-END = "<|im_end|>"
-
 
 class Role(Enum):
     SYSTEM = "<|system|>"
@@ -23,7 +20,7 @@ DEFAULT_SYSTEM_PROMPT = \
 
 
 class Prompt:
-    EOT = '<|endoftext|>'
+    EOT = '</s>'
 
     def __init__(self, sys_prompt: Optional[str] = None):
         self.messages: List[Message] = []
@@ -51,7 +48,7 @@ class Prompt:
     def get_tokens(self, tokenizer: Optional[Tokenizer] = None):
         dialog_tokens = f"{self.EOT}"
         for message in self.messages:
-            dialog_tokens += f"{START}{message['role'].value}\n{message['content']}{END}\n"
+            dialog_tokens += f"{message['role'].value}\n{message['content']}{self.EOT}\n"
         dialog_tokens = dialog_tokens.strip()
         return dialog_tokens if not tokenizer else tokenizer.encode(dialog_tokens).ids
 
@@ -59,5 +56,5 @@ class Prompt:
         if self.messages[-1]['role'] != Role.USER:
             raise ValueError("The last message should be from the user")
         dialog_tokens = self.get_tokens(tokenizer)
-        dialog_tokens += f"\n{START}{Role.ASSISTANT.value}\n"
+        dialog_tokens += f"\n{Role.ASSISTANT.value}\n"
         return dialog_tokens if not tokenizer else tokenizer.encode(dialog_tokens).ids
