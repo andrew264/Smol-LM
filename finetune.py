@@ -1,22 +1,15 @@
 import os
+from datetime import date
 from typing import Tuple, List
 
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import CSVDataset, HFnoRobotsDataset, AlpacaGpt4Dataset, OpenInstruct, OrcaMath
+from finetune_datasets import HFnoRobotsDataset, CSVDatasetV2
 from main import train
 from model import ModelConfig
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-
-def collate_pad_batch_fn(batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
-    encoded = tokenizer(batch, return_tensors='pt',
-                        max_length=2048, padding='longest',
-                        pad_to_multiple_of=256)
-    return encoded['input_ids'], encoded['attention_mask']
-
 
 if __name__ == '__main__':
     from transformers import PreTrainedTokenizerFast
@@ -33,25 +26,44 @@ if __name__ == '__main__':
     else:
         raise ValueError("Config not found.")
 
+    today = date.today()
+    with open('data/finetune/sysprompt.txt', 'r') as f:
+        sys_prompt = f.read()
+    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
+
+
+    def collate_pad_batch_fn(batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
+        encoded = tokenizer(batch, return_tensors='pt',
+                            max_length=params.max_position_embeddings,
+                            padding='longest',
+                            pad_to_multiple_of=256)
+        return encoded['input_ids'], encoded['attention_mask']
+
+
     print("Loading datasets...")
     dataset = torch.utils.data.ConcatDataset(
         [
-            CSVDataset(path="data/finetune/DankDataset.csv", sample_frac=3.0),
-            OpenInstruct(),
-            OrcaMath(),
-            AlpacaGpt4Dataset(),
-            HFnoRobotsDataset(),
+            CSVDatasetV2(path="data/finetune/DankDataset.csv",
+                         sys_prompt=sys_prompt, tokenizer=tokenizer, max_seq_len=params.max_position_embeddings),
+            HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
         ]
     )
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
-                            shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=2, prefetch_factor=3)
+                            shuffle=True, collate_fn=collate_pad_batch_fn)
+
+    validation_dataset = CSVDatasetV2(path="data/finetune/DankDataset.csv",
+                                      sys_prompt=sys_prompt, tokenizer=tokenizer,
+                                      max_seq_len=params.max_position_embeddings)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=params.max_batch_size,
+                                       shuffle=True, collate_fn=collate_pad_batch_fn, )
     print("Loaded datasets.")
 
     train(path,
           training_data=dataloader,
+          validation_data=validation_dataloader,
           config=params,
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
-          learning_rate=1e-8,
-          save_every=10000,
+          learning_rate=1e-5,
+          save_every=500,
           )

@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Optional
 
 import torch
@@ -18,22 +19,30 @@ tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 config.max_batch_size = 1
 
 model = load_model(config, weights, device)
-_eot_token_id = tokenizer.token_to_id("<|endoftext|>")
+model.bos_token_id = tokenizer.token_to_id("<s>")
 
 generation_config: GenerationConfig = GenerationConfig(
-    max_length=512,
+    max_length=config.max_position_embeddings,
     do_sample=True,
     num_beams=1,
     use_cache=True,
     pad_token_id=0,
-    bos_token_id=_eot_token_id,
-    eos_token_id=_eot_token_id,
+    bos_token_id=1,
+    eos_token_id=2,
     cache_implementation=DynamicCache
 )
 model.generation_config = generation_config
 
-stopping_tokens = [i for i in range(7)]
+stopping_tokens = [i for i in range(3)]
 stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
+
+today = date.today()
+with open('data/finetune/sysprompt.txt', 'r') as f:
+    sys_prompt = f.read()
+sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
+
+prompt = Prompt(sys_prompt, tokenizer, )
+max_length = config.max_position_embeddings
 
 
 def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
@@ -43,8 +52,14 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
         processor.append(RepetitionPenaltyLogitsProcessor(penalty=penalty))
     if top_k is not None and top_k > 0:
         processor.append(TopKLogitsWarper(top_k=top_k))
+    if prompt.num_exchanges() > 1 and prompt.num_tokens_for_completion() > max_length - 256:
+        print(f"Num exchanges: {prompt.num_exchanges()}. Removing first exchange.")
+        prompt.remove_first_exchange()
+    if input_text.strip().casefold() == "reset":
+        print("Resetting prompt.")
+        prompt.reset()
+        return "Prompt reset."
 
-    prompt = Prompt()
     prompt.add_user_message(input_text)
     encoded = tokenizer.encode(prompt.get_tokens_for_completion())
     tokens = torch.tensor(encoded.ids).unsqueeze(0).to(device)

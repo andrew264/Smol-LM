@@ -5,6 +5,7 @@ import torch.nn as nn
 from flash_attn.losses.cross_entropy import CrossEntropyLoss
 from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint
 from transformers import GenerationMixin, Cache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
 from transformers.modeling_outputs import CausalLMOutputWithPast, MoeCausalLMOutputWithPast
@@ -147,9 +148,15 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
-            layer_outputs = layer(x, attention_mask=attention_mask,
-                                  position_ids=position_ids,
-                                  past_key_value=past_key_values, )
+            if self.config.gradient_checkpointing and self.training:
+                layer_outputs = checkpoint(layer,
+                                           x, attention_mask, position_ids, past_key_values,
+                                           use_reentrant=True, )
+
+            else:
+                layer_outputs = layer(x, attention_mask=attention_mask,
+                                      position_ids=position_ids,
+                                      past_key_value=past_key_values, )
             x = layer_outputs[0]
             if self.config.is_moe:
                 router_logits = layer_outputs[1]

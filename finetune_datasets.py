@@ -1,84 +1,86 @@
 from typing import List, Union, Optional
 
-import datasets
 import pandas as pd
 from datasets import load_dataset
+from tokenizers import Tokenizer
 from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizerFast
 
 from prompt_format import Prompt
 
 
-class HFDataset(Dataset):
-    def __init__(self, ):
-        self.dataset: Optional[datasets.Dataset | pd.DataFrame] = None
-
-    def __len__(self) -> int:
-        return len(self.dataset) if self.dataset else 0
-
-    def __getitem__(self, index: int) -> Union[str, List[str]]:
-        raise NotImplementedError
-
-
-class OpenInstruct(HFDataset):
+class DS(Dataset):
     def __init__(self):
         super().__init__()
-        self.dataset = load_dataset("VMware/open-instruct", split='train')
-
-    def __getitem__(self, index: int) -> Union[str, List[str]]:
-        row: dict = self.dataset[index]
-        prompt = Prompt()
-        prompt.add_messages([row['instruction'], row['response']])
-        return prompt.get_tokens()
-
-
-class AlpacaGpt4Dataset(HFDataset):
-    def __init__(self, ):
-        super().__init__()
-        self.dataset = load_dataset("vicgalle/alpaca-gpt4", split='train')
-
-    def __getitem__(self, index: int) -> Union[str, List[str]]:
-        row: dict = self.dataset[index]
-        instruction = row['instruction'] + '\n' + row['input']
-        prompt = Prompt()
-        prompt.add_messages([instruction, row['output']])
-        return prompt.get_tokens()
-
-
-class HFnoRobotsDataset(HFDataset):
-    def __init__(self, ):
-        super().__init__()
-        self.dataset = load_dataset("HuggingFaceH4/no_robots", split='train_sft')
-
-    def __getitem__(self, index: int) -> Union[str, List[str]]:
-        row: dict = self.dataset[index]
-        prompt = Prompt()
-        conversation = [c['content'] for c in row['messages']]
-        prompt.add_messages(conversation)
-        return prompt.get_tokens()
-
-
-class CSVDataset(HFDataset):
-    def __init__(self, path: str, sample_frac=1.0):
-        super().__init__()
-        self.dataset = pd.read_csv(path).sample(frac=sample_frac, replace=True)
+        self.data = []
 
     def __len__(self) -> int:
-        return len(self.dataset.index)
+        return len(self.data)
 
     def __getitem__(self, index: int) -> Union[str, List[str]]:
-        row = self.dataset.iloc[index]
-        prompt = Prompt()
-        prompt.add_messages([row.iloc[0], row.iloc[1]])
-        return prompt.get_tokens()
+        return self.data[index]
 
 
-class OrcaMath(HFDataset):
-    def __init__(self, ):
+class HFnoRobotsDataset(DS):
+    def __init__(self, sys_prompt: Optional[str] = None,
+                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
+                 max_seq_len=2048):
         super().__init__()
-        self.dataset = load_dataset("microsoft/orca-math-word-problems-200k", split='train')
+        dataset = load_dataset("HuggingFaceH4/no_robots", split='train_sft')
+        prompt = Prompt(sys_prompt, tokenizer)
+        for row in dataset:
+            conversation = [c['content'] for c in row['messages']]
+            prompt.add_messages(conversation)
+            if prompt.num_tokens() > max_seq_len:
+                if prompt.num_exchanges() == 1:
+                    self.data.append(prompt.get_tokens(False))
+                    prompt.reset()
+                    continue
+                prompt.remove_last_exchange()
+                self.data.append(prompt.get_tokens(False))
+                prompt.reset()
+                prompt.add_messages(conversation)
+        self.data.append(prompt.get_tokens(False))
 
-    def __getitem__(self, index: int) -> Union[str, List[str]]:
-        row: dict = self.dataset[index]
-        prompt = Prompt()
-        prompt.add_messages([row['question'], row['answer']])
-        return prompt.get_tokens()
+
+class CSVDatasetV2(DS):
+    def __init__(self, path: str,
+                 sys_prompt: Optional[str] = None,
+                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
+                 max_seq_len=2048):
+        super().__init__()
+        prompt = Prompt(sys_prompt, tokenizer)
+        for _, row in pd.read_csv(path).iterrows():
+            prompt.add_messages([row.iloc[0], row.iloc[1]])
+            if prompt.num_tokens() > max_seq_len:
+                if prompt.num_exchanges() == 1:
+                    self.data.append(prompt.get_tokens(False))
+                    prompt.reset()
+                    continue
+                prompt.remove_last_exchange()
+                self.data.append(prompt.get_tokens(False))
+                prompt.reset()
+                prompt.add_messages([row.iloc[0], row.iloc[1]])
+        self.data.append(prompt.get_tokens(False))
+
+
+class OrcaMath(DS):
+    def __init__(self, sys_prompt: Optional[str] = None,
+                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
+                 max_seq_len=2048):
+        super().__init__()
+        dataset = load_dataset("microsoft/orca-math-word-problems-200k", split='train')
+        prompt = Prompt(sys_prompt, tokenizer)
+        for row in dataset:
+            conversations = [row['question'], row['answer']]
+            prompt.add_messages(conversations)
+            if prompt.num_tokens() > max_seq_len:
+                if prompt.num_exchanges() == 1:
+                    self.data.append(prompt.get_tokens(False))
+                    prompt.reset()
+                    continue
+                prompt.remove_last_exchange()
+                self.data.append(prompt.get_tokens(False))
+                prompt.reset()
+                prompt.add_messages(conversations)
+        self.data.append(prompt.get_tokens(False))

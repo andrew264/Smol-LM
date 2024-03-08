@@ -1,7 +1,8 @@
 from enum import Enum
-from typing import TypedDict, List, Optional
+from typing import TypedDict, List, Optional, Union
 
 from tokenizers import Tokenizer
+from transformers import PreTrainedTokenizerFast
 
 
 class Role(Enum):
@@ -22,18 +23,40 @@ DEFAULT_SYSTEM_PROMPT = \
 class Prompt:
     EOT = '</s>'
 
-    def __init__(self, sys_prompt: Optional[str] = None):
+    def __init__(self, sys_prompt: Optional[str] = None,
+                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None):
         self.messages: List[Message] = []
-        if sys_prompt:
-            self.messages.append({"role": Role.SYSTEM, "content": sys_prompt, })
-        else:
-            self.messages.append({"role": Role.SYSTEM, "content": DEFAULT_SYSTEM_PROMPT, })
+        self.tokenizer = tokenizer
+        self.add_system_message(sys_prompt or DEFAULT_SYSTEM_PROMPT)
+
+    def add_system_message(self, content: str):
+        self.messages.append({"role": Role.SYSTEM, "content": content, })
 
     def add_user_message(self, content: str):
         self.messages.append({"role": Role.USER, "content": content, })
 
     def add_assistant_message(self, content: str):
         self.messages.append({"role": Role.ASSISTANT, "content": content, })
+
+    def num_tokens(self) -> int:
+        assert self.tokenizer is not None, "Tokenizer is not set"
+        return len(self.get_tokens(True))
+
+    def num_tokens_for_completion(self) -> int:
+        assert self.tokenizer is not None, "Tokenizer is not set"
+        return len(self.get_tokens_for_completion(True))
+
+    def num_exchanges(self) -> int:
+        return (len(self.messages) - 1) // 2
+
+    def remove_first_exchange(self):
+        self.messages = [self.messages[0]] + self.messages[2:]
+
+    def remove_last_exchange(self):
+        self.messages = self.messages[:-2]
+
+    def reset(self):
+        self.messages = [self.messages[0]]
 
     def add_messages(self, messages: list[str]):
         """
@@ -45,16 +68,27 @@ class Prompt:
             role = Role.USER if i % 2 == 0 else Role.ASSISTANT
             self.messages.append({"role": role, "content": message, })
 
-    def get_tokens(self, tokenizer: Optional[Tokenizer] = None):
-        dialog_tokens = f"{self.EOT}"
+    def get_tokens(self, tokenized: bool = False) -> Union[str, List[int]]:
+        dialog_tokens = ""
         for message in self.messages:
             dialog_tokens += f"{message['role'].value}\n{message['content']}{self.EOT}\n"
         dialog_tokens = dialog_tokens.strip()
-        return dialog_tokens if not tokenizer else tokenizer.encode(dialog_tokens).ids
+        if not tokenized:
+            return dialog_tokens
+        else:
+            if isinstance(self.tokenizer, Tokenizer):
+                return self.tokenizer.encode(dialog_tokens).ids
+            else:
+                return self.tokenizer.encode(dialog_tokens)
 
-    def get_tokens_for_completion(self, tokenizer: Optional[Tokenizer] = None):
+    def get_tokens_for_completion(self, tokenized: bool = False) -> Union[str, List[int]]:
         if self.messages[-1]['role'] != Role.USER:
             raise ValueError("The last message should be from the user")
-        dialog_tokens = self.get_tokens(tokenizer)
-        dialog_tokens += f"\n{Role.ASSISTANT.value}\n"
-        return dialog_tokens if not tokenizer else tokenizer.encode(dialog_tokens).ids
+        dialog_tokens = self.get_tokens(False) + f"{Role.ASSISTANT.value}\n"
+        if not tokenized:
+            return dialog_tokens
+        else:
+            if isinstance(self.tokenizer, Tokenizer):
+                return self.tokenizer.encode(dialog_tokens).ids
+            else:
+                return self.tokenizer.encode(dialog_tokens)

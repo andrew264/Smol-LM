@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
-from torch.utils.checkpoint import checkpoint
 from transformers import Cache
 
 from model import ModelConfig
@@ -42,16 +41,10 @@ class TransformerBlock(nn.Module):
         residual = x
         router_logits = None
         x = self.post_attention_layernorm(x)
-        if self.gradient_checkpointing and self.training:
-            if self.is_moe:
-                x, router_logits = checkpoint(self.block_sparse_moe.__call__, x, use_reentrant=False)
-            else:
-                x = checkpoint(self.feed_forward.__call__, x, use_reentrant=False)
+        if self.is_moe:
+            x, router_logits = self.block_sparse_moe(x)
         else:
-            if self.is_moe:
-                x, router_logits = self.block_sparse_moe(x)
-            else:
-                x = self.feed_forward(x)
+            x = self.feed_forward(x)
         output = residual + x
 
         return output, router_logits
