@@ -6,8 +6,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
     StoppingCriteriaList
 
 from model import ModelConfig, DynamicCache
-from prompt_format import Prompt
-from utils import load_model, StoppingCriteriaSub
+from utils import Prompt, load_model, StoppingCriteriaSub
 
 device = torch.device("cuda:0")
 
@@ -38,7 +37,7 @@ if __name__ == '__main__':
     )
     model.generation_config = generation_config
 
-    stopping_tokens = [i for i in range(7)]
+    stopping_tokens = [i for i in range(3)]
     stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
     today = date.today()

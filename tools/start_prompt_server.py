@@ -8,14 +8,14 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
     StoppingCriteriaList
 
 from model import ModelConfig, DynamicCache
-from prompt_format import Prompt
+from utils.prompt_format import Prompt
 from utils import load_model, StoppingCriteriaSub
 
 device = torch.device("cuda")
 weights = './finetuned-weights/model.safetensors'
 
-config = ModelConfig.from_json('./weights/config.json')
-tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
+config = ModelConfig.from_json('../weights/config.json')
+tokenizer = Tokenizer.from_file('../weights/tokenizer.json')
 config.max_batch_size = 1
 
 model = load_model(config, weights, device)
@@ -37,7 +37,7 @@ stopping_tokens = [i for i in range(3)]
 stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
 today = date.today()
-with open('data/finetune/sysprompt.txt', 'r') as f:
+with open('../data/finetune/sysprompt.txt', 'r') as f:
     sys_prompt = f.read()
 sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
 

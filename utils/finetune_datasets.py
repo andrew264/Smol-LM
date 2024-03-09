@@ -7,7 +7,7 @@ from tokenizers import Tokenizer
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerFast
 
-from prompt_format import Prompt
+from .prompt_format import Prompt
 
 
 class DS(Dataset):

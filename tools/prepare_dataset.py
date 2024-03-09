@@ -7,10 +7,10 @@ import tokenizers
 import tqdm
 from torch.utils.data import DataLoader
 
-PROCESSED_DATA = "./data/processed"
+PROCESSED_DATA = "../data/processed"
 
 if __name__ == '__main__':
-    tokenizer = tokenizers.Tokenizer.from_file("weights/tokenizer.json")
+    tokenizer = tokenizers.Tokenizer.from_file("../weights/tokenizer.json")
     eot = tokenizer.encode("<|endoftext|>").ids
 
     cosmopedia = '/mnt/d/Datasets/cosmopedia'

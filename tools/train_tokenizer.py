@@ -10,7 +10,7 @@ from model import ModelConfig
 os.environ['TOKENIZERS_PARALLELISM'] = "true"
 
 if __name__ == '__main__':
-    path = './weights/'
+    path = '../weights/'
 
     if os.path.exists(path + 'config.json'):
         params = ModelConfig.from_json(path + 'config.json')

@@ -5,7 +5,7 @@ from typing import Tuple, List
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations  # noqa
+from utils import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations  # noqa
 from main import train
 from model import ModelConfig
 
