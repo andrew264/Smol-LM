@@ -1,3 +1,5 @@
+from datetime import date
+
 import torch
 from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
@@ -25,7 +27,7 @@ if __name__ == '__main__':
     processor.append(TopKLogitsWarper(8))
 
     generation_config: GenerationConfig = GenerationConfig(
-        max_length=512,
+        max_length=config.max_position_embeddings,
         do_sample=True,
         num_beams=1,
         use_cache=True,
@@ -38,6 +40,11 @@ if __name__ == '__main__':
 
     stopping_tokens = [i for i in range(7)]
     stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
+
+    today = date.today()
+    with open('data/finetune/sysprompt.txt', 'r') as f:
+        sys_prompt = f.read()
+    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
 
 
     def multiline_input():
@@ -55,14 +62,14 @@ if __name__ == '__main__':
         return '\n'.join(lines)
 
 
-    prompt = Prompt()
+    prompt = Prompt(sys_prompt, tokenizer,)
 
     while True:
         inp = multiline_input()
         if inp == '':
             break
         if inp.casefold() == 'reset':
-            prompt = Prompt()
+            prompt.reset()
             continue
 
         # prompt

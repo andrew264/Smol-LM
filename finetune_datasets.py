@@ -84,3 +84,17 @@ class OrcaMath(DS):
                 prompt.reset()
                 prompt.add_messages(conversations)
         self.data.append(prompt.get_tokens(False))
+
+
+class WizardVicuna(DS):
+    def __init__(self, sys_prompt: Optional[str] = None,):
+        super().__init__()
+        dataset = load_dataset("cognitivecomputations/wizard_vicuna_70k_unfiltered", split='train')
+        for row in dataset:
+            prompt = Prompt(sys_prompt)
+            for ex in row['conversations']:
+                if ex['from'] == 'human':
+                    prompt.add_user_message(ex['value'])
+                else:
+                    prompt.add_assistant_message(ex['value'])
+            self.data.append(prompt.get_tokens(False))

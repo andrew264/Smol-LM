@@ -5,7 +5,7 @@ from typing import Tuple, List
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import HFnoRobotsDataset, CSVDatasetV2
+from finetune_datasets import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna
 from main import train
 from model import ModelConfig
 
@@ -35,8 +35,7 @@ if __name__ == '__main__':
     def collate_pad_batch_fn(batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         encoded = tokenizer(batch, return_tensors='pt',
                             max_length=params.max_position_embeddings,
-                            padding='longest',
-                            pad_to_multiple_of=256)
+                            padding='max_length', truncation=True)
         return encoded['input_ids'], encoded['attention_mask']
 
 
@@ -45,6 +44,7 @@ if __name__ == '__main__':
         [
             CSVDatasetV2(path="data/finetune/DankDataset.csv",
                          sys_prompt=sys_prompt, tokenizer=tokenizer, max_seq_len=params.max_position_embeddings),
+            # WizardVicuna(sys_prompt,),
             HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
         ]
     )
