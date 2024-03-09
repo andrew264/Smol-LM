@@ -49,11 +49,15 @@ class Prompt:
     def num_exchanges(self) -> int:
         return (len(self.messages) - 1) // 2
 
-    def remove_first_exchange(self):
+    def remove_first_exchange(self) -> List[Message]:
+        removed = self.messages[1:3]
         self.messages = [self.messages[0]] + self.messages[2:]
+        return removed
 
-    def remove_last_exchange(self):
+    def remove_last_exchange(self) -> List[Message]:
+        removed = self.messages[-2:]
         self.messages = self.messages[:-2]
+        return removed
 
     def reset(self):
         self.messages = [self.messages[0]]

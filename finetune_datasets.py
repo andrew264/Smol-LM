@@ -1,3 +1,4 @@
+import json
 from typing import List, Union, Optional
 
 import pandas as pd
@@ -64,6 +65,27 @@ class CSVDatasetV2(DS):
         self.data.append(prompt.get_tokens(False))
 
 
+class JsonlConversations(DS):
+    def __init__(self, path: str,
+                 sys_prompt: Optional[str] = None,
+                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
+                 max_seq_len=2048):
+        super().__init__()
+        prompt = Prompt(sys_prompt, tokenizer)
+        with open(path, 'r') as f:
+            for line in f:
+                conversation = json.loads(line)
+                conv = [conversation[i:i + 2] for i in range(0, len(conversation), 2)]
+                for ex in conv:
+                    prompt.add_messages(ex)
+                    if prompt.num_tokens() > max_seq_len and prompt.num_exchanges() > 1:
+                        self.data.append(prompt.get_tokens(False))
+                        prompt.reset()
+                        continue
+                self.data.append(prompt.get_tokens(False))
+                prompt.reset()
+
+
 class OrcaMath(DS):
     def __init__(self, sys_prompt: Optional[str] = None,
                  tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
@@ -87,7 +109,7 @@ class OrcaMath(DS):
 
 
 class WizardVicuna(DS):
-    def __init__(self, sys_prompt: Optional[str] = None,):
+    def __init__(self, sys_prompt: Optional[str] = None, ):
         super().__init__()
         dataset = load_dataset("cognitivecomputations/wizard_vicuna_70k_unfiltered", split='train')
         for row in dataset:

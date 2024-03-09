@@ -5,7 +5,7 @@ from typing import Tuple, List
 import torch
 from torch.utils.data import DataLoader
 
-from finetune_datasets import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna
+from finetune_datasets import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations  # noqa
 from main import train
 from model import ModelConfig
 
@@ -40,10 +40,13 @@ if __name__ == '__main__':
 
 
     print("Loading datasets...")
+    ds1 = CSVDatasetV2(path="data/finetune/DankDataset.csv",
+                       sys_prompt=sys_prompt, tokenizer=tokenizer, max_seq_len=params.max_position_embeddings),
+    ds2 = JsonlConversations(path="data/finetune/convos.jsonl", sys_prompt=sys_prompt, tokenizer=tokenizer,
+                             max_seq_len=params.max_position_embeddings)
     dataset = torch.utils.data.ConcatDataset(
         [
-            CSVDatasetV2(path="data/finetune/DankDataset.csv",
-                         sys_prompt=sys_prompt, tokenizer=tokenizer, max_seq_len=params.max_position_embeddings),
+            ds1, ds2,
             # WizardVicuna(sys_prompt,),
             HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
         ]
@@ -51,9 +54,7 @@ if __name__ == '__main__':
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
                             shuffle=True, collate_fn=collate_pad_batch_fn)
 
-    validation_dataset = CSVDatasetV2(path="data/finetune/DankDataset.csv",
-                                      sys_prompt=sys_prompt, tokenizer=tokenizer,
-                                      max_seq_len=params.max_position_embeddings)
+    validation_dataset = torch.utils.data.ConcatDataset([ds1, ds2])
     validation_dataloader = DataLoader(validation_dataset, batch_size=params.max_batch_size,
                                        shuffle=True, collate_fn=collate_pad_batch_fn, )
     print("Loaded datasets.")
