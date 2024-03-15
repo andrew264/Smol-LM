@@ -11,8 +11,9 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import get_cosine_schedule_with_warmup
 
-from model import ModelConfig
-from utils import load_model, load_optimizer, save_model, save_optimizer
+from model import ModelConfig, LoRAConfig
+from utils import load_model, load_optimizer, save_model, save_optimizer, count_parameters, load_lora_model
+from utils.lora_utils import to_lora_model
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -33,10 +34,6 @@ class NPDataset(Dataset):
 
     def __getitem__(self, index) -> [np.ndarray]:
         return [np.int64(self.data[index])]
-
-
-def count_parameters(m: nn.Module):
-    return sum(p.numel() for p in m.parameters() if p.requires_grad)
 
 
 @torch.no_grad()
@@ -65,15 +62,17 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     model.train()
 
 
-def train(model_path: str, training_data: DataLoader, config: ModelConfig,
-          validation_data: Optional[DataLoader] = None, start_step: int = 0, save_step_count: bool = False,
-          disable_grads_for_embeddings: bool = False, disable_scheduler: bool = False, learning_rate: float = 3e-4,
-          save_every: int = 2000):
+def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_config: LoRAConfig = None,
+          is_lora: bool = False, validation_data: Optional[DataLoader] = None, start_step: int = 0,
+          save_step_count: bool = False, disable_grads_for_embeddings: bool = False,
+          disable_scheduler: bool = False, learning_rate: float = 3e-4, save_every: int = 2000):
     """
 
     :param model_path: Model path to save model weights
     :param training_data: DataLoader for training data
     :param config: ModelConfig
+    :param lora_config: LoRAConfig
+    :param is_lora: Whether the model weights are in LoRA format
     :param validation_data: DataLoader for validation data
     :param start_step: Start training from this step (useful for resuming training)
     :param save_step_count: Save the current step count to model_path/step.txt
@@ -84,12 +83,22 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
     :return:
     """
 
-    model = load_model(config, model_path + 'model.safetensors', device=device)
+    if is_lora:
+        print("LoRA model found. Loading weights with LoRA.")
+        model = load_lora_model(config, lora_config, model_path + 'model.safetensors', device=device)
+    else:
+        print("Loading model weights.")
+        model = load_model(config, model_path + 'model.safetensors', device=device)
+        if lora_config:
+            for param in model.parameters():
+                param.requires_grad = False
+            if not is_lora:
+                print("Model is not in LoRA format. Converting to LoRA.")
+                model = to_lora_model(model, lora_config)
     model.train()
 
     if disable_grads_for_embeddings:
-        for param in model.tok_embeddings.parameters():
-            param.requires_grad = False
+        model.tok_embeddings.weight.requires_grad = False
         print("Disabled gradients for embedding layer.")
 
     # accelerator
@@ -123,7 +132,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig,
                                                         total_steps // config.grad_accumulation_steps * 0.02),
                                                     num_training_steps=total_steps // config.grad_accumulation_steps)
 
-    print(f"Model has {count_parameters(model) / 1e6:.2f}M parameters.")
+    count_parameters(model)
 
     accumulated_loss = 0
     start_time, time_delta = time.time(), 0.

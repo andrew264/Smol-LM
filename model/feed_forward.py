@@ -1,3 +1,5 @@
+from typing import Union
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -5,6 +7,7 @@ from torch.nn import functional as F
 from transformers.activations import get_activation
 
 from model import ModelConfig
+from model.lora import LoRALinear
 
 
 class FeedForward(nn.Module):
@@ -13,9 +16,9 @@ class FeedForward(nn.Module):
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
 
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.gate_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act = get_activation(config.hidden_act)
 
     def forward(self, x: Tensor) -> Tensor:

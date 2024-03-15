@@ -8,11 +8,11 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
     StoppingCriteriaList
 
 from model import ModelConfig, DynamicCache
-from utils.prompt_format import Prompt
 from utils import load_model, StoppingCriteriaSub
+from utils.prompt_format import Prompt
 
 device = torch.device("cuda")
-weights = './finetuned-weights/model.safetensors'
+weights = './ft-weights/model.safetensors'
 
 config = ModelConfig.from_json('../weights/config.json')
 tokenizer = Tokenizer.from_file('../weights/tokenizer.json')

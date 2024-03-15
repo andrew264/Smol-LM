@@ -18,7 +18,7 @@ data/
 
 # model weights
 weights/
-finetuned-weights/
+ft-weights/
 
 # logs
 logs/

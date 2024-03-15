@@ -5,10 +5,12 @@ from safetensors import safe_open
 from safetensors.torch import save_file as safe_save_file
 from transformers import StoppingCriteria
 
-from model import ModelConfig, Transformer
+from model import ModelConfig, Transformer, LoRAConfig
+from utils.lora_utils import to_lora_model
 
 
-def load_model(config: ModelConfig, path: str, device: torch.device = torch.device('cuda:0')) -> Transformer:
+def load_model(config: ModelConfig, path: str,
+               device: torch.device = torch.device('cuda:0')) -> Transformer:
     """
     Loads a model from a path.
     :param config: (ModelConfig) The model configuration.
@@ -16,8 +18,37 @@ def load_model(config: ModelConfig, path: str, device: torch.device = torch.devi
     :param device: (torch.device) The device to load the model to.
     :return: (torch.nn.Module) The model.
     """
+    model = Transformer(config).to(dtype=torch.bfloat16, device=device)
+    if os.path.exists(path):
+        state_dict = {}
+        d = device.type if device.type == 'cpu' else device.index
+        with safe_open(path, framework="pt", device=d) as f:
+            for k in f.keys():
+                state_dict[k] = f.get_tensor(k)
+        model.load_state_dict(state_dict)
+        print("Loaded model from weights file.")
+        del state_dict
+        torch.cuda.empty_cache()
+    else:
+        print("Created new model.")
+    model.eval()
+    return model
+
+
+def load_lora_model(config: ModelConfig, lora_config: LoRAConfig,
+                    path: str, device: torch.device = torch.device('cuda:0')) -> Transformer:
+    """
+    Loads a LoRA model from a path.
+    :param config: (ModelConfig) The model configuration.
+    :param lora_config: (LoRAConfig) The LoRA configuration.
+    :param path: (str) The path to the model.
+    :param device: (torch.device) The device to load the model to.
+    :return: (torch.nn.Module) The model.
+    """
     model = Transformer(config)
-    model.to(dtype=torch.bfloat16, device=device)
+    for param in model.parameters():
+        param.requires_grad = False
+    model = to_lora_model(model, lora_config).to(dtype=torch.bfloat16, device=device)
     if os.path.exists(path):
         state_dict = {}
         d = device.type if device.type == 'cpu' else device.index
@@ -53,9 +84,9 @@ def load_optimizer(optimizer, path: str, device: torch.device = torch.device('cu
     """
     if os.path.exists(path):
         optimizer.load_state_dict(torch.load(path, map_location=device))
-        print("Loaded optimizer from weights file.")
+        print("Loaded optimizer from checkpoint.")
     else:
-        print("Weights file not found. Created new optimizer.")
+        print("Checkpoint file not found. Created new optimizer.")
     return optimizer
 
 
@@ -84,3 +115,16 @@ class StoppingCriteriaSub(StoppingCriteria):
                 stop_count += 1
 
         return stop_count >= self.ENCOUNTERS
+
+
+def count_parameters(model: torch.nn.Module):
+    """
+    Counts the number of parameters in a model.
+    :param model: (torch.nn.Module) The model.
+    """
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f'{total_params:,} total parameters.')
+    total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    if total_params != total_trainable_params:
+        print(f'{total_trainable_params:,} trainable parameters.')
+        print(f'Percentage of trainable parameters: {total_trainable_params / total_params * 100:.2f}%')

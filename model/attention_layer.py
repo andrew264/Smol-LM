@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
@@ -7,6 +7,7 @@ from torch.nn import functional as F
 from transformers import Cache
 
 from model import ModelConfig
+from model.lora import LoRALinear
 from model.rotary import RotaryEmbedding, apply_rotary_pos_emb
 
 
@@ -34,10 +35,16 @@ class Attention(nn.Module):
                 f"num_key_value_heads must divide evenly into num_heads (got `num_key_value_heads`: "
                 f"{self.num_key_value_heads} and `num_heads`: {self.num_heads})."
             )
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_bias)
+        self.q_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size, self.num_heads * self.head_dim,
+                                                              bias=config.attention_bias)
+        self.k_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size,
+                                                              self.num_key_value_heads * self.head_dim,
+                                                              bias=config.attention_bias)
+        self.v_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size,
+                                                              self.num_key_value_heads * self.head_dim,
+                                                              bias=config.attention_bias)
+        self.o_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size, self.hidden_size,
+                                                              bias=config.attention_bias)
 
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
                                           max_position_embeddings=self.max_position_embeddings,

@@ -58,3 +58,29 @@ class ModelConfig:
     def to_json(self, path: str) -> None:
         with open(path, "w") as f:
             json.dump(self.__dict__, f, indent=4)
+
+
+@dataclass
+class LoRAConfig:
+    lora_rank = 8
+    lora_alpha = 16
+    lora_dropout = 0.05
+    lora_layers = ['q_proj', 'k_proj']  # 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'mlp'
+
+    @classmethod
+    def from_json(cls, path: str) -> "LoRAConfig":
+        """
+        Loads a configuration from a json file.
+        :param path: (str) The path to the json file.
+        :return: (LoRAConfig) The configuration class.
+        """
+        with open(path, "r") as f:
+            config_dict = json.load(f)
+        conf = cls()
+        for k, v in config_dict.items():
+            setattr(conf, k, v)
+        return conf
+
+    def to_json(self, path: str) -> None:
+        with open(path, "w") as f:
+            json.dump(self.__dict__, f, indent=4)

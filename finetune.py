@@ -5,9 +5,9 @@ from typing import Tuple, List
 import torch
 from torch.utils.data import DataLoader
 
-from utils import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations  # noqa
 from main import train
-from model import ModelConfig
+from model import ModelConfig, LoRAConfig
+from utils import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations  # noqa
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -18,13 +18,21 @@ if __name__ == '__main__':
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
     tokenizer.pad_token_id = 0
 
-    path = './finetuned-weights/'
+    path = './ft-weights/'
 
     if os.path.exists(path + 'config.json'):
         params = ModelConfig.from_json(path + 'config.json')
         print("Loaded config from file.")
     else:
         raise ValueError("Config not found.")
+
+    if os.path.exists(path + 'lora.json'):
+        lora_params = LoRAConfig.from_json(path + 'lora.json')
+        print("Loaded LoRA config from file.")
+    else:
+        lora_params = LoRAConfig()
+        print("Created new LoRA config.")
+        lora_params.to_json(path + 'lora.json')
 
     today = date.today()
     with open('data/finetune/sysprompt.txt', 'r') as f:
@@ -41,14 +49,14 @@ if __name__ == '__main__':
 
     print("Loading datasets...")
     ds1 = CSVDatasetV2(path="data/finetune/DankDataset.csv",
-                       sys_prompt=sys_prompt, tokenizer=tokenizer, max_seq_len=params.max_position_embeddings),
+                       sys_prompt=sys_prompt, tokenizer=tokenizer, max_seq_len=params.max_position_embeddings)
     ds2 = JsonlConversations(path="data/finetune/convos.jsonl", sys_prompt=sys_prompt, tokenizer=tokenizer,
                              max_seq_len=params.max_position_embeddings)
     dataset = torch.utils.data.ConcatDataset(
         [
             ds1, ds2,
-            # WizardVicuna(sys_prompt,),
-            HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
+            # WizardVicuna(sys_prompt, ),
+            # HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
         ]
     )
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
@@ -63,8 +71,10 @@ if __name__ == '__main__':
           training_data=dataloader,
           validation_data=validation_dataloader,
           config=params,
+          lora_config=lora_params,
+          is_lora=False,
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
           learning_rate=1e-5,
-          save_every=500,
+          save_every=1000,
           )

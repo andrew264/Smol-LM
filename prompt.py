@@ -1,3 +1,4 @@
+import os
 from datetime import date
 
 import torch
@@ -5,19 +6,29 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
     StoppingCriteriaList
 
-from model import ModelConfig, DynamicCache
-from utils import Prompt, load_model, StoppingCriteriaSub
+from model import ModelConfig, DynamicCache, LoRAConfig
+from utils import Prompt, StoppingCriteriaSub, load_lora_model, load_model, to_lora_model
 
 device = torch.device("cuda:0")
 
 if __name__ == '__main__':
-    weights = './finetuned-weights/model.safetensors'
+    weights = './ft-weights/model.safetensors'
 
     config = ModelConfig.from_json('./weights/config.json')
     config.max_batch_size = 1
 
     tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
-    model = load_model(config, weights, device)
+
+    if os.path.exists('./ft-weights/lora.json'):
+        lora_params = LoRAConfig.from_json('./ft-weights/lora.json')
+        print("Loaded LoRA config from file.")
+    else:
+        lora_params = None
+
+    if lora_params is None:
+        model = load_model(config, weights, device)
+    else:
+        model = load_lora_model(config, lora_params, weights, device)
     model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor
@@ -61,7 +72,7 @@ if __name__ == '__main__':
         return '\n'.join(lines)
 
 
-    prompt = Prompt(sys_prompt, tokenizer,)
+    prompt = Prompt(sys_prompt, tokenizer, )
 
     while True:
         inp = multiline_input()
