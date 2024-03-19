@@ -1,3 +1,4 @@
+import os
 from datetime import date
 from typing import Optional
 
@@ -7,18 +8,27 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
     StoppingCriteriaList
 
-from model import ModelConfig, DynamicCache
-from utils import load_model, StoppingCriteriaSub
+from model import ModelConfig, LoRAConfig, DynamicCache
+from utils import load_model, StoppingCriteriaSub, load_lora_model
 from utils.prompt_format import Prompt
 
 device = torch.device("cuda")
 weights = './ft-weights/model.safetensors'
 
-config = ModelConfig.from_json('../weights/config.json')
-tokenizer = Tokenizer.from_file('../weights/tokenizer.json')
+config = ModelConfig.from_json('weights/config.json')
+tokenizer = Tokenizer.from_file('weights/tokenizer.json')
 config.max_batch_size = 1
 
-model = load_model(config, weights, device)
+if os.path.exists('./ft-weights/lora.json'):
+    lora_params = LoRAConfig.from_json('./ft-weights/lora.json')
+    print("Loaded LoRA config from file.")
+else:
+    lora_params = None
+
+if lora_params is None:
+    model = load_model(config, weights, device)
+else:
+    model = load_lora_model(config, lora_params, weights, device)
 model.bos_token_id = tokenizer.token_to_id("<s>")
 
 generation_config: GenerationConfig = GenerationConfig(
@@ -37,7 +47,7 @@ stopping_tokens = [i for i in range(3)]
 stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
 today = date.today()
-with open('../data/finetune/sysprompt.txt', 'r') as f:
+with open('data/finetune/sysprompt.txt', 'r') as f:
     sys_prompt = f.read()
 sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
 

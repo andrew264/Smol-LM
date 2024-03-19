@@ -11,3 +11,7 @@ transformers
 aiohttp
 datasets
 safetensors
+langchain
+langchain-community
+chromadb
+sentence-transformers
