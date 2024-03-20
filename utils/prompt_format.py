@@ -17,6 +17,7 @@ class Role(Enum):
 class Message(TypedDict):
     role: Role
     content: str
+    context: Optional[str]
 
 
 DEFAULT_SYSTEM_PROMPT = \
@@ -39,26 +40,18 @@ class Prompt:
                                 embedding_function=embeddings_model) if vector_store_path and embeddings_model else None
         self.add_system_message(sys_prompt or DEFAULT_SYSTEM_PROMPT)
 
-    def get_context(self) -> str:
+    def get_context(self, content: str) -> str:
         if self.retriever is not None:
-            last_message = self.messages[-1]['content']
-            data = self.retriever.similarity_search(last_message)
+            data = self.retriever.similarity_search(content, 1)
             return data[0].page_content
         else:
             return "None"
-
-    def update_context(self,):
-        if self.retriever is not None:
-            context = self.get_context()
-            new_system_prompt = self.sys_prompt.format(context=context)
-            self.messages[0]['content'] = new_system_prompt
 
     def add_system_message(self, content: str):
         self.messages.append({"role": Role.SYSTEM, "content": content, })
 
     def add_user_message(self, content: str):
-        self.messages.append({"role": Role.USER, "content": content, })
-        self.update_context()
+        self.messages.append({"role": Role.USER, "content": content, "context": self.get_context(content)})
 
     def add_assistant_message(self, content: str):
         self.messages.append({"role": Role.ASSISTANT, "content": content, })
@@ -114,7 +107,14 @@ class Prompt:
     def get_tokens_for_completion(self, tokenized: bool = False) -> Union[str, List[int]]:
         if self.messages[-1]['role'] != Role.USER:
             raise ValueError("The last message should be from the user")
-        dialog_tokens = self.get_tokens(False) + f"{Role.ASSISTANT.value}\n"
+        dialog_tokens = ""
+        for message in self.messages[:-1]:
+            dialog_tokens += f"{message['role'].value}\n{message['content']}{self.EOT}\n"
+        last_m = self.messages[-1]
+        dialog_tokens += (f"{last_m['role'].value}\nCONTEXT\n{last_m['context']}\nEND OF CONTEXT"
+                          f"\nQUESTION: {last_m['content']}{self.EOT}\n")
+        dialog_tokens += f"{Role.ASSISTANT.value}\nANSWER:"
+
         if not tokenized:
             return dialog_tokens
         else:

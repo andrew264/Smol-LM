@@ -7,7 +7,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
     StoppingCriteriaList
 
 from model import ModelConfig, DynamicCache, LoRAConfig, HFNomicEmbeddings
-from utils import Prompt, StoppingCriteriaSub, load_lora_model, load_model, to_lora_model
+from utils import Prompt, StoppingCriteriaSub, load_lora_model, load_model
 
 device = torch.device("cuda:0")
 
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
     processor.append(RepetitionPenaltyLogitsProcessor(1.05))
-    processor.append(TopKLogitsWarper(8))
+    processor.append(TopKLogitsWarper(16))
 
     generation_config: GenerationConfig = GenerationConfig(
         max_length=config.max_position_embeddings,
@@ -54,7 +54,7 @@ if __name__ == '__main__':
     today = date.today()
     with open('data/finetune/sysprompt.txt', 'r') as f:
         sys_prompt = f.read()
-    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"), context="{context}")
+    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
 
 
     def multiline_input():
@@ -70,6 +70,7 @@ if __name__ == '__main__':
                 break
             lines.append(line)
         return '\n'.join(lines)
+
 
     embedder = HFNomicEmbeddings()
     vec_db = './data/rag_chroma'
