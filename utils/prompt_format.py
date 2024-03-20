@@ -1,8 +1,11 @@
 from enum import Enum
 from typing import TypedDict, List, Optional, Union
 
+from langchain_community.vectorstores import Chroma
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
+
+from model import HFNomicEmbeddings
 
 
 class Role(Enum):
@@ -24,16 +27,38 @@ class Prompt:
     EOT = '</s>'
 
     def __init__(self, sys_prompt: Optional[str] = None,
-                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None):
+                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
+                 embeddings_model: Optional[HFNomicEmbeddings] = None,
+                 vector_store_path: Optional[str] = None,
+                 ):
         self.messages: List[Message] = []
         self.tokenizer = tokenizer
+        self.embeddings_model = embeddings_model
+        self.sys_prompt = sys_prompt
+        self.retriever = Chroma(persist_directory=vector_store_path,
+                                embedding_function=embeddings_model) if vector_store_path and embeddings_model else None
         self.add_system_message(sys_prompt or DEFAULT_SYSTEM_PROMPT)
+
+    def get_context(self) -> str:
+        if self.retriever is not None:
+            last_message = self.messages[-1]['content']
+            data = self.retriever.similarity_search(last_message)
+            return data[0].page_content
+        else:
+            return "None"
+
+    def update_context(self,):
+        if self.retriever is not None:
+            context = self.get_context()
+            new_system_prompt = self.sys_prompt.format(context=context)
+            self.messages[0]['content'] = new_system_prompt
 
     def add_system_message(self, content: str):
         self.messages.append({"role": Role.SYSTEM, "content": content, })
 
     def add_user_message(self, content: str):
         self.messages.append({"role": Role.USER, "content": content, })
+        self.update_context()
 
     def add_assistant_message(self, content: str):
         self.messages.append({"role": Role.ASSISTANT, "content": content, })
@@ -60,7 +85,8 @@ class Prompt:
         return removed
 
     def reset(self):
-        self.messages = [self.messages[0]]
+        self.messages = []
+        self.add_system_message(self.sys_prompt or DEFAULT_SYSTEM_PROMPT)
 
     def add_messages(self, messages: list[str]):
         """

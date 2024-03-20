@@ -6,7 +6,7 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
     StoppingCriteriaList
 
-from model import ModelConfig, DynamicCache, LoRAConfig
+from model import ModelConfig, DynamicCache, LoRAConfig, HFNomicEmbeddings
 from utils import Prompt, StoppingCriteriaSub, load_lora_model, load_model, to_lora_model
 
 device = torch.device("cuda:0")
@@ -54,7 +54,7 @@ if __name__ == '__main__':
     today = date.today()
     with open('data/finetune/sysprompt.txt', 'r') as f:
         sys_prompt = f.read()
-    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
+    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"), context="{context}")
 
 
     def multiline_input():
@@ -71,8 +71,9 @@ if __name__ == '__main__':
             lines.append(line)
         return '\n'.join(lines)
 
-
-    prompt = Prompt(sys_prompt, tokenizer, )
+    embedder = HFNomicEmbeddings()
+    vec_db = './data/rag_chroma'
+    prompt = Prompt(sys_prompt, tokenizer, embeddings_model=embedder, vector_store_path=vec_db)
 
     while True:
         inp = multiline_input()
