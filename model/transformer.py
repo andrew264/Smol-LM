@@ -151,7 +151,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             if self.config.gradient_checkpointing and self.training:
                 layer_outputs = checkpoint(layer,
                                            x, attention_mask, position_ids, past_key_values,
-                                           use_reentrant=True, )
+                                           use_reentrant=False, )
 
             else:
                 layer_outputs = layer(x, attention_mask=attention_mask,
