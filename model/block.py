@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint
 from transformers import Cache
 
 from model import ModelConfig
@@ -34,17 +35,27 @@ class TransformerBlock(nn.Module):
         # Self-attention
         residual = hidden_states
         x = self.input_layernorm(hidden_states)
-        x = self.attention(x, attention_mask=attention_mask, position_ids=position_ids, past_key_value=past_key_value, )
+        if self.gradient_checkpointing == 'attention-only' and self.training:
+            x = checkpoint(self.attention, x, attention_mask, position_ids, past_key_value, use_reentrant=False)
+        else:
+            x = self.attention(x, attention_mask=attention_mask, position_ids=position_ids,
+                               past_key_value=past_key_value, )
         x = residual + x
 
         # Block-sparse MoE
         residual = x
         router_logits = None
         x = self.post_attention_layernorm(x)
-        if self.is_moe:
-            x, router_logits = self.block_sparse_moe(x)
+        if self.gradient_checkpointing == 'mlp-only' and self.training:
+            if self.is_moe:
+                x, router_logits = checkpoint(self.block_sparse_moe, x, use_reentrant=False)
+            else:
+                x = checkpoint(self.feed_forward, x, use_reentrant=False)
         else:
-            x = self.feed_forward(x)
+            if self.is_moe:
+                x, router_logits = self.block_sparse_moe(x)
+            else:
+                x = self.feed_forward(x)
         output = residual + x
 
         return output, router_logits

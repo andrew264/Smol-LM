@@ -148,7 +148,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
-            if self.config.gradient_checkpointing and self.training:
+            if self.config.gradient_checkpointing == 'full' and self.training:
                 layer_outputs = checkpoint(layer,
                                            x, attention_mask, position_ids, past_key_values,
                                            use_reentrant=False, )

@@ -79,6 +79,6 @@ if __name__ == '__main__':
           is_lora=False,
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
-          learning_rate=1e-4,
+          learning_rate=2e-4,
           save_every=1000,
           )

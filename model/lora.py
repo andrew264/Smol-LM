@@ -11,7 +11,7 @@ class LoRALayer(nn.Module):
         self.rank = rank
         self.alpha = alpha
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        self.lora_A = nn.Parameter(torch.zeros(in_dim, rank, dtype=dtype, device=device) * std_dev)
+        self.lora_A = nn.Parameter(torch.randn(in_dim, rank, dtype=dtype, device=device) * std_dev)
         self.lora_B = nn.Parameter(torch.zeros(rank, out_dim, dtype=dtype, device=device))
 
     def forward(self, x):

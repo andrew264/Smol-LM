@@ -30,7 +30,7 @@ class ModelConfig:
     tie_word_embeddings = False
     attention_bias = False
     attention_dropout = 0.0
-    gradient_checkpointing = True
+    gradient_checkpointing: Optional[str] = None  # 'mlp-only', 'attention-only', 'full', None
     grad_accumulation_steps = 1
     max_batch_size = 1
     epochs = 1
