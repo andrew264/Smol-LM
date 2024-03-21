@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import tqdm
 from accelerate import Accelerator
+from tokenizers import Tokenizer
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import get_cosine_schedule_with_warmup
@@ -19,13 +20,31 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class NPDataset(Dataset):
-    def __init__(self, path, block_size=1024, validation_split=False):
+    def __init__(self, _path, block_size=1024, validation_split=False):
         validation_size = 5000 * block_size
-        self.data = np.memmap(path, dtype=np.uint16, mode='r')
+        self.data = np.memmap(_path, dtype=np.uint16, mode='r')
         if validation_split:
             self.data = self.data[-validation_size:]
         else:
             self.data = self.data[:-validation_size]
+        self.num_samples = len(self.data) // block_size
+        self.data = self.data[:self.num_samples * block_size].reshape(self.num_samples, block_size)
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, index) -> [np.ndarray]:
+        return [np.int64(self.data[index])]
+
+
+class TextCorpus(Dataset):
+    """Please use smaller files; this is not memory efficient."""
+
+    def __init__(self, _path: str, tokenizer: Tokenizer, block_size=1024):
+        with open(_path, 'r') as _f:
+            text = _f.read()
+        self.data = np.array(tokenizer.encode(text).ids, dtype=np.uint16)
+        del text
         self.num_samples = len(self.data) // block_size
         self.data = self.data[:self.num_samples * block_size].reshape(self.num_samples, block_size)
 
@@ -115,8 +134,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
     # optimizer
     betas = (0.9, 0.95)
     weight_decay = 0.1
-    optimizer = bnb.optim.AdamW8bit(model.get_optimizer_grouped_parameters(weight_decay),
-                                    lr=learning_rate, betas=betas, )
+    params = model.get_optimizer_grouped_parameters(weight_decay) if not is_lora else model.parameters()
+    optimizer = bnb.optim.AdamW8bit(params, lr=learning_rate, betas=betas, )
     optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
     # TODO: figure out why loading optimizer states is using more memory
     # TODO: figure out why setting device to CPU or GPU use different amount of memory [GPU uses more]
@@ -143,63 +162,65 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
 
     print(f"Training Step: {start_step} of {total_steps} | {start_step / total_steps * 100:.2f}%")
 
-    for i, item in enumerate(training_data):
-        if i <= start_step:
-            continue
-        if i == start_step + 1:
-            start_time = time.time()
+    for epoch in range(config.epochs):
+        print(f"Epoch: {epoch + 1} of {config.epochs}")
+        for i, item in enumerate(training_data):
+            if i <= start_step:
+                continue
+            if i == start_step + 1:
+                start_time = time.time()
 
-        ids, mask = item[0], item[1] if len(item) > 1 else None
-        ids, mask = ids.to(device), mask.to(device) if mask is not None else None
+            ids, mask = item[0], item[1] if len(item) > 1 else None
+            ids, mask = ids.to(device), mask.to(device) if mask is not None else None
 
-        # train step
-        with accelerator.accumulate(model):
-            out = model(input_ids=ids, labels=ids, attention_mask=mask)  # forward pass
-            logits, loss = out.logits, out.loss
-            accumulated_loss += loss.item()
-            accelerator.backward(loss)  # backward pass
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # train step
+            with accelerator.accumulate(model):
+                out = model(input_ids=ids, labels=ids, attention_mask=mask)  # forward pass
+                logits, loss = out.logits, out.loss
+                accumulated_loss += loss.item()
+                accelerator.backward(loss)  # backward pass
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-            optimizer.step()
-            if scheduler is not None:
-                scheduler.step()
-            optimizer.zero_grad()
+                optimizer.step()
+                if scheduler is not None:
+                    scheduler.step()
+                optimizer.zero_grad()
 
-        if i % print_step == 0 and i > 0:
-            time_delta = time.time() - start_time
-            avg_loss = accumulated_loss / print_step
-            avg_perplexity = torch.exp(torch.tensor(avg_loss))
-            batch_per_sec = print_step / time_delta
+            if i % print_step == 0 and i > 0:
+                time_delta = time.time() - start_time
+                avg_loss = accumulated_loss / print_step
+                avg_perplexity = torch.exp(torch.tensor(avg_loss))
+                batch_per_sec = print_step / time_delta
 
-            accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                              f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.1f}")
+                accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
+                                  f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.1f}")
 
-            start_time = time.time()
-            accumulated_loss = 0
+                start_time = time.time()
+                accumulated_loss = 0
 
-        if i % save_every == 0 and i > 0:
-            save_model(model, model_path + 'model.safetensors')
-            save_optimizer(optimizer, model_path + 'optimizer.bin')
-            print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
-                  f"Time left: {((total_steps - i) * (time_delta / print_step)) / 60:.2f} minutes")
+            if i % save_every == 0 and i > 0:
+                save_model(model, model_path + 'model.safetensors')
+                save_optimizer(optimizer, model_path + 'optimizer.bin')
+                print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
+                      f"Time left: {((total_steps - i) * (time_delta / print_step)) / 60:.2f} minutes")
 
-            if save_step_count:
-                with open(model_path + 'step.txt', 'w') as step_file:
-                    step_file.write(f"{i}\n")
+                if save_step_count:
+                    with open(model_path + 'step.txt', 'w') as step_file:
+                        step_file.write(f"{i}\n")
 
-            if validation_data is not None:
-                if i % 10000 == 0:
-                    validate_model(model, validation_data, full_validation=True)
-                else:
-                    validate_model(model, validation_data)
+                if validation_data is not None:
+                    if i % 10000 == 0:
+                        validate_model(model, validation_data, full_validation=True)
+                    else:
+                        validate_model(model, validation_data)
 
-            start_time = time.time()
+                start_time = time.time()
 
-    save_model(model, model_path + 'model.safetensors')
-    save_optimizer(optimizer, model_path + 'optimizer.bin')
+        save_model(model, model_path + 'model.safetensors')
+        save_optimizer(optimizer, model_path + 'optimizer.bin')
 
-    if validation_data is not None:
-        validate_model(model, validation_data, full_validation=True)
+        if validation_data is not None:
+            validate_model(model, validation_data, full_validation=True)
 
     print("Training complete.")
 

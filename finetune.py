@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from main import train
 from model import ModelConfig, LoRAConfig
-from utils import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations  # noqa
+from utils import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations, SmallOrca  # noqa
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -43,7 +43,9 @@ if __name__ == '__main__':
     def collate_pad_batch_fn(batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         encoded = tokenizer(batch, return_tensors='pt',
                             max_length=params.max_position_embeddings,
-                            padding='max_length', truncation=True)
+                            padding='longest',
+                            pad_to_multiple_of=8,
+                            truncation=True)
         return encoded['input_ids'], encoded['attention_mask']
 
 
@@ -56,7 +58,9 @@ if __name__ == '__main__':
         [
             ds1, ds2,
             # WizardVicuna(sys_prompt, ),
-            # HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
+            HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
+            SmallOrca()
+
         ]
     )
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
@@ -75,6 +79,6 @@ if __name__ == '__main__':
           is_lora=False,
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
-          learning_rate=1e-5,
+          learning_rate=1e-4,
           save_every=1000,
           )

@@ -108,6 +108,22 @@ class OrcaMath(DS):
         self.data.append(prompt.get_tokens(False))
 
 
+class SmallOrca(DS):
+    def __init__(self,):
+        super().__init__()
+        dataset = load_dataset("prince-canuma/SmallOrca", split='train')
+        for row in dataset:
+            prompt = Prompt()
+            for ex in row['messages']:
+                if ex['role'] == 'system':
+                    prompt.add_system_message(ex['content'])
+                elif ex['role'] == 'user':
+                    prompt.add_user_message(ex['content'])
+                else:
+                    prompt.add_assistant_message(ex['content'])
+            self.data.append(prompt.get_tokens(False))
+
+
 class WizardVicuna(DS):
     def __init__(self, sys_prompt: Optional[str] = None, ):
         super().__init__()

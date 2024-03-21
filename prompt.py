@@ -6,7 +6,7 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
     StoppingCriteriaList
 
-from model import ModelConfig, DynamicCache, LoRAConfig, HFNomicEmbeddings
+from model import ModelConfig, DynamicCache, LoRAConfig, HFNomicEmbeddings  # noqa
 from utils import Prompt, StoppingCriteriaSub, load_lora_model, load_model
 
 device = torch.device("cuda:0")
@@ -72,8 +72,9 @@ if __name__ == '__main__':
         return '\n'.join(lines)
 
 
-    embedder = HFNomicEmbeddings()
-    vec_db = './data/rag_chroma'
+    # embedder = HFNomicEmbeddings()
+    # vec_db = './data/rag_chroma'
+    embedder, vec_db = None, None
     prompt = Prompt(sys_prompt, tokenizer, embeddings_model=embedder, vector_store_path=vec_db)
 
     while True:

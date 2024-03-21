@@ -33,6 +33,7 @@ class ModelConfig:
     gradient_checkpointing = True
     grad_accumulation_steps = 1
     max_batch_size = 1
+    epochs = 1
     is_encoder_decoder = False
 
     @classmethod

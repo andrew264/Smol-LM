@@ -38,7 +38,8 @@ class Prompt:
         self.sys_prompt = sys_prompt
         self.retriever = Chroma(persist_directory=vector_store_path,
                                 embedding_function=embeddings_model) if vector_store_path and embeddings_model else None
-        self.add_system_message(sys_prompt or DEFAULT_SYSTEM_PROMPT)
+        if sys_prompt is not None:
+            self.add_system_message(sys_prompt or DEFAULT_SYSTEM_PROMPT)
 
     def get_context(self, content: str) -> str:
         if self.retriever is not None:
