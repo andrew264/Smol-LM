@@ -66,9 +66,14 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     accumulated_loss = 0
 
     for i, item in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
-        ids, mask = item[0].to(device), item[1].to(device) if len(item) > 1 else None
+        if len(item) == 3:
+            ids, labels, mask = item[0].to(device), item[1].to(device), item[2].to(device)
+        else:
+            ids = item[0].to(device)
+            labels = ids
+            mask = None
         with torch.no_grad():
-            out = model(input_ids=ids, labels=ids, attention_mask=mask)
+            out = model(input_ids=ids, labels=labels, attention_mask=mask)
             logits, loss = out.logits, out.loss
             accumulated_loss += loss.item()
 

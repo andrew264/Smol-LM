@@ -95,7 +95,7 @@ class Prompt:
     def get_tokens(self, tokenized: bool = False) -> Union[str, List[int]]:
         dialog_tokens = ""
         for message in self.messages:
-            dialog_tokens += f"{message['role'].value}\n{message['content']}{self.EOT}\n"
+            dialog_tokens += f"\n{message['role'].value}\n{message['content']}\n{self.EOT}"
         dialog_tokens = dialog_tokens.strip()
         if not tokenized:
             return dialog_tokens
@@ -109,12 +109,9 @@ class Prompt:
         if self.messages[-1]['role'] != Role.USER:
             raise ValueError("The last message should be from the user")
         dialog_tokens = ""
-        for message in self.messages[:-1]:
-            dialog_tokens += f"{message['role'].value}\n{message['content']}{self.EOT}\n"
-        last_m = self.messages[-1]
-        dialog_tokens += (f"{last_m['role'].value}\nCONTEXT\n{last_m['context']}\nEND OF CONTEXT"
-                          f"\nQUESTION: {last_m['content']}{self.EOT}\n")
-        dialog_tokens += f"{Role.ASSISTANT.value}\nANSWER:"
+        for message in self.messages:
+            dialog_tokens += f"\n{message['role'].value}\n{message['content']}\n{self.EOT}"
+        dialog_tokens += f"\n{Role.ASSISTANT.value}\n"
 
         if not tokenized:
             return dialog_tokens

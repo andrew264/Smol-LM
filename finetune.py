@@ -40,8 +40,8 @@ if __name__ == '__main__':
     sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
 
 
-    def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) -> Tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor]:
+    def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) ->\
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         MAX_LEN = params.max_position_embeddings
         max_len = max([len(x[0]) for x in batch])
         input_ids = torch.stack([torch.tensor(x[0] + [0] * (max_len - len(x[0]))) for x in batch])
@@ -79,6 +79,6 @@ if __name__ == '__main__':
           is_lora=False,
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
-          learning_rate=2e-4,
+          learning_rate=1e-5,
           save_every=5000,
           )
