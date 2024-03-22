@@ -101,9 +101,9 @@ class Prompt:
             return dialog_tokens
         else:
             if isinstance(self.tokenizer, Tokenizer):
-                return self.tokenizer.encode(dialog_tokens).ids
+                return self.tokenizer.encode(dialog_tokens, add_special_tokens=False).ids
             else:
-                return self.tokenizer.encode(dialog_tokens)
+                return self.tokenizer.encode(dialog_tokens, add_special_tokens=False)
 
     def get_tokens_for_completion(self, tokenized: bool = False) -> Union[str, List[int]]:
         if self.messages[-1]['role'] != Role.USER:
@@ -117,6 +117,6 @@ class Prompt:
             return dialog_tokens
         else:
             if isinstance(self.tokenizer, Tokenizer):
-                return self.tokenizer.encode(dialog_tokens).ids
+                return self.tokenizer.encode(dialog_tokens, add_special_tokens=False).ids
             else:
-                return self.tokenizer.encode(dialog_tokens)
+                return self.tokenizer.encode(dialog_tokens, add_special_tokens=False)
