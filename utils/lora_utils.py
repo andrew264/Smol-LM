@@ -13,6 +13,8 @@ def to_lora_model(model: Transformer, config: LoRAConfig) -> Transformer:
     lora_dropout = config.lora_dropout
     lora_alpha = config.lora_alpha
     lora_r = config.lora_rank
+    for param in model.parameters():
+        param.requires_grad = False
     for block in model.layers:
         if 'q_proj' in lora_layers:
             block.attention.q_proj = LoRALinear(block.attention.q_proj, rank=lora_r, alpha=lora_alpha,

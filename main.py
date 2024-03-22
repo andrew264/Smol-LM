@@ -13,8 +13,8 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import get_cosine_schedule_with_warmup
 
 from model import ModelConfig, LoRAConfig
-from utils import load_model, load_optimizer, save_model, save_optimizer, count_parameters, load_lora_model
-from utils.lora_utils import to_lora_model
+from utils import load_model, load_optimizer, save_model, save_optimizer, count_parameters, load_scheduler, \
+    save_scheduler
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -65,13 +65,12 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     total = len(validation_data) if full_validation or len(validation_data) < 100 else 100
     accumulated_loss = 0
 
-    for i, item in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
+    for (i, item) in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
+        ids = item[0].to(device)
         if len(item) == 3:
-            ids, labels, mask = item[0].to(device), item[1].to(device), item[2].to(device)
+            labels, mask = item[1].to(device), item[2].to(device)
         else:
-            ids = item[0].to(device)
-            labels = ids
-            mask = None
+            labels, mask = ids, None
         with torch.no_grad():
             out = model(input_ids=ids, labels=labels, attention_mask=mask)
             logits, loss = out.logits, out.loss
@@ -87,43 +86,26 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
 
 
 def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_config: LoRAConfig = None,
-          is_lora: bool = False, validation_data: Optional[DataLoader] = None, start_step: int = 0,
-          save_step_count: bool = False, disable_grads_for_embeddings: bool = False,
-          disable_scheduler: bool = False, learning_rate: float = 3e-4, save_every: int = 2000):
+          validation_data: Optional[DataLoader] = None, start_step: int = 0,
+          save_step_count: bool = False, disable_scheduler: bool = False, learning_rate: float = 3e-4,
+          save_every: int = 2000):
     """
 
     :param model_path: Model path to save model weights
     :param training_data: DataLoader for training data
     :param config: ModelConfig
     :param lora_config: LoRAConfig
-    :param is_lora: Whether the model weights are in LoRA format
     :param validation_data: DataLoader for validation data
     :param start_step: Start training from this step (useful for resuming training)
     :param save_step_count: Save the current step count to model_path/step.txt
-    :param disable_grads_for_embeddings: Disable gradients for embedding layer and the output layer
     :param disable_scheduler: Disable the learning rate scheduler
     :param learning_rate: Learning rate for the optimizer
     :param save_every: Save the model weights every `save_every` steps
     :return:
     """
 
-    if is_lora:
-        print("LoRA model found. Loading weights with LoRA.")
-        model = load_lora_model(config, lora_config, model_path + 'model.safetensors', device=device)
-    else:
-        print("Loading model weights.")
-        model = load_model(config, model_path + 'model.safetensors', device=device)
-        if lora_config:
-            for param in model.parameters():
-                param.requires_grad = False
-            if not is_lora:
-                print("Model is not in LoRA format. Converting to LoRA.")
-                model = to_lora_model(model, lora_config)
+    model = load_model(config, lora_config=lora_config, path=model_path + 'model.safetensors', device=device)
     model.train()
-
-    if disable_grads_for_embeddings:
-        model.tok_embeddings.weight.requires_grad = False
-        print("Disabled gradients for embedding layer.")
 
     # accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
@@ -139,8 +121,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
     # optimizer
     betas = (0.9, 0.95)
     weight_decay = 0.1
-    params = model.get_optimizer_grouped_parameters(weight_decay) if not is_lora else model.parameters()
-    optimizer = bnb.optim.AdamW8bit(params, lr=learning_rate, betas=betas, )
+    _params = model.get_optimizer_grouped_parameters(weight_decay)
+    optimizer = bnb.optim.AdamW8bit(_params, lr=learning_rate, betas=betas, )
     optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
     # TODO: figure out why loading optimizer states is using more memory
     # TODO: figure out why setting device to CPU or GPU use different amount of memory [GPU uses more]
@@ -151,16 +133,18 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
     scheduler = None
     if not disable_scheduler:
         assert total_steps is not None
+        s_steps = total_steps // config.grad_accumulation_steps
         scheduler = get_cosine_schedule_with_warmup(optimizer,
-                                                    num_warmup_steps=int(
-                                                        total_steps // config.grad_accumulation_steps * 0.02),
-                                                    num_training_steps=total_steps // config.grad_accumulation_steps)
+                                                    num_warmup_steps=int(s_steps * 0.02),
+                                                    num_training_steps=s_steps)
+        scheduler = accelerator.prepare_scheduler(scheduler)
+        scheduler = load_scheduler(scheduler, model_path + 'scheduler.bin', device=device)
 
     count_parameters(model)
 
     accumulated_loss = 0
     start_time, time_delta = time.time(), 0.
-    print_step = max(save_every // 10, config.grad_accumulation_steps)
+    print_step = max(1000, config.grad_accumulation_steps)
     model.train()
     print(
         f"Tokens per batch: {config.max_batch_size * config.grad_accumulation_steps * config.max_position_embeddings}")
@@ -169,17 +153,17 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
 
     for epoch in range(config.epochs):
         print(f"Epoch: {epoch + 1} of {config.epochs}")
-        for i, item in enumerate(training_data):
+        for (i, item) in enumerate(training_data):
             if i <= start_step:
                 continue
             if i == start_step + 1:
                 start_time = time.time()
 
+            ids = item[0].to(device)
             if len(item) == 3:
-                ids, labels, mask = item[0].to(device), item[1].to(device), item[2].to(device)
+                labels, mask = item[1].to(device), item[2].to(device)
             else:
-                ids = item[0].to(device)
-                labels = ids
+                labels, mask = ids, None
 
             # train step
             with accelerator.accumulate(model):
@@ -209,6 +193,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
             if i % save_every == 0 and i > 0:
                 save_model(model, model_path + 'model.safetensors')
                 save_optimizer(optimizer, model_path + 'optimizer.bin')
+                if scheduler is not None:
+                    save_scheduler(scheduler, model_path + 'scheduler.bin')
                 print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
                       f"Time left: {((total_steps - i) * (time_delta / print_step)) / 60:.2f} minutes")
 
@@ -226,6 +212,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
 
         save_model(model, model_path + 'model.safetensors')
         save_optimizer(optimizer, model_path + 'optimizer.bin')
+        if scheduler is not None:
+            save_scheduler(scheduler, model_path + 'scheduler.bin')
 
         if validation_data is not None:
             validate_model(model, validation_data, full_validation=True)
@@ -267,7 +255,6 @@ if __name__ == '__main__':
           start_step=step,
           save_step_count=True,
           disable_scheduler=True,
-          disable_grads_for_embeddings=False,
           learning_rate=5e-4
           )
     # validate_model(None, val_data, True)
