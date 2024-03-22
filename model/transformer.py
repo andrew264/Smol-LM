@@ -2,7 +2,6 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from flash_attn.losses.cross_entropy import CrossEntropyLoss
 from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
@@ -73,7 +72,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if self.tie_word_embeddings:  # TODO: model does not converge if we tie the weights
             self.lm_head.weight = self.tok_embeddings.weight
 
-        self.loss_fn = CrossEntropyLoss(inplace_backward=True)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -169,8 +168,8 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if labels is not None:
             _logits = logits[..., :-1, :].contiguous()
             labels = labels[..., 1:].contiguous()
-            loss = self.loss_fn(_logits.view(-1, self.vocab_size),
-                                labels.view(-1), )
+            _logits = _logits.transpose(1, 2)
+            loss = self.loss_fn(_logits, labels, )
             if self.config.is_moe:
                 aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
                 loss += self.router_aux_loss_coef * aux_loss

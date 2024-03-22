@@ -1,138 +1,144 @@
 import json
-from typing import List, Union, Optional
+from typing import List, Optional, Tuple
 
 import pandas as pd
 from datasets import load_dataset
 from tokenizers import Tokenizer
 from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizerFast
 
-from .prompt_format import Prompt
+from .prompt_format import Role
 
 
 class DS(Dataset):
-    def __init__(self):
-        super().__init__()
-        self.data = []
+    EOT = '</s>'
+    CROSS_ENTROPY_IGNORE_IDX = -100
+
+    def __init__(self, tokenizer: Optional[Tokenizer] = None, sys_prompt: Optional[str] = None):
+        self._tokenizer = tokenizer
+        self._sys_p = sys_prompt
+        self._data = None
 
     def __len__(self) -> int:
-        return len(self.data)
+        return len(self._data)
 
-    def __getitem__(self, index: int) -> Union[str, List[str]]:
-        return self.data[index]
+    def _get_id_label(self, role: Role, content: str) -> Tuple[List[int], List[int]]:
+        if role == Role.SYSTEM:
+            prefix = Role.SYSTEM.value
+        elif role == Role.USER:
+            prefix = "\n" + Role.USER.value
+        elif role == Role.ASSISTANT:
+            prefix = "\n" + Role.ASSISTANT.value
+        else:
+            raise ValueError("Invalid role.")
+
+        c = f"{prefix}\n{content.strip()}\n{self.EOT}"
+        enc = self._tokenizer.encode(c, add_special_tokens=False)
+        labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids) if role == Role.SYSTEM or role == Role.USER else enc.ids
+        return enc.ids, labels
 
 
 class HFnoRobotsDataset(DS):
-    def __init__(self, sys_prompt: Optional[str] = None,
-                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
-                 max_seq_len=2048):
-        super().__init__()
-        dataset = load_dataset("HuggingFaceH4/no_robots", split='train_sft')
-        prompt = Prompt(sys_prompt, tokenizer)
-        for row in dataset:
-            conversation = [c['content'] for c in row['messages']]
-            prompt.add_messages(conversation)
-            if prompt.num_tokens() > max_seq_len:
-                if prompt.num_exchanges() == 1:
-                    self.data.append(prompt.get_tokens(False))
-                    prompt.reset()
-                    continue
-                prompt.remove_last_exchange()
-                self.data.append(prompt.get_tokens(False))
-                prompt.reset()
-                prompt.add_messages(conversation)
-        self.data.append(prompt.get_tokens(False))
+    def __init__(self, tokenizer: Tokenizer, sys_prompt: str, ):
+        super().__init__(tokenizer, sys_prompt)
+        self._data = load_dataset("HuggingFaceH4/no_robots", split='train_sft')
+        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
+
+    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
+        row = self._data[idx]
+        ids, labels = [], []
+        ids.extend(self._enc_sys_prompt[0])
+        labels.extend(self._enc_sys_prompt[1])
+        for ex in row['messages']:
+            role = Role.USER if ex['role'] == 'user' else Role.ASSISTANT
+            id_, label = self._get_id_label(role, ex['content'])
+            ids.extend(id_)
+            labels.extend(label)
+        return ids, labels
 
 
 class CSVDatasetV2(DS):
     def __init__(self, path: str,
-                 sys_prompt: Optional[str] = None,
-                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
-                 max_seq_len=2048):
-        super().__init__()
-        prompt = Prompt(sys_prompt, tokenizer)
-        for _, row in pd.read_csv(path).iterrows():
-            prompt.add_messages([row.iloc[0], row.iloc[1]])
-            if prompt.num_tokens() > max_seq_len:
-                if prompt.num_exchanges() == 1:
-                    self.data.append(prompt.get_tokens(False))
-                    prompt.reset()
-                    continue
-                prompt.remove_last_exchange()
-                self.data.append(prompt.get_tokens(False))
-                prompt.reset()
-                prompt.add_messages([row.iloc[0], row.iloc[1]])
-        self.data.append(prompt.get_tokens(False))
+                 tokenizer: Tokenizer,
+                 sys_prompt: str):
+        super().__init__(tokenizer, sys_prompt)
+        self._data = pd.read_csv(path)
+        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
+
+    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
+        row = self._data.iloc[idx]
+        ids, labels = [], []
+        ids.extend(self._enc_sys_prompt[0])
+        labels.extend(self._enc_sys_prompt[1])
+        for i in range(0, 2):
+            role = Role.USER if i % 2 == 0 else Role.ASSISTANT
+            id_, label = self._get_id_label(role, row.iloc[i])
+            ids.extend(id_)
+            labels.extend(label)
+        return ids, labels
 
 
 class JsonlConversations(DS):
     def __init__(self, path: str,
-                 sys_prompt: Optional[str] = None,
-                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
-                 max_seq_len=2048):
-        super().__init__()
-        prompt = Prompt(sys_prompt, tokenizer)
-        with open(path, 'r') as f:
-            for line in f:
-                conversation = json.loads(line)
-                conv = [conversation[i:i + 2] for i in range(0, len(conversation), 2)]
-                for ex in conv:
-                    prompt.add_messages(ex)
-                    if prompt.num_tokens() > max_seq_len and prompt.num_exchanges() > 1:
-                        self.data.append(prompt.get_tokens(False))
-                        prompt.reset()
-                        continue
-                self.data.append(prompt.get_tokens(False))
-                prompt.reset()
+                 tokenizer: Tokenizer,
+                 sys_prompt: str, ):
+        super().__init__(tokenizer, sys_prompt)
+        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
+        self._data = [json.loads(line) for line in open(path, 'r')]
 
-
-class OrcaMath(DS):
-    def __init__(self, sys_prompt: Optional[str] = None,
-                 tokenizer: Optional[Union[Tokenizer, PreTrainedTokenizerFast]] = None,
-                 max_seq_len=2048):
-        super().__init__()
-        dataset = load_dataset("microsoft/orca-math-word-problems-200k", split='train')
-        prompt = Prompt(sys_prompt, tokenizer)
-        for row in dataset:
-            conversations = [row['question'], row['answer']]
-            prompt.add_messages(conversations)
-            if prompt.num_tokens() > max_seq_len:
-                if prompt.num_exchanges() == 1:
-                    self.data.append(prompt.get_tokens(False))
-                    prompt.reset()
-                    continue
-                prompt.remove_last_exchange()
-                self.data.append(prompt.get_tokens(False))
-                prompt.reset()
-                prompt.add_messages(conversations)
-        self.data.append(prompt.get_tokens(False))
+    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
+        row = self._data[idx]
+        ids, labels = [], []
+        ids.extend(self._enc_sys_prompt[0])
+        labels.extend(self._enc_sys_prompt[1])
+        for i in range(0, len(row)):
+            role = Role.USER if i % 2 == 0 else Role.ASSISTANT
+            id_, label = self._get_id_label(role, row[i])
+            ids.extend(id_)
+            labels.extend(label)
+        return ids, labels
 
 
 class SmallOrca(DS):
-    def __init__(self,):
-        super().__init__()
-        dataset = load_dataset("prince-canuma/SmallOrca", split='train')
-        for row in dataset:
-            prompt = Prompt()
-            for ex in row['messages']:
-                if ex['role'] == 'system':
-                    prompt.add_system_message(ex['content'])
-                elif ex['role'] == 'user':
-                    prompt.add_user_message(ex['content'])
-                else:
-                    prompt.add_assistant_message(ex['content'])
-            self.data.append(prompt.get_tokens(False))
+    def __init__(self,
+                 tokenizer: Tokenizer,
+                 sys_prompt: str):
+        super().__init__(tokenizer, sys_prompt)
+        self._data = load_dataset("prince-canuma/SmallOrca", split='train')
+
+    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
+        data = self._data[idx]
+        ids, labels = [], []
+        for ex in data['messages']:
+            if ex['role'] == 'system':
+                role = Role.SYSTEM
+            elif ex['role'] == 'user':
+                role = Role.USER
+            else:
+                role = Role.ASSISTANT
+            id_, label = self._get_id_label(role, ex['content'])
+            ids.extend(id_)
+            labels.extend(label)
+        return ids, labels
 
 
 class WizardVicuna(DS):
-    def __init__(self, sys_prompt: Optional[str] = None, ):
-        super().__init__()
-        dataset = load_dataset("cognitivecomputations/wizard_vicuna_70k_unfiltered", split='train')
-        for row in dataset:
-            prompt = Prompt(sys_prompt)
-            for ex in row['conversations']:
-                if ex['from'] == 'human':
-                    prompt.add_user_message(ex['value'])
-                else:
-                    prompt.add_assistant_message(ex['value'])
-            self.data.append(prompt.get_tokens(False))
+    def __init__(self, tokenizer: Tokenizer,
+                 sys_prompt: str):
+        super().__init__(tokenizer, sys_prompt)
+        self._data = load_dataset("cognitivecomputations/wizard_vicuna_70k_unfiltered", split='train')
+        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
+
+    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
+        data = self._data[idx]
+        ids, labels = [], []
+        ids.extend(self._enc_sys_prompt[0])
+        labels.extend(self._enc_sys_prompt[1])
+        for ex in data['conversations']:
+            if ex['from'] == 'human':
+                role = Role.USER
+            else:
+                role = Role.ASSISTANT
+            id_, label = self._get_id_label(role, ex['value'])
+            ids.extend(id_)
+            labels.extend(label)
+        return ids, labels

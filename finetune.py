@@ -10,13 +10,13 @@ from model import ModelConfig, LoRAConfig
 from utils import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations, SmallOrca  # noqa
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+CROSS_ENTROPY_IGNORE_IDX = -100
 
 if __name__ == '__main__':
-    from transformers import PreTrainedTokenizerFast
+    from tokenizers import Tokenizer
 
     tokenizer_path = 'weights/tokenizer.json'
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
-    tokenizer.pad_token_id = 0
+    tokenizer = Tokenizer.from_file(path=tokenizer_path)
 
     path = './ft-weights/'
 
@@ -40,26 +40,26 @@ if __name__ == '__main__':
     sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
 
 
-    def collate_pad_batch_fn(batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
-        encoded = tokenizer(batch, return_tensors='pt',
-                            max_length=params.max_position_embeddings,
-                            padding='longest',
-                            pad_to_multiple_of=8,
-                            truncation=True)
-        return encoded['input_ids'], encoded['attention_mask']
+    def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) -> Tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor]:
+        MAX_LEN = params.max_position_embeddings
+        max_len = max([len(x[0]) for x in batch])
+        input_ids = torch.stack([torch.tensor(x[0] + [0] * (max_len - len(x[0]))) for x in batch])
+        labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (max_len - len(x[1]))) for x in batch])
+        attention_mask = (input_ids != 0).long()
+        return input_ids[:, :MAX_LEN], labels[:, :MAX_LEN], attention_mask[:, :MAX_LEN]
 
 
     print("Loading datasets...")
-    ds1 = CSVDatasetV2(path="data/finetune/DankDataset.csv",
-                       sys_prompt=sys_prompt, tokenizer=tokenizer, max_seq_len=params.max_position_embeddings)
-    ds2 = JsonlConversations(path="data/finetune/convos.jsonl", sys_prompt=sys_prompt, tokenizer=tokenizer,
-                             max_seq_len=params.max_position_embeddings)
+    ds1 = CSVDatasetV2(path="data/finetune/DankDataset.csv", tokenizer=tokenizer,
+                       sys_prompt=sys_prompt)
+    ds2 = JsonlConversations(path="data/finetune/convos.jsonl", tokenizer=tokenizer, sys_prompt=sys_prompt)
     dataset = torch.utils.data.ConcatDataset(
         [
             ds1, ds2,
-            # WizardVicuna(sys_prompt, ),
-            HFnoRobotsDataset(sys_prompt, tokenizer, params.max_position_embeddings),
-            SmallOrca()
+            # WizardVicuna(tokenizer, sys_prompt, ),
+            HFnoRobotsDataset(tokenizer, sys_prompt),
+            SmallOrca(tokenizer, sys_prompt),
 
         ]
     )
@@ -80,5 +80,5 @@ if __name__ == '__main__':
           disable_grads_for_embeddings=False,
           disable_scheduler=True,
           learning_rate=2e-4,
-          save_every=1000,
+          save_every=5000,
           )

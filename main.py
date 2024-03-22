@@ -170,12 +170,15 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
             if i == start_step + 1:
                 start_time = time.time()
 
-            ids, mask = item[0], item[1] if len(item) > 1 else None
-            ids, mask = ids.to(device), mask.to(device) if mask is not None else None
+            if len(item) == 3:
+                ids, labels, mask = item[0].to(device), item[1].to(device), item[2].to(device)
+            else:
+                ids = item[0].to(device)
+                labels = ids
 
             # train step
             with accelerator.accumulate(model):
-                out = model(input_ids=ids, labels=ids, attention_mask=mask)  # forward pass
+                out = model(input_ids=ids, labels=labels, attention_mask=mask)  # forward pass
                 logits, loss = out.logits, out.loss
                 accumulated_loss += loss.item()
                 accelerator.backward(loss)  # backward pass
