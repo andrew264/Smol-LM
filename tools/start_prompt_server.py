@@ -9,7 +9,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
     StoppingCriteriaList
 
 from model import ModelConfig, LoRAConfig, DynamicCache
-from utils import load_model, StoppingCriteriaSub, load_lora_model
+from utils import load_model, StoppingCriteriaSub, load_model
 from utils.prompt_format import Prompt
 
 device = torch.device("cuda")
@@ -25,10 +25,7 @@ if os.path.exists('./ft-weights/lora.json'):
 else:
     lora_params = None
 
-if lora_params is None:
-    model = load_model(config, weights, device)
-else:
-    model = load_lora_model(config, lora_params, weights, device)
+model = load_model(config, lora_params, weights, device)
 model.bos_token_id = tokenizer.token_to_id("<s>")
 
 generation_config: GenerationConfig = GenerationConfig(

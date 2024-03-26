@@ -30,6 +30,7 @@ class LoRALinear(nn.Module):
         if isinstance(linear, LoRALinear):
             linear = linear.linear
         self.linear = linear
+        self.linear.requires_grad = False
         dtype = linear.weight.dtype
         device = linear.weight.device
         self.lora = LoRALayer(linear.in_features, linear.out_features, rank, alpha, dtype, device, dropout)

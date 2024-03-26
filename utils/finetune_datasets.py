@@ -22,18 +22,22 @@ class DS(Dataset):
         return len(self._data)
 
     def _get_id_label(self, role: Role, content: str) -> Tuple[List[int], List[int]]:
-        if role == Role.SYSTEM:
-            prefix = Role.SYSTEM.value
-        elif role == Role.USER:
-            prefix = "\n" + Role.USER.value
-        elif role == Role.ASSISTANT:
-            prefix = "\n" + Role.ASSISTANT.value
-        else:
-            raise ValueError("Invalid role.")
+        match role:
+            case Role.SYSTEM:
+                prefix = Role.SYSTEM.value
+            case Role.USER:
+                prefix = "\n" + Role.USER.value
+            case Role.ASSISTANT:
+                prefix = "\n" + Role.ASSISTANT.value
+            case _:
+                raise ValueError(f"Invalid role: {role}")
 
         c = f"{prefix}\n{content.strip()}\n{self.EOT}"
         enc = self._tokenizer.encode(c, add_special_tokens=False)
-        labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids) if role == Role.SYSTEM or role == Role.USER else enc.ids
+        if role in (Role.SYSTEM, Role.USER):
+            labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids)
+        else:
+            labels = enc.ids
         return enc.ids, labels
 
 
