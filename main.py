@@ -113,7 +113,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
     model = accelerator.prepare_model(model)
 
     # total steps
-    total_steps = len(training_data) if isinstance(training_data, DataLoader) else None
+    total_steps = len(training_data) * config.epochs if isinstance(training_data, DataLoader) else None
     if total_steps is None:
         print("Could not determine total steps. Disabling scheduler.")
         disable_scheduler = True
@@ -236,6 +236,9 @@ if __name__ == '__main__':
     # training
     training = NPDataset('./data/processed/train.bin', params.max_position_embeddings)
     validation = NPDataset('./data/processed/train.bin', params.max_position_embeddings, validation_split=True)
+    # tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
+    # training = TextCorpus('./data/processed/train.txt', tokenizer, params.max_position_embeddings)
+    # validation = training
 
     # resume training
     step = 0
@@ -254,7 +257,7 @@ if __name__ == '__main__':
           config=params,
           start_step=step,
           save_step_count=True,
-          disable_scheduler=True,
+          disable_scheduler=False,
           learning_rate=5e-4
           )
     # validate_model(None, val_data, True)

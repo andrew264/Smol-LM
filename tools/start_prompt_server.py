@@ -1,5 +1,4 @@
 import os
-from datetime import date
 from typing import Optional
 
 import torch
@@ -9,8 +8,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
     StoppingCriteriaList
 
 from model import ModelConfig, LoRAConfig, DynamicCache
-from utils import load_model, StoppingCriteriaSub, load_model
-from utils.prompt_format import Prompt
+from utils import StoppingCriteriaSub, load_model
 
 device = torch.device("cuda")
 weights = './ft-weights/model.safetensors'
@@ -43,13 +41,7 @@ model.generation_config = generation_config
 stopping_tokens = [i for i in range(3)]
 stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
-today = date.today()
-with open('data/finetune/sysprompt.txt', 'r') as f:
-    sys_prompt = f.read()
-sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
-
-prompt = Prompt(sys_prompt, tokenizer, )
-max_length = config.max_position_embeddings
+max_length = config.max_position_embeddings - 256
 
 
 def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
@@ -59,18 +51,10 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
         processor.append(RepetitionPenaltyLogitsProcessor(penalty=penalty))
     if top_k is not None and top_k > 0:
         processor.append(TopKLogitsWarper(top_k=top_k))
-    if prompt.num_exchanges() > 1 and prompt.num_tokens_for_completion() > max_length - 256:
-        print(f"Num exchanges: {prompt.num_exchanges()}. Removing first exchange.")
-        prompt.remove_first_exchange()
-    if input_text.strip().casefold() == "reset":
-        print("Resetting prompt.")
-        prompt.reset()
-        return "Prompt reset."
 
-    prompt.add_user_message(input_text)
-    encoded = tokenizer.encode(prompt.get_tokens_for_completion())
-    tokens = torch.tensor(encoded.ids).unsqueeze(0).to(device)
-    attention_mask = torch.tensor(encoded.attention_mask).unsqueeze(0).to(device)
+    encoded = tokenizer.encode(input_text)
+    tokens = torch.tensor(encoded.ids[:max_length]).unsqueeze(0).to(device)
+    attention_mask = torch.tensor(encoded.attention_mask[:max_length]).unsqueeze(0).to(device)
 
     # generation
     inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
@@ -80,7 +64,7 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]):
                          stopping_criteria=stopping_criteria)
 
     # output
-    out_tokens = out[0].tolist()[len(encoded.ids):]
+    out_tokens = out[0].tolist()[len(tokens[0]):]
     decoded = tokenizer.decode(out_tokens)
     return decoded
 

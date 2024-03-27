@@ -1,5 +1,5 @@
+import datetime
 import os
-from datetime import date
 from typing import Tuple, List
 
 import torch
@@ -34,10 +34,10 @@ if __name__ == '__main__':
         print("Created new LoRA config.")
         lora_params.to_json(path + 'lora.json')
 
-    today = date.today()
+    dt = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     with open('data/finetune/sysprompt.txt', 'r') as f:
         sys_prompt = f.read()
-    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
+    sys_prompt = sys_prompt.format(datetime=dt)
 
 
     def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) -> \
