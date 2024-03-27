@@ -86,12 +86,7 @@ class Attention(nn.Module):
         value_states = value_states.repeat_interleave(self.num_key_value_groups, dim=1)
 
         if attention_mask is not None:
-            bsz, seqlen = query_states.size(0), query_states.size(2)
-            kv_seq_len = key_states.size(2)
-            if attention_mask.size() != (bsz, 1, seqlen, kv_seq_len):
-                raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, seqlen, kv_seq_len)}, but is {attention_mask.size()}"
-                )
+            attention_mask = attention_mask[:, :, :, : key_states.shape[2]]
 
         attn_output = F.scaled_dot_product_attention(
             query_states,

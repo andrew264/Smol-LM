@@ -1,7 +1,5 @@
-sentencepiece
 torch
 numpy
-flash-attn
 accelerate
 tokenizers
 bitsandbytes

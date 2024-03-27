@@ -2,50 +2,94 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from flash_attn.ops.triton.layer_norm import RMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import GenerationMixin, Cache
-from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
+from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast, MoeCausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
 from model import ModelConfig
 from model.block import TransformerBlock
 from model.cache import DynamicCache
+from model.norm import RMSNorm
 
 
-def load_balancing_loss_func(gate_logits: Tensor | Tuple, num_experts: int = None, top_k=2) -> Tensor:
+# copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
+def load_balancing_loss_func(gate_logits: Tuple[torch.Tensor], num_experts: int, top_k: int = 2,
+                             attention_mask: Optional[torch.Tensor] = None) -> float:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
-    """
-    if not any(gate_logits):  # if gate_logits is None or empty tuple
-        return 0
 
+    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
+    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
+    experts is too unbalanced.
+
+    Args:
+        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]):
+            Logits from the `gate`, should be a tuple of model.config.num_hidden_layers tensors of
+            shape [batch_size X sequence_length, num_experts].
+        attention_mask (`torch.Tensor`, None):
+            The attention_mask used in forward function
+            shape [batch_size X sequence_length] if not None.
+        num_experts (`int`, *required*):
+            Number of experts
+        top_k (`int`, *optional*):
+            Number of experts to route to.
+
+    Returns:
+        The auxiliary loss.
+    """
     if gate_logits is None or not isinstance(gate_logits, tuple):
         return 0
 
-    if isinstance(gate_logits, tuple):
-        compute_device = gate_logits[0].device
-        concatenated_gate_logits = torch.cat([layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0)
+    assert isinstance(gate_logits, tuple), "gate_logits should be a tuple of tensors"
+    compute_device = gate_logits[0].device
+    concatenated_gate_logits = torch.cat([layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0)
 
     routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
 
     _, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
 
-    # treat `top_k` as tokens (shape is `top_k X [batch_size X sequence_length]`)
-    selected_experts = selected_experts.reshape(-1)
-
     expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
-    expert_mask = torch.max(expert_mask, dim=-2).values
 
-    # Compute the percentage of tokens routed to each experts
-    tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
+    if attention_mask is None:
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
 
-    # Compute the average probability of routing to these experts
-    router_prob_per_expert = torch.mean(routing_weights, dim=0)
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.mean(routing_weights, dim=0)
+    else:
+        batch_size, sequence_length = attention_mask.shape
+        num_hidden_layers = concatenated_gate_logits.shape[0] // (batch_size * sequence_length)
 
-    overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(-1))
+        # Compute the mask that masks all padding tokens as 0 with the same shape of expert_mask
+        expert_attention_mask = (
+            attention_mask[None, :, :, None, None]
+            .expand((num_hidden_layers, batch_size, sequence_length, top_k, num_experts))
+            .reshape(-1, top_k, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.sum(expert_mask.float() * expert_attention_mask, dim=0) / torch.sum(
+            expert_attention_mask, dim=0
+        )
+
+        # Compute the mask that masks all padding tokens as 0 with the same shape of tokens_per_expert
+        router_per_expert_attention_mask = (
+            attention_mask[None, :, :, None]
+            .expand((num_hidden_layers, batch_size, sequence_length, num_experts))
+            .reshape(-1, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.sum(routing_weights * router_per_expert_attention_mask, dim=0) / torch.sum(
+            router_per_expert_attention_mask, dim=0
+        )
+
+    overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(0))
     return overall_loss * num_experts
 
 
@@ -117,10 +161,10 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             self,
             input_ids: torch.LongTensor = None,
             attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
             past_key_values: Optional[Cache] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
             labels: Optional[torch.LongTensor] = None,
+            cache_position: Optional[torch.LongTensor] = None,
             **kwargs,
     ) -> Union[CausalLMOutputWithPast, MoeCausalLMOutputWithPast]:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -130,30 +174,24 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         else:
             x = inputs_embeds
 
-        if attention_mask is not None:
-            # prepare the mask for F.scaled_dot_product_attention
-            bs, seq_len = attention_mask.shape
-            attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
-                attention_mask=attention_mask,
-                input_shape=(bs, seq_len),
-                inputs_embeds=x,
-                past_key_values_length=past_key_values.get_usable_length(seq_len) if past_key_values else 0,
-                sliding_window=self.sliding_window, )
+        past_seen_tokens = 0
+        if cache_position is None:
+            cache_position = torch.arange(
+                past_seen_tokens, past_seen_tokens + x.shape[1], device=x.device
+            )
+        position_ids = cache_position.unsqueeze(0)
 
-        if position_ids is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values else 0
-            position_ids = torch.arange(past_seen_tokens, past_seen_tokens + x.shape[1], device=x.device)
-            position_ids = position_ids.unsqueeze(0)
+        causal_mask = self._update_causal_mask(attention_mask, x, cache_position)
 
         all_router_logits = ()
         for i, layer in enumerate(self.layers):
             if self.config.gradient_checkpointing == 'full' and self.training:
                 layer_outputs = checkpoint(layer,
-                                           x, attention_mask, position_ids, past_key_values,
+                                           x, causal_mask, position_ids, past_key_values,
                                            use_reentrant=False, )
 
             else:
-                layer_outputs = layer(x, attention_mask=attention_mask,
+                layer_outputs = layer(x, attention_mask=causal_mask,
                                       position_ids=position_ids,
                                       past_key_value=past_key_values, )
             x = layer_outputs[0]
@@ -171,7 +209,8 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             _logits = _logits.transpose(1, 2)
             loss = self.loss_fn(_logits, labels, )
             if self.config.is_moe:
-                aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts, top_k=2)
+                aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts,
+                                                    top_k=2, attention_mask=attention_mask, )
                 loss += self.router_aux_loss_coef * aux_loss
 
         if self.config.is_moe:
@@ -182,43 +221,59 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
                                           past_key_values=past_key_values, )
 
     def prepare_inputs_for_generation(
-            self, input_ids, past_key_values=None, attention_mask=None, **kwargs
+            self, input_ids: Tensor, past_key_values: Optional[DynamicCache] = None,
+            attention_mask: Optional[Tensor] = None, cache_position=None,
+            **kwargs
     ):
         if past_key_values is not None:
-            if isinstance(past_key_values, DynamicCache):
-                cache_length = past_key_values.get_seq_length()
-                past_length = past_key_values.seen_tokens
-                max_cache_length = past_key_values.get_max_length()
-            else:
-                raise ValueError("past_key_values must be an instance of DynamicCache")
+            past_length = past_key_values.get_seq_length()
             if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
                 input_ids = input_ids[:, -(attention_mask.shape[1] - past_length):]
             elif past_length < input_ids.shape[1]:
                 input_ids = input_ids[:, past_length:]
                 attention_mask = attention_mask[:, past_length:]
-            if (
-                    max_cache_length is not None
-                    and attention_mask is not None
-                    and cache_length + input_ids.shape[1] > max_cache_length
-            ):
-                attention_mask = attention_mask[:, -max_cache_length:]
         else:
             past_length = 0
 
-        position_ids = torch.arange(
-            past_length, past_length + input_ids.shape[1], device=input_ids.device
-        ).unsqueeze(0)
-        position_ids = position_ids.contiguous() if position_ids is not None else None
-
         model_inputs = {"input_ids": input_ids.contiguous()}
+        input_length = input_ids.shape[-1]
+        if cache_position is None:
+            cache_position = torch.arange(past_length, past_length + input_length, device=input_ids.device)
+        else:
+            cache_position = cache_position[-input_length:]
+
         model_inputs.update(
-            {
-                "position_ids": position_ids,
-                "past_key_values": past_key_values,
-                "attention_mask": attention_mask,
-            }
+            {"cache_position": cache_position, "past_key_values": past_key_values, "attention_mask": attention_mask, }
         )
         return model_inputs
+
+    # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    @staticmethod
+    def _update_causal_mask(attention_mask, input_tensor, cache_position):
+
+        dtype, device = input_tensor.dtype, input_tensor.device
+        min_dtype = torch.finfo(dtype).min
+        sequence_length = input_tensor.shape[1]
+        target_length = cache_position[-1] + 1
+
+        causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
+        if sequence_length != 1:
+            causal_mask = torch.triu(causal_mask, diagonal=1)
+        causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
+        causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
+        if attention_mask is not None:
+            causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+            mask_length = attention_mask.shape[-1]
+            padding_mask = causal_mask[..., :mask_length].eq(0.0) * attention_mask[:, None, None, :].eq(0.0)
+            causal_mask[..., :mask_length] = causal_mask[..., :mask_length].masked_fill(padding_mask, min_dtype)
+
+        if attention_mask is not None and attention_mask.device.type == "cuda":
+            # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
+            # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
+            # Details: https://github.com/pytorch/pytorch/issues/110213
+            causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
+
+        return causal_mask
 
     @classmethod
     def can_generate(cls) -> bool:

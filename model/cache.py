@@ -10,11 +10,12 @@ class DynamicCache(Cache):
     Same as huggingface's DynamicCache, but with a sequence_dim parameter to support different sequence dimensions.
     https://github.com/huggingface/transformers/blob/831bc25d8fdb85768402f772cf65cc3d7872b211/src/transformers/cache_utils.py#L61
     """
+
     def __init__(self, sequence_dim: int = 1) -> None:
         super().__init__()
         self.key_cache: List[torch.Tensor] = []
         self.value_cache: List[torch.Tensor] = []
-        self.seen_tokens = 0
+        self._seen_tokens = 0
         self.sequence_dim = sequence_dim
 
     def __getitem__(self, layer_idx: int) -> tuple[Tensor, Tensor]:
@@ -38,7 +39,7 @@ class DynamicCache(Cache):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Update the number of seen tokens
         if layer_idx == 0:
-            self.seen_tokens += key_states.shape[self.sequence_dim]
+            self._seen_tokens += key_states.shape[self.sequence_dim]
 
         # Update the cache
         if len(self.key_cache) <= layer_idx:
