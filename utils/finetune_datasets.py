@@ -1,3 +1,4 @@
+import glob
 import json
 from typing import List, Optional, Tuple
 
@@ -143,6 +144,42 @@ class WizardVicuna(DS):
             else:
                 role = Role.ASSISTANT
             id_, label = self._get_id_label(role, ex['value'])
+            ids.extend(id_)
+            labels.extend(label)
+        return ids, labels
+
+
+class DiscordConversations(Dataset):
+    EOT = '</s>'
+    CROSS_ENTROPY_IGNORE_IDX = -100
+
+    def __init__(self, path: str, tokenizer: Tokenizer, sys_prompt: str):
+        self._tokenizer = tokenizer
+        self._sys_p = sys_prompt
+        self._files = glob.glob(f"{path}/*.json")
+        enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}\n{sys_prompt.strip()}\n{self.EOT}",
+                                          add_special_tokens=False)
+        self._enc_sys_prompt = (enc_sys_prompt.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc_sys_prompt.ids))
+
+    def __len__(self) -> int:
+        return len(self._files)
+
+    def _get_id_label(self, role: str, content: str) -> Tuple[List[int], List[int]]:
+        prompt = f"\n<|{role}|>\n{content.strip()}\n{self.EOT}"
+        enc = self._tokenizer.encode(prompt, add_special_tokens=False)
+        if role == "assistant":
+            labels = enc.ids
+        else:
+            labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids)
+        return enc.ids, labels
+
+    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
+        data = json.load(open(self._files[idx], 'r'))
+        ids, labels = [], []
+        ids.extend(self._enc_sys_prompt[0])
+        labels.extend(self._enc_sys_prompt[1])
+        for ex in data:
+            id_, label = self._get_id_label(ex['user'], ex['message'])
             ids.extend(id_)
             labels.extend(label)
         return ids, labels

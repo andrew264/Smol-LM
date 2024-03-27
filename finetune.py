@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from main import train
 from model import ModelConfig, LoRAConfig
-from utils import HFnoRobotsDataset, CSVDatasetV2, WizardVicuna, JsonlConversations, SmallOrca  # noqa
+from utils import CSVDatasetV2, JsonlConversations, DiscordConversations
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
@@ -54,26 +54,15 @@ if __name__ == '__main__':
     ds1 = CSVDatasetV2(path="data/finetune/DankDataset.csv", tokenizer=tokenizer,
                        sys_prompt=sys_prompt)
     ds2 = JsonlConversations(path="data/finetune/convos.jsonl", tokenizer=tokenizer, sys_prompt=sys_prompt)
-    dataset = torch.utils.data.ConcatDataset(
-        [
-            ds1, ds2,
-            # WizardVicuna(tokenizer, sys_prompt, ),
-            HFnoRobotsDataset(tokenizer, sys_prompt),
-            SmallOrca(tokenizer, sys_prompt),
-
-        ]
-    )
+    ds3 = DiscordConversations(path="data/finetune/conversations", tokenizer=tokenizer, sys_prompt=sys_prompt)
+    dataset = torch.utils.data.ConcatDataset([ds1, ds2, ds3])
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
                             shuffle=True, collate_fn=collate_pad_batch_fn)
-
-    validation_dataset = torch.utils.data.ConcatDataset([ds1, ds2])
-    validation_dataloader = DataLoader(validation_dataset, batch_size=params.max_batch_size,
-                                       shuffle=True, collate_fn=collate_pad_batch_fn, )
     print("Loaded datasets.")
 
     train(path,
           training_data=dataloader,
-          validation_data=validation_dataloader,
+          validation_data=dataloader,
           config=params,
           lora_config=lora_params,
           disable_scheduler=True,

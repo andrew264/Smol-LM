@@ -1,5 +1,5 @@
+import datetime
 import os
-from datetime import date
 
 import torch
 from tokenizers import Tokenizer
@@ -48,10 +48,10 @@ if __name__ == '__main__':
     stopping_tokens = [i for i in range(3)]
     stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
-    today = date.today()
+    dt = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     with open('data/finetune/sysprompt.txt', 'r') as f:
         sys_prompt = f.read()
-    sys_prompt = sys_prompt.format(date=today.strftime("%B %d, %Y"))
+    sys_prompt = sys_prompt.format(datetime=dt)
 
 
     def multiline_input():
