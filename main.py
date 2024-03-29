@@ -17,6 +17,8 @@ from utils import load_model, load_optimizer, save_model, save_optimizer, count_
     save_scheduler
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
 
 
 class NPDataset(Dataset):
