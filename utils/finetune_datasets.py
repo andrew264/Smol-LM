@@ -174,7 +174,11 @@ class DiscordConversations(Dataset):
         return enc.ids, labels
 
     def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
-        data = json.load(open(self._files[idx], 'r'))
+        try:
+            data = json.load(open(self._files[idx], 'r'))
+        except json.decoder.JSONDecodeError as e:
+            print(self._files[idx], e)
+            raise Exception
         ids, labels = [], []
         ids.extend(self._enc_sys_prompt[0])
         labels.extend(self._enc_sys_prompt[1])

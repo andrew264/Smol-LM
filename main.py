@@ -210,13 +210,13 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
 
                 start_time = time.time()
 
+        if validation_data is not None:
+            validate_model(model, validation_data, full_validation=True)
+
     save_model(model, model_path + 'model.safetensors')
     save_optimizer(optimizer, model_path + 'optimizer.bin')
     if scheduler is not None:
         save_scheduler(scheduler, model_path + 'scheduler.bin')
-
-    if validation_data is not None:
-        validate_model(model, validation_data, full_validation=True)
 
     print("Training complete.")
 

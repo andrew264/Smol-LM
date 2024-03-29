@@ -31,7 +31,7 @@ if __name__ == '__main__':
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
     processor.append(RepetitionPenaltyLogitsProcessor(1.05))
-    processor.append(TopKLogitsWarper(16))
+    processor.append(TopKLogitsWarper(12))
 
     generation_config: GenerationConfig = GenerationConfig(
         max_length=config.max_position_embeddings,
