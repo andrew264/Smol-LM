@@ -29,9 +29,11 @@ def load_model(config: ModelConfig, lora_config: Optional[LoRAConfig] = None,
     if is_lora_state:
         assert lora_config is not None, "LoRA config must be provided if model weights have LoRA."
         model = to_lora_model(model, lora_config)
-        model.load_state_dict(state_dict)
+        if state_dict:
+            model.load_state_dict(state_dict)
     else:
-        model.load_state_dict(state_dict)
+        if state_dict:
+            model.load_state_dict(state_dict)
         if lora_config is not None:
             model = to_lora_model(model, lora_config)
     del state_dict

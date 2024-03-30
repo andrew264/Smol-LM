@@ -5,7 +5,7 @@ from typing import Tuple, List
 import torch
 from torch.utils.data import DataLoader
 
-from main import train
+from main import train, validate_model  # noqa
 from model import ModelConfig, LoRAConfig
 from utils import CSVDatasetV2, JsonlConversations, DiscordConversations
 
@@ -26,6 +26,7 @@ if __name__ == '__main__':
     else:
         raise ValueError("Config not found.")
 
+    lora_params = None
     if os.path.exists(path + 'lora.json'):
         lora_params = LoRAConfig.from_json(path + 'lora.json')
         print("Loaded LoRA config from file.")
@@ -48,6 +49,7 @@ if __name__ == '__main__':
         labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (max_len - len(x[1]))) for x in batch])
         attention_mask = (input_ids != 0).long()
         return input_ids[:, :MAX_LEN], labels[:, :MAX_LEN], attention_mask[:, :MAX_LEN]
+        # return input_ids, labels, attention_mask
 
 
     print("Loading datasets...")
@@ -69,3 +71,4 @@ if __name__ == '__main__':
           learning_rate=1e-5,
           save_every=5000,
           )
+    # validate_model(None, dataloader, True)

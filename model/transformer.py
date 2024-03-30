@@ -130,6 +130,29 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
+    def resize_embeddings(self, new_num_tokens: int) -> None:
+        pad_to_multiple_of = 8
+        new_num_tokens = (new_num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of * pad_to_multiple_of
+        device = self.tok_embeddings.weight.device
+        dtype = self.tok_embeddings.weight.dtype
+
+        new_embeddings = nn.Embedding(new_num_tokens, self.hidden_size, padding_idx=self.config.pad_token_id)
+        new_embeddings.to(device=device, dtype=dtype)
+
+        # copy token embeddings
+        num_tokens_to_copy = min(self.vocab_size, new_num_tokens)
+        new_embeddings.weight.data[:num_tokens_to_copy, :] = self.tok_embeddings.weight.data[:num_tokens_to_copy, :]
+
+        # replace the old embeddings with the new embeddings
+        self.tok_embeddings = new_embeddings
+
+        # resize the output layer
+        new_lm_head = nn.Linear(self.hidden_size, new_num_tokens, bias=False).to(device=device, dtype=dtype)
+        new_lm_head.weight.data[:num_tokens_to_copy, :] = self.lm_head.weight.data[:num_tokens_to_copy, :]
+        self.lm_head = new_lm_head
+
+        self.vocab_size = new_num_tokens
+
     def get_optimizer_grouped_parameters(self, weight_decay) -> list[dict]:
         decay_denylist = ["tok_embeddings.weight"]
         # start with all the candidate parameters

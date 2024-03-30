@@ -13,3 +13,4 @@ langchain
 langchain-community
 chromadb
 sentence-transformers
+jupyter

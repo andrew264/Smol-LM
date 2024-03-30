@@ -17,8 +17,6 @@ from utils import load_model, load_optimizer, save_model, save_optimizer, count_
     save_scheduler
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-torch.backends.cuda.enable_flash_sdp(True)
-torch.backends.cuda.enable_mem_efficient_sdp(False)
 
 
 class NPDataset(Dataset):
@@ -124,7 +122,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
     betas = (0.9, 0.95)
     weight_decay = 0.1
     _params = model.get_optimizer_grouped_parameters(weight_decay)
-    optimizer = bnb.optim.AdamW8bit(_params, lr=learning_rate, betas=betas, )
+    optimizer = bnb.optim.PagedAdamW8bit(_params, lr=learning_rate, betas=betas, weight_decay=weight_decay)
     optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
     # TODO: figure out why loading optimizer states is using more memory
     # TODO: figure out why setting device to CPU or GPU use different amount of memory [GPU uses more]

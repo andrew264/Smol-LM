@@ -87,7 +87,7 @@ if __name__ == '__main__':
         inp = prompt.get_tokens_for_completion()
 
         # tokenization
-        encoded = tokenizer.encode(inp)
+        encoded = tokenizer.encode(inp, add_special_tokens=False)
         tokens = torch.tensor([encoded.ids]).to(device)
         attention_mask = torch.tensor([encoded.attention_mask]).to(device)
 

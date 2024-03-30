@@ -33,7 +33,7 @@ class DS(Dataset):
             case _:
                 raise ValueError(f"Invalid role: {role}")
 
-        c = f"{prefix}\n{content.strip()}\n{self.EOT}"
+        c = f"{prefix}\n{content.strip()}{self.EOT}"
         enc = self._tokenizer.encode(c, add_special_tokens=False)
         if role in (Role.SYSTEM, Role.USER):
             labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids)
@@ -157,21 +157,26 @@ class DiscordConversations(Dataset):
         self._tokenizer = tokenizer
         self._sys_p = sys_prompt
         self._files = glob.glob(f"{path}/*.json")
-        enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}\n{sys_prompt.strip()}\n{self.EOT}",
+        enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}\n{sys_prompt.strip()}{self.EOT}",
                                           add_special_tokens=False)
         self._enc_sys_prompt = (enc_sys_prompt.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc_sys_prompt.ids))
+        response_head = tokenizer.encode(f"\n{Role.ASSISTANT.value}\n", add_special_tokens=False)
+        self._response_head = (response_head.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(response_head.ids))
 
     def __len__(self) -> int:
         return len(self._files)
 
     def _get_id_label(self, role: str, content: str) -> Tuple[List[int], List[int]]:
-        prompt = f"\n<|{role}|>\n{content.strip()}\n{self.EOT}"
-        enc = self._tokenizer.encode(prompt, add_special_tokens=False)
         if role == "assistant":
-            labels = enc.ids
+            resp_enc = self._tokenizer.encode(f"{content.strip()}{self.EOT}", add_special_tokens=False)
+            ids = self._response_head[0] + resp_enc.ids
+            labels = self._response_head[1] + resp_enc.ids
+            return ids, labels
         else:
+            prompt = f"\n<|{role.strip()}|>\n{content.strip()}{self.EOT}"
+            enc = self._tokenizer.encode(prompt, add_special_tokens=False)
             labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids)
-        return enc.ids, labels
+            return enc.ids, labels
 
     def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
         try:

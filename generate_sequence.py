@@ -1,10 +1,10 @@
 import torch
 from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, \
-    RepetitionPenaltyLogitsProcessor, GenerationConfig
+    RepetitionPenaltyLogitsProcessor, GenerationConfig, StoppingCriteriaList
 
 from model import ModelConfig, DynamicCache
-from utils import load_model
+from utils import load_model, StoppingCriteriaSub
 
 weights = './weights/model.safetensors'
 tokenizer_path = 'weights/tokenizer.json'
@@ -17,17 +17,16 @@ if __name__ == '__main__':
     config.max_batch_size = 1
 
     tokenizer = Tokenizer.from_file(tokenizer_path)
-    model = load_model(config, weights, device)
-    _eot_token_id = tokenizer.token_to_id("</s>")
+    model = load_model(config, None, path=weights, device=device)
     model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
     processor.append(RepetitionPenaltyLogitsProcessor(1.1))
-    processor.append(TopKLogitsWarper(8))
+    processor.append(TopKLogitsWarper(12))
 
     generation_config: GenerationConfig = GenerationConfig(
-        max_length=350,
+        max_length=config.max_position_embeddings,
         do_sample=True,
         num_beams=1,
         use_cache=True,
@@ -38,17 +37,21 @@ if __name__ == '__main__':
     )
     model.generation_config = generation_config
 
+    stopping_tokens = [i for i in range(3)]
+    stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
+
     print('model loaded')
     while True:
         prompt = input("Enter a prompt: ")
         if prompt == '':
             break
-        encoded_prompt = tokenizer.encode(f"{prompt}")
-        tokens = torch.tensor(encoded_prompt.ids).unsqueeze(0).to(device)
-        attention_mask = torch.tensor(encoded_prompt.attention_mask).unsqueeze(0).to(device)
-        kv_cache = DynamicCache()
+        encoded_prompt = tokenizer.encode(prompt, add_special_tokens=False)
+        tokens = torch.tensor([encoded_prompt.ids]).to(device)
+        attention_mask = torch.tensor([encoded_prompt.attention_mask]).to(device)
 
         inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
-                                                   past_key_values=kv_cache)
-        out = model.generate(**inps, logits_processor=processor, generation_config=generation_config, )
+                                                   past_key_values=DynamicCache())
+        out = model.generate(**inps, logits_processor=processor,
+                             generation_config=generation_config,
+                             stopping_criteria=stopping_criteria)
         print(tokenizer.decode(out[0].tolist()))
