@@ -9,7 +9,7 @@ weights_path = "../weights/model.safetensors"
 
 if __name__ == '__main__':
     tokenizer = Tokenizer.from_file(tokenizer_path)
-    tokenizer.add_special_tokens(["<|assistant|>", "<|system|>", "<|", "|>"])
+    tokenizer.add_special_tokens(["<|", "|>"])
     params = ModelConfig.from_json(config_path)
     model = load_model(params, None, weights_path)
     model.resize_embeddings(tokenizer.get_vocab_size())
