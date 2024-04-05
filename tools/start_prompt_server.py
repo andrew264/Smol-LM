@@ -24,12 +24,13 @@ else:
     lora_params = None
 
 model = load_model(config, lora_params, weights, device)
+torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
 model.bos_token_id = tokenizer.token_to_id("<s>")
 
 generation_config: GenerationConfig = GenerationConfig(
     max_length=config.max_position_embeddings,
     do_sample=True,
-    num_beams=12,
+    num_beams=1,
     use_cache=True,
     pad_token_id=0,
     bos_token_id=1,

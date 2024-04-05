@@ -37,8 +37,12 @@ class SparseMoEBlock(nn.Module):
 
         self.experts = nn.ModuleList([FeedForward(config) for _ in range(self.num_experts)])
 
+        self.jitter_noise = config.router_jitter_noise
+
     def forward(self, x: Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size, sequence_length, hidden_dim = x.shape
+        if self.training and self.jitter_noise > 0:
+            x *= torch.empty_like(x).uniform_(1.0 - self.jitter_noise, 1.0 + self.jitter_noise)
         x = x.reshape(-1, hidden_dim)
         router_logits = self.gate(x)
 

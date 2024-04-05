@@ -17,7 +17,7 @@ from model.norm import RMSNorm
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
 def load_balancing_loss_func(gate_logits: Tuple[torch.Tensor], num_experts: int, top_k: int = 2,
-                             attention_mask: Optional[torch.Tensor] = None) -> float:
+                             attention_mask: Optional[torch.Tensor] = None) -> Tensor:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
 
@@ -41,7 +41,7 @@ def load_balancing_loss_func(gate_logits: Tuple[torch.Tensor], num_experts: int,
         The auxiliary loss.
     """
     if gate_logits is None or not isinstance(gate_logits, tuple):
-        return 0
+        return 0.
 
     assert isinstance(gate_logits, tuple), "gate_logits should be a tuple of tensors"
     compute_device = gate_logits[0].device
@@ -206,7 +206,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         causal_mask = self._update_causal_mask(attention_mask, x, cache_position)
 
-        all_router_logits = ()
+        all_router_logits: Tuple[Tensor] = ()
         for i, layer in enumerate(self.layers):
             if self.config.gradient_checkpointing == 'full' and self.training:
                 layer_outputs = checkpoint(layer,

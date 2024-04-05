@@ -35,6 +35,7 @@ class ModelConfig:
     max_batch_size = 1
     epochs = 1
     is_encoder_decoder = False
+    router_jitter_noise = 0.0
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":

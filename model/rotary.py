@@ -12,7 +12,7 @@ class RotaryEmbedding(nn.Module):
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float) / self.dim))
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float64) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
@@ -56,8 +56,12 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
     Returns:
         `tuple(torch.Tensor)` comprising the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+    dtype = q.dtype
+    device_type = q.device.type
+    q, k = q.to(dtype=torch.float), k.to(dtype=torch.float)
+    with torch.autocast(device_type=device_type, enabled=False):
+        cos = cos.unsqueeze(unsqueeze_dim)
+        sin = sin.unsqueeze(unsqueeze_dim)
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed.to(dtype=dtype), k_embed.to(dtype=dtype)

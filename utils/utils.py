@@ -26,6 +26,7 @@ def load_model(config: ModelConfig, lora_config: Optional[LoRAConfig] = None,
 
     is_lora_state = any('lora' in k for k in state_dict.keys())
     model = Transformer(config)
+    model.to(dtype=torch.bfloat16, device=device)
     if is_lora_state:
         assert lora_config is not None, "LoRA config must be provided if model weights have LoRA."
         model = to_lora_model(model, lora_config)
@@ -38,7 +39,6 @@ def load_model(config: ModelConfig, lora_config: Optional[LoRAConfig] = None,
             model = to_lora_model(model, lora_config)
     del state_dict
     torch.cuda.empty_cache()
-    model.to(dtype=torch.bfloat16, device=device)
     model.eval()
     return model
 

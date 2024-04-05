@@ -61,6 +61,7 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
         model = load_model(config=ModelConfig.from_json('./weights/config.json'),
                            path='weights/model.safetensors',
                            device=device)
+        torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     model.eval()
     total = len(validation_data) if full_validation or len(validation_data) < 100 else 100
     accumulated_loss = 0
