@@ -34,6 +34,7 @@ class LoRALinear(nn.Module):
         dtype = linear.weight.dtype
         device = linear.weight.device
         self.lora = LoRALayer(linear.in_features, linear.out_features, rank, alpha, dtype, device, dropout)
+        self.lora.requires_grad = True
 
     def forward(self, x):
         return self.linear(x) + self.lora(x)

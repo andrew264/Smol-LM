@@ -35,30 +35,45 @@ class Attention(nn.Module):
                 f"num_key_value_heads must divide evenly into num_heads (got `num_key_value_heads`: "
                 f"{self.num_key_value_heads} and `num_heads`: {self.num_heads})."
             )
-        self.q_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size, self.num_heads * self.head_dim,
-                                                              bias=config.attention_bias)
-        self.k_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size,
-                                                              self.num_key_value_heads * self.head_dim,
-                                                              bias=config.attention_bias)
-        self.v_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size,
-                                                              self.num_key_value_heads * self.head_dim,
-                                                              bias=config.attention_bias)
+
+        self.qkv_proj: Union[nn.Linear, LoRALinear] = nn.Linear(
+            self.hidden_size,
+            self.hidden_size + 2 * self.num_key_value_heads * self.head_dim,
+            bias=config.attention_bias)
         self.o_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size, self.hidden_size,
                                                               bias=config.attention_bias)
 
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
                                           max_position_embeddings=self.max_position_embeddings,
                                           base=self.config.rope_theta, )
+        self._register_load_state_dict_pre_hook(self.fused_qkv_hook)
+
+    @staticmethod
+    def fused_qkv_hook(state_dict, prefix, *args, **kwargs):
+        if prefix + 'q_proj.weight' in state_dict:
+            q_weight = state_dict.pop(prefix + 'q_proj.weight')
+            k_weight = state_dict.pop(prefix + 'k_proj.weight')
+            v_weight = state_dict.pop(prefix + 'v_proj.weight')
+            state_dict[prefix + 'qkv_proj.weight'] = torch.cat([q_weight, k_weight, v_weight])
 
     def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
                 position_ids: Optional[torch.LongTensor] = None,
                 past_key_value: Optional[Cache] = None,
                 ) -> Tensor:
-        bsz, q_len, _ = hidden_states.size()
-        is_causal = attention_mask is None and q_len > 1
-        query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim)
-        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim)
+        bsz, seqlen, _ = hidden_states.size()
+        is_causal = attention_mask is None and seqlen > 1
+        qkv_states = self.qkv_proj(hidden_states)
+        query_states, key_states, value_states = qkv_states.split(
+            [
+                self.hidden_size,
+                self.num_key_value_heads * self.head_dim,
+                self.num_key_value_heads * self.head_dim,
+            ],
+            dim=2,
+        )
+        query_states = query_states.view(bsz, seqlen, self.num_heads, self.head_dim)
+        key_states = key_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
+        value_states = value_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
 
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -71,7 +86,7 @@ class Attention(nn.Module):
                                  dropout=self.attention_dropout,
                                  is_causal=is_causal)
 
-        attn_output = attn_output.contiguous().view(bsz, q_len, self.hidden_size)
+        attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
         attn_output = self.o_proj(attn_output)
         return attn_output
 

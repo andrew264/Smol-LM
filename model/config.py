@@ -16,8 +16,8 @@ class ModelConfig:
     num_key_value_heads = 4
     is_moe = False
     sliding_window: Optional[int] = None
-    num_local_experts = 1
-    num_experts_per_tok = 1
+    num_experts = 1
+    num_activated_experts = 1
     router_aux_loss_coef = 0.001
     hidden_act = "silu"
     max_position_embeddings = 128
@@ -49,12 +49,12 @@ class ModelConfig:
         conf = cls()
         for k, v in config_dict.items():
             setattr(conf, k, v)
-        if conf.num_local_experts == 1:
+        if conf.num_experts == 1:
             conf.is_moe = False
         if conf.sliding_window is not None and conf.sliding_window < 1:
             conf.sliding_window = None
-        if conf.is_moe and conf.num_experts_per_tok > conf.num_local_experts:
-            raise ValueError("num_experts_per_tok must be less than or equal to num_local_experts.")
+        if conf.is_moe and conf.num_activated_experts > conf.num_experts:
+            raise ValueError("num_activated_experts must be less than or equal to num_experts.")
         return conf
 
     def to_json(self, path: str) -> None:
@@ -67,7 +67,7 @@ class LoRAConfig:
     lora_rank = 8
     lora_alpha = 16
     lora_dropout = 0.05
-    lora_layers = ['q_proj', 'k_proj']  # 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'mlp'
+    lora_layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp'
 
     @classmethod
     def from_json(cls, path: str) -> "LoRAConfig":

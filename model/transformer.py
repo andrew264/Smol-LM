@@ -105,7 +105,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.vocab_size = config.vocab_size
         self.num_hidden_layers = config.num_hidden_layers
         self.router_aux_loss_coef = config.router_aux_loss_coef
-        self.num_experts = config.num_local_experts
+        self.num_experts = config.num_experts
         self.sliding_window = config.sliding_window
         self.tie_word_embeddings = config.tie_word_embeddings
 
@@ -226,6 +226,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         logits = self.lm_head(x)
         loss = None
+        aux_loss = None
         if labels is not None:
             _logits = logits[..., :-1, :].contiguous()
             labels = labels[..., 1:].contiguous()

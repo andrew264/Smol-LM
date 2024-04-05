@@ -25,17 +25,41 @@ class FeedForward(nn.Module):
         return self.down_proj(self.act(self.gate_proj(x)) * self.up_proj(x))
 
 
+class ConditionalFeedForward(nn.Module):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        self.num_experts = config.num_experts
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        self.gate_proj = nn.Parameter(torch.empty(self.num_experts, self.intermediate_size, self.hidden_size))
+        self.up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.intermediate_size))
+        self.down_proj = nn.Parameter(torch.empty(self.num_experts, self.intermediate_size, self.hidden_size))
+        self.act = get_activation(config.hidden_act)
+
+        nn.init.normal_(self.gate_proj, std=config.initializer_range)
+        nn.init.normal_(self.up_proj, std=config.initializer_range)
+        nn.init.normal_(self.down_proj, std=config.initializer_range)
+
+    def forward(self, x: Tensor, expert_indices: Tensor) -> Tensor:
+        gate_proj_weights = self.gate_proj[expert_indices]  # [T, A, D, D]
+        down_proj_weights = self.down_proj[expert_indices]  # [T, A, D, D]
+        up_proj_weights = self.up_proj[expert_indices]  # [T, A, D, D]
+        x1 = self.act(torch.einsum('ti,taoi -> tao', x, gate_proj_weights))
+        x3 = torch.einsum('ti, taoi -> tao', x, down_proj_weights)
+        expert_outs = torch.einsum('tao, taio -> tai', (x1 * x3), up_proj_weights)
+        return expert_outs
+
+
 class SparseMoEBlock(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.hidden_dim = config.hidden_size
-        self.ffn_dim = config.intermediate_size
-        self.num_experts = config.num_local_experts
-        self.top_k = config.num_experts_per_tok
+        self.num_experts = config.num_experts
+        self.num_activated_experts = config.num_activated_experts
 
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
 
-        self.experts = nn.ModuleList([FeedForward(config) for _ in range(self.num_experts)])
+        self.experts = ConditionalFeedForward(config)
 
         self.jitter_noise = config.router_jitter_noise
 
@@ -46,30 +70,9 @@ class SparseMoEBlock(nn.Module):
         x = x.reshape(-1, hidden_dim)
         router_logits = self.gate(x)
 
-        routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float)
-        routing_weights, selected_experts = routing_weights.topk(self.top_k, dim=-1)
-        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+        expert_weights = F.softmax(router_logits, dim=-1)
+        expert_weights, expert_indices = expert_weights.topk(self.num_activated_experts, dim=-1)
+        expert_weights /= expert_weights.sum(dim=-1, keepdim=True)
 
-        routing_weights = routing_weights.to(x.dtype)
-
-        final_hidden_states = torch.zeros((batch_size * sequence_length, hidden_dim), dtype=x.dtype, device=x.device)
-
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
-
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            idx, top_x = torch.where(expert_mask[expert_idx])
-
-            if top_x.shape[0] == 0:
-                continue
-
-            top_x_list = top_x.tolist()
-            idx_list = idx.tolist()
-
-            current_state = x[None, top_x_list].reshape(-1, hidden_dim)
-            current_hidden_states = expert_layer(current_state) * routing_weights[top_x_list, idx_list, None]
-
-            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(x.dtype))
-
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
+        expert_outs = self.experts(x, expert_indices)
+        return torch.einsum('tai,ta -> ti', expert_outs, expert_weights), expert_weights
