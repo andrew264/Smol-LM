@@ -118,6 +118,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
+        self._register_load_state_dict_pre_hook(self.hf_load_hook)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -129,6 +130,18 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
+    @staticmethod
+    def hf_load_hook(state_dict: dict, prefix, *args, **kwargs):
+        def get_updated_key(_k: str) -> str:
+            return (_k
+                    .replace("model.", "")
+                    .replace("embed_tokens", "tok_embeddings")
+                    .replace("self_attn", "attention")
+                    .replace("mlp", "feed_forward"))
+
+        for k in list(state_dict.keys()):
+            state_dict[get_updated_key(k)] = state_dict.pop(k)
 
     def resize_embeddings(self, new_num_tokens: int) -> None:
         pad_to_multiple_of = 8

@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import torch
 from aiohttp import web
@@ -39,7 +39,10 @@ generation_config: GenerationConfig = GenerationConfig(
 )
 model.generation_config = generation_config
 
-stopping_tokens = [i for i in range(3)]
+bad_tokens = [[523, 28766], [28789, 28766]]
+stopping_tokens: List[int | List[int] | torch.Tensor] = [i for i in range(3)]
+stopping_tokens.append(torch.tensor(bad_tokens[0], device=device))
+stopping_tokens.append(torch.tensor(bad_tokens[1], device=device))
 stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
 max_length = config.max_position_embeddings - 128
@@ -66,6 +69,9 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]) -> 
 
     # output
     out_tokens = out[0].tolist()
+    for bad in bad_tokens:
+        if bad == out_tokens[-len(bad):]:
+            out_tokens = out_tokens[:-len(bad)]
     decoded = tokenizer.decode(out_tokens[len(tokens[0]):])
     return decoded, len(out_tokens)
 

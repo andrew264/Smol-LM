@@ -168,8 +168,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
 
             # train step
             with accelerator.accumulate(model):
-                out = model(input_ids=ids, labels=labels, attention_mask=mask)  # forward pass
-                logits, loss = out.logits, out.loss
+                loss = model(input_ids=ids, labels=labels, attention_mask=mask).loss  # forward pass
                 accumulated_loss += loss.item()
                 accelerator.backward(loss)  # backward pass
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

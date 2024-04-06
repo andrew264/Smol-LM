@@ -97,7 +97,7 @@ def save_scheduler(scheduler: LRScheduler, path: str):
 
 class StoppingCriteriaSub(StoppingCriteria):
 
-    def __init__(self, stops: Optional[List[int]] = None, encounters=1):
+    def __init__(self, stops: Optional[List[int | List[int] | torch.Tensor]] = None, encounters=1):
         super().__init__()
         if stops is None:
             stops = []
@@ -107,7 +107,10 @@ class StoppingCriteriaSub(StoppingCriteria):
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
         stop_count = 0
         for stop in self.stops:
-            if stop in input_ids[:, -1]:
+            if isinstance(stop, list) or isinstance(stop, torch.Tensor):
+                if stop in input_ids[:, -len(stop):]:
+                    stop_count += 1
+            elif stop in input_ids[:, -1]:
                 stop_count += 1
 
         return stop_count >= self.ENCOUNTERS
