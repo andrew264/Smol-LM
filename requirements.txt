@@ -14,3 +14,4 @@ langchain-community
 chromadb
 sentence-transformers
 jupyter
+apex
