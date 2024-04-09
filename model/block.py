@@ -31,6 +31,7 @@ class TransformerBlock(nn.Module):
                 attention_mask: Optional[Tensor],
                 position_ids: Optional[torch.LongTensor] = None,
                 past_key_value: Optional[Cache] = None,
+                **kwargs,
                 ) -> Tuple[torch.FloatTensor, Optional[torch.FloatTensor]]:
         # Self-attention
         residual = hidden_states
@@ -39,7 +40,7 @@ class TransformerBlock(nn.Module):
             x = checkpoint(self.attention, x, attention_mask, position_ids, past_key_value, use_reentrant=False)
         else:
             x = self.attention(x, attention_mask=attention_mask, position_ids=position_ids,
-                               past_key_value=past_key_value, )
+                               past_key_value=past_key_value, **kwargs)
         x = residual + x
 
         # Block-sparse MoE

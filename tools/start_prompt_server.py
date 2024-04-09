@@ -7,7 +7,7 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
     StoppingCriteriaList
 
-from model import ModelConfig, LoRAConfig, DynamicCache
+from model import ModelConfig, LoRAConfig, StaticCache
 from utils import StoppingCriteriaSub, load_model
 
 device = torch.device("cuda")
@@ -35,7 +35,6 @@ generation_config: GenerationConfig = GenerationConfig(
     pad_token_id=0,
     bos_token_id=1,
     eos_token_id=2,
-    cache_implementation=DynamicCache
 )
 model.generation_config = generation_config
 
@@ -61,8 +60,10 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]) -> 
     attention_mask = torch.tensor(encoded.attention_mask[-max_length:]).unsqueeze(0).to(device)
 
     # generation
-    inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
-                                               past_key_values=DynamicCache())
+    inps = model.prepare_inputs_for_generation(
+        tokens, attention_mask=attention_mask,
+        past_key_values=StaticCache(config=config, device=device),
+    )
     out = model.generate(**inps, logits_processor=processor,
                          generation_config=generation_config,
                          stopping_criteria=stopping_criteria)

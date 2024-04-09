@@ -6,7 +6,7 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
     StoppingCriteriaList
 
-from model import ModelConfig, DynamicCache, LoRAConfig, HFNomicEmbeddings  # noqa
+from model import ModelConfig, DynamicCache, StaticCache, LoRAConfig, HFNomicEmbeddings  # noqa
 from utils import Prompt, StoppingCriteriaSub, load_model
 
 device = torch.device("cuda:0")
@@ -26,6 +26,7 @@ if __name__ == '__main__':
         lora_params = None
 
     model = load_model(config, lora_config=lora_params, path=weights, device=device)
+    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor
@@ -36,12 +37,11 @@ if __name__ == '__main__':
     generation_config: GenerationConfig = GenerationConfig(
         max_length=config.max_position_embeddings,
         do_sample=True,
-        num_beams=1,
+        num_beams=2,
         use_cache=True,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
-        cache_implementation=DynamicCache
     )
     model.generation_config = generation_config
 
@@ -92,9 +92,14 @@ if __name__ == '__main__':
         attention_mask = torch.tensor([encoded.attention_mask]).to(device)
 
         # generation
-        inps = model.prepare_inputs_for_generation(tokens, attention_mask=attention_mask,
-                                                   past_key_values=DynamicCache())
-        out = model.generate(**inps, logits_processor=processor,
+        inps = model.prepare_inputs_for_generation(
+            tokens,
+            attention_mask=attention_mask,
+            # past_key_values=StaticCache(config, 2, config.max_position_embeddings, device)
+            past_key_values=DynamicCache()
+        )
+        out = model.generate(**inps,
+                             logits_processor=processor,
                              generation_config=generation_config,
                              stopping_criteria=stopping_criteria)
 

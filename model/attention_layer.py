@@ -59,6 +59,7 @@ class Attention(nn.Module):
     def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
                 position_ids: Optional[torch.LongTensor] = None,
                 past_key_value: Optional[Cache] = None,
+                **kwargs,
                 ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
         is_causal = attention_mask is None and seqlen > 1
@@ -79,7 +80,10 @@ class Attention(nn.Module):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx)
+            cache_position = kwargs.get("cache_position")
+            key_states, value_states = past_key_value.update(key_states, value_states,
+                                                             layer_idx=self.layer_idx,
+                                                             cache_kwargs=dict(cache_position=cache_position))
 
         attn_output = self._sdpa(query_states, key_states, value_states,
                                  attention_mask=attention_mask,

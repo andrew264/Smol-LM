@@ -4,6 +4,8 @@ import torch
 from torch import Tensor
 from transformers import Cache
 
+from model.config import ModelConfig
+
 
 class DynamicCache(Cache):
     """
@@ -65,3 +67,68 @@ class DynamicCache(Cache):
             self.key_cache[layer_idx] = self.key_cache[layer_idx].index_select(0, beam_idx.to(device))
             device = self.value_cache[layer_idx].device
             self.value_cache[layer_idx] = self.value_cache[layer_idx].index_select(0, beam_idx.to(device))
+
+
+class StaticCache(Cache):
+    """
+    Not Same as huggingface's StaticCache, with sequence_dim set to 1
+    https://github.com/huggingface/transformers/blob/e9c23fa056f401a586a1691edf773d1b9b60f96d/src/transformers/cache_utils.py#L344
+    """
+
+    def __init__(
+            self,
+            config: ModelConfig,
+            max_batch_size: Optional[int] = None,
+            max_cache_len: Optional[int] = None,
+            device=torch.device("cuda"),
+            dtype=None
+    ) -> None:
+        super().__init__()
+        self.num_layers = config.num_hidden_layers
+        self.max_batch_size = max_batch_size if max_batch_size is not None else config.max_batch_size
+        self.max_cache_len = max_cache_len if max_cache_len is not None else config.max_position_embeddings
+        self.device = device
+        self.dtype = dtype if dtype is not None else torch.bfloat16
+
+        self.head_dim = config.hidden_size // config.num_attention_heads
+        self.num_key_value_heads = config.num_key_value_heads
+
+        cache_shape = (
+            self.num_layers,
+            self.max_batch_size,
+            self.max_cache_len,
+            self.num_key_value_heads,
+            self.head_dim
+        )
+
+        self.key_cache: torch.Tensor = torch.zeros(cache_shape, dtype=self.dtype, device=device)
+        self.value_cache: torch.Tensor = torch.zeros(cache_shape, dtype=self.dtype, device=device)
+
+    def update(
+            self,
+            key_states: torch.Tensor,
+            value_states: torch.Tensor,
+            layer_idx: int,
+            cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        new_cache_positions = cache_kwargs.get("cache_position")
+        k_out = self.key_cache[layer_idx]
+        v_out = self.value_cache[layer_idx]
+        last_position = new_cache_positions[-1] + 1
+
+        k_out[:, new_cache_positions] = key_states
+        v_out[:, new_cache_positions] = value_states
+        return k_out[:, :last_position], v_out[:, :last_position]
+
+    def get_seq_length(self, layer_idx: Optional[int] = 0) -> int | torch.Tensor:
+        return (self.key_cache[0, 0, :, 0].any(dim=-1)).sum()
+
+    def get_max_length(self) -> Optional[int]:
+        return self.max_cache_len
+
+    def reorder_cache(self, beam_idx: torch.LongTensor):
+        """Reorders the cache for beam search, given the selected beam indices."""
+        device = self.key_cache.device
+        self.key_cache = self.key_cache.index_select(1, beam_idx.to(device))
+        device = self.value_cache.device
+        self.value_cache = self.value_cache.index_select(1, beam_idx.to(device))

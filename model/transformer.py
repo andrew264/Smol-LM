@@ -12,7 +12,6 @@ from transformers.modeling_utils import ModuleUtilsMixin
 
 from model import ModelConfig
 from model.block import TransformerBlock
-from model.cache import DynamicCache
 
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
@@ -227,9 +226,12 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
                                            use_reentrant=False, )
 
             else:
-                layer_outputs = layer(x, attention_mask=causal_mask,
+                layer_outputs = layer(x,
+                                      attention_mask=causal_mask,
                                       position_ids=position_ids,
-                                      past_key_value=past_key_values, )
+                                      past_key_value=past_key_values,
+                                      cache_position=cache_position,
+                                      )
             x = layer_outputs[0]
             if self.config.is_moe:
                 router_logits = layer_outputs[1]
@@ -258,7 +260,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
                                           past_key_values=past_key_values, )
 
     def prepare_inputs_for_generation(
-            self, input_ids: Tensor, past_key_values: Optional[DynamicCache] = None,
+            self, input_ids: Tensor, past_key_values: Optional[Cache] = None,
             attention_mask: Optional[Tensor] = None, cache_position=None,
             **kwargs
     ):
