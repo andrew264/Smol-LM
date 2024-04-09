@@ -1,14 +1,13 @@
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
-from transformers import Cache
 
-from model import ModelConfig
-from model.lora import LoRALinear
-from model.rotary import RotaryEmbedding, apply_rotary_pos_emb
+from .config import ModelConfig
+from .lora import LoRALinear
+from .rotary import RotaryEmbedding, apply_rotary_pos_emb
 
 
 class Attention(nn.Module):
@@ -48,6 +47,10 @@ class Attention(nn.Module):
                                           base=self.config.rope_theta, )
         self._register_load_state_dict_pre_hook(self.fused_qkv_hook)
 
+        # kv cache
+        self.key_cache: Optional[torch.Tensor] = None
+        self.value_cache: Optional[torch.Tensor] = None
+
     @staticmethod
     def fused_qkv_hook(state_dict, prefix, *args, **kwargs):
         if prefix + 'q_proj.weight' in state_dict:
@@ -56,9 +59,41 @@ class Attention(nn.Module):
             v_weight = state_dict.pop(prefix + 'v_proj.weight')
             state_dict[prefix + 'qkv_proj.weight'] = torch.cat([q_weight, k_weight, v_weight])
 
+    def _setup_cache(self, dtype: torch.dtype, device: torch.device):
+        cache_shape = (
+            self.config.max_batch_size,
+            self.max_position_embeddings,
+            self.num_key_value_heads,
+            self.head_dim
+        )
+        self.key_cache = torch.zeros(cache_shape, dtype=dtype, device=device)
+        self.value_cache = torch.zeros(cache_shape, dtype=dtype, device=device)
+        if self.layer_idx == 0:
+            print(f"KV Cache initialized with shape: {cache_shape}")
+
+    @torch.no_grad()
+    def _update_cache(self, key_states: Tensor, value_states: Tensor, cache_position: Tensor) -> Tuple[Tensor, Tensor]:
+        if self.key_cache is None or self.value_cache is None:
+            self._setup_cache(dtype=key_states.dtype, device=key_states.device)
+
+        last_position = cache_position[-1] + 1
+        self.key_cache[:, cache_position] = key_states
+        self.value_cache[:, cache_position] = value_states
+        return self.key_cache[:, :last_position], self.value_cache[:, :last_position]
+
+    @torch.no_grad()
+    def reorder_cache(self, beam_idx: Tensor) -> None:
+        assert self.key_cache is not None, "Cache is not initialized, call _setup_cache() first."
+        self.key_cache = self.key_cache.index_select(0, beam_idx.to(self.key_cache.device))
+        self.value_cache = self.value_cache.index_select(0, beam_idx.to(self.value_cache.device))
+
+    def get_cache_length(self) -> int | Tensor:
+        if self.key_cache is None:
+            return 0
+        return (self.key_cache[0, :, 0].any(dim=-1)).sum()
+
     def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
                 position_ids: Optional[torch.LongTensor] = None,
-                past_key_value: Optional[Cache] = None,
                 **kwargs,
                 ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
@@ -79,11 +114,9 @@ class Attention(nn.Module):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if past_key_value is not None:
-            cache_position = kwargs.get("cache_position")
-            key_states, value_states = past_key_value.update(key_states, value_states,
-                                                             layer_idx=self.layer_idx,
-                                                             cache_kwargs=dict(cache_position=cache_position))
+        cache_position = kwargs.get("cache_position", None)
+        if cache_position is not None and not self.training:
+            key_states, value_states = self._update_cache(key_states, value_states, cache_position)
 
         attn_output = self._sdpa(query_states, key_states, value_states,
                                  attention_mask=attention_mask,

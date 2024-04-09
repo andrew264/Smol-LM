@@ -6,8 +6,8 @@ from torch import Tensor
 from torch.nn import functional as F
 from transformers.activations import get_activation
 
-from model import ModelConfig
-from model.lora import LoRALinear
+from .config import ModelConfig
+from .lora import LoRALinear
 
 
 class FeedForward(nn.Module):

@@ -10,8 +10,8 @@ from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast, MoeCausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
-from model import ModelConfig
-from model.block import TransformerBlock
+from .block import TransformerBlock
+from .config import ModelConfig
 
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
@@ -53,7 +53,7 @@ def load_balancing_loss_func(gate_logits: Tuple[torch.Tensor], num_experts: int,
     expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
 
     if attention_mask is None:
-        # Compute the percentage of tokens routed to each experts
+        # Compute the percentage of tokens routed to each expert
         tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
 
         # Compute the average probability of routing to these experts
@@ -70,7 +70,7 @@ def load_balancing_loss_func(gate_logits: Tuple[torch.Tensor], num_experts: int,
             .to(compute_device)
         )
 
-        # Compute the percentage of tokens routed to each experts
+        # Compute the percentage of tokens routed to each expert
         tokens_per_expert = torch.sum(expert_mask.float() * expert_attention_mask, dim=0) / torch.sum(
             expert_attention_mask, dim=0
         )
@@ -222,14 +222,13 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         for i, layer in enumerate(self.layers):
             if self.config.gradient_checkpointing == 'full' and self.training:
                 layer_outputs = checkpoint(layer,
-                                           x, causal_mask, position_ids, past_key_values,
+                                           x, causal_mask, position_ids,
                                            use_reentrant=False, )
 
             else:
                 layer_outputs = layer(x,
                                       attention_mask=causal_mask,
                                       position_ids=position_ids,
-                                      past_key_value=past_key_values,
                                       cache_position=cache_position,
                                       )
             x = layer_outputs[0]

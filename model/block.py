@@ -5,11 +5,10 @@ import torch.nn as nn
 from apex.normalization import FusedRMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
-from transformers import Cache
 
-from model import ModelConfig
-from model.attention_layer import Attention
-from model.feed_forward import SparseMoEBlock, FeedForward
+from .attention_layer import Attention
+from .config import ModelConfig
+from .feed_forward import SparseMoEBlock, FeedForward
 
 
 class TransformerBlock(nn.Module):
@@ -30,17 +29,15 @@ class TransformerBlock(nn.Module):
     def forward(self, hidden_states: Tensor,
                 attention_mask: Optional[Tensor],
                 position_ids: Optional[torch.LongTensor] = None,
-                past_key_value: Optional[Cache] = None,
                 **kwargs,
                 ) -> Tuple[torch.FloatTensor, Optional[torch.FloatTensor]]:
         # Self-attention
         residual = hidden_states
         x = self.input_layernorm(hidden_states)
         if self.gradient_checkpointing == 'attention-only' and self.training:
-            x = checkpoint(self.attention, x, attention_mask, position_ids, past_key_value, use_reentrant=False)
+            x = checkpoint(self.attention, x, attention_mask, position_ids, use_reentrant=False)
         else:
-            x = self.attention(x, attention_mask=attention_mask, position_ids=position_ids,
-                               past_key_value=past_key_value, **kwargs)
+            x = self.attention(x, attention_mask=attention_mask, position_ids=position_ids, **kwargs)
         x = residual + x
 
         # Block-sparse MoE

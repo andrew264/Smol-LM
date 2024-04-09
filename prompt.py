@@ -6,16 +6,17 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
     StoppingCriteriaList
 
-from model import ModelConfig, DynamicCache, StaticCache, LoRAConfig, HFNomicEmbeddings  # noqa
+from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings  # noqa
 from utils import Prompt, StoppingCriteriaSub, load_model
 
 device = torch.device("cuda:0")
 
 if __name__ == '__main__':
     weights = './ft-weights/model.safetensors'
+    num_beams = 2
 
     config = ModelConfig.from_json('./weights/config.json')
-    config.max_batch_size = 1
+    config.max_batch_size = num_beams
 
     tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
 
@@ -37,7 +38,7 @@ if __name__ == '__main__':
     generation_config: GenerationConfig = GenerationConfig(
         max_length=config.max_position_embeddings,
         do_sample=True,
-        num_beams=2,
+        num_beams=num_beams,
         use_cache=True,
         pad_token_id=0,
         bos_token_id=1,
@@ -92,14 +93,10 @@ if __name__ == '__main__':
         attention_mask = torch.tensor([encoded.attention_mask]).to(device)
 
         # generation
-        inps = model.prepare_inputs_for_generation(
-            tokens,
-            attention_mask=attention_mask,
-            # past_key_values=StaticCache(config, 2, config.max_position_embeddings, device)
-            past_key_values=DynamicCache()
-        )
-        out = model.generate(**inps,
+        out = model.generate(input_ids=tokens,
+                             attention_mask=attention_mask,
                              logits_processor=processor,
+                             past_key_values=InternalCache(model),
                              generation_config=generation_config,
                              stopping_criteria=stopping_criteria)
 

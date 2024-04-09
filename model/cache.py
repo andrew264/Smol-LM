@@ -4,7 +4,8 @@ import torch
 from torch import Tensor
 from transformers import Cache
 
-from model.config import ModelConfig
+from .config import ModelConfig
+from .transformer import Transformer
 
 
 class DynamicCache(Cache):
@@ -132,3 +133,21 @@ class StaticCache(Cache):
         self.key_cache = self.key_cache.index_select(1, beam_idx.to(device))
         device = self.value_cache.device
         self.value_cache = self.value_cache.index_select(1, beam_idx.to(device))
+
+
+class InternalCache(Cache):
+    """
+    Caching method that I cooked up for my own purposes.
+    It's my way to work around huggerface's cache system.
+    """
+
+    def __init__(self, model: Transformer) -> None:
+        super().__init__()
+        self.model = model
+
+    def get_seq_length(self, layer_idx: Optional[int] = 0) -> int | torch.Tensor:
+        return self.model.layers[layer_idx].attention.get_cache_length()
+
+    def reorder_cache(self, beam_idx: torch.LongTensor):
+        for layer in self.model.layers:
+            layer.attention.reorder_cache(beam_idx)

@@ -1,8 +1,8 @@
-from typing import List, Optional
+from typing import List
 
+import torch.nn.functional as F
 from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
-import torch.nn.functional as F
 
 
 class HFNomicEmbeddings(Embeddings):
