@@ -9,8 +9,9 @@ from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast, MoeCausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
-from .block import TransformerBlock
+from .block import Block
 from .config import ModelConfig
+from .utils import load_balancing_loss_func
 
 try:
     from apex.normalization import FusedRMSNorm as RMSNorm
@@ -18,85 +19,7 @@ except ImportError:
     from .norm import RMSNorm
 
 
-# copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
-def load_balancing_loss_func(gate_logits: Tuple[torch.Tensor], num_experts: int, top_k: int = 2,
-                             attention_mask: Optional[torch.Tensor] = None) -> Tensor:
-    r"""
-    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
-
-    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
-    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
-    experts is too unbalanced.
-
-    Args:
-        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]):
-            Logits from the `gate`, should be a tuple of model.config.num_hidden_layers tensors of
-            shape [batch_size X sequence_length, num_experts].
-        attention_mask (`torch.Tensor`, None):
-            The attention_mask used in forward function
-            shape [batch_size X sequence_length] if not None.
-        num_experts (`int`, *required*):
-            Number of experts
-        top_k (`int`, *optional*):
-            Number of experts to route to.
-
-    Returns:
-        The auxiliary loss.
-    """
-    if gate_logits is None or not isinstance(gate_logits, tuple):
-        return 0.
-
-    assert isinstance(gate_logits, tuple), "gate_logits should be a tuple of tensors"
-    compute_device = gate_logits[0].device
-    concatenated_gate_logits = torch.cat([layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0)
-
-    routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
-
-    _, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
-
-    expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
-
-    if attention_mask is None:
-        # Compute the percentage of tokens routed to each expert
-        tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
-
-        # Compute the average probability of routing to these experts
-        router_prob_per_expert = torch.mean(routing_weights, dim=0)
-    else:
-        batch_size, sequence_length = attention_mask.shape
-        num_hidden_layers = concatenated_gate_logits.shape[0] // (batch_size * sequence_length)
-
-        # Compute the mask that masks all padding tokens as 0 with the same shape of expert_mask
-        expert_attention_mask = (
-            attention_mask[None, :, :, None, None]
-            .expand((num_hidden_layers, batch_size, sequence_length, top_k, num_experts))
-            .reshape(-1, top_k, num_experts)
-            .to(compute_device)
-        )
-
-        # Compute the percentage of tokens routed to each expert
-        tokens_per_expert = torch.sum(expert_mask.float() * expert_attention_mask, dim=0) / torch.sum(
-            expert_attention_mask, dim=0
-        )
-
-        # Compute the mask that masks all padding tokens as 0 with the same shape of tokens_per_expert
-        router_per_expert_attention_mask = (
-            attention_mask[None, :, :, None]
-            .expand((num_hidden_layers, batch_size, sequence_length, num_experts))
-            .reshape(-1, num_experts)
-            .to(compute_device)
-        )
-
-        # Compute the average probability of routing to these experts
-        router_prob_per_expert = torch.sum(routing_weights * router_per_expert_attention_mask, dim=0) / torch.sum(
-            router_per_expert_attention_mask, dim=0
-        )
-
-    overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(0))
-    return overall_loss * num_experts
-
-
-class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
+class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     main_input_name = "inputs_embeds"
     _supports_cache_class = True
 
@@ -109,11 +32,12 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.num_hidden_layers = config.num_hidden_layers
         self.router_aux_loss_coef = config.router_aux_loss_coef
         self.num_experts = config.num_experts
-        self.sliding_window = config.sliding_window
         self.tie_word_embeddings = config.tie_word_embeddings
+        self.is_moe = config.is_moe
+        self.checkpointing_layers = config.checkpointing_layers
 
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
-        self.layers = nn.ModuleList(TransformerBlock(config, idx) for idx in range(self.num_hidden_layers))
+        self.layers = nn.ModuleList(Block(config, idx) for idx in range(self.num_hidden_layers))
         self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
         if self.tie_word_embeddings:  # TODO: model does not converge if we tie the weights
@@ -140,7 +64,8 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             return (_k
                     .replace("model.", "")
                     .replace("embed_tokens", "tok_embeddings")
-                    .replace("self_attn", "attention")
+                    .replace("self_attn", "jonkler_block")
+                    .replace(".attention", ".jonkler_block")
                     .replace("mlp", "feed_forward"))
 
         for k in list(state_dict.keys()):
@@ -224,9 +149,9 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         all_router_logits: Tuple[Tensor] = ()
         for i, layer in enumerate(self.layers):
-            if self.config.gradient_checkpointing == 'full' and self.training:
+            if i in self.checkpointing_layers:
                 layer_outputs = checkpoint(layer,
-                                           x, causal_mask, position_ids,
+                                           x, causal_mask, position_ids, cache_position,
                                            use_reentrant=False, )
 
             else:
@@ -236,7 +161,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
                                       cache_position=cache_position,
                                       )
             x = layer_outputs[0]
-            if self.config.is_moe:
+            if self.is_moe:
                 router_logits = layer_outputs[1]
                 all_router_logits += (router_logits,)
 
@@ -250,12 +175,12 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
             labels = labels[..., 1:].contiguous()
             _logits = _logits.transpose(1, 2)
             loss = self.loss_fn(_logits, labels, )
-            if self.config.is_moe:
+            if self.is_moe:
                 aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts,
                                                     top_k=2, attention_mask=attention_mask, )
                 loss += self.router_aux_loss_coef * aux_loss
 
-        if self.config.is_moe:
+        if self.is_moe:
             return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits,
                                              past_key_values=past_key_values, )
         else:

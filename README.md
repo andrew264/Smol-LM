@@ -8,6 +8,7 @@
     - Added Gradient Accumulation (with accelerate)
     - Added Mixture of Experts (MoE) from Mixtral
     - Flash Attention - 2 (from F.scaled_dot_product_attention)
+    - With Recurrent Blocks (from recurrent gemma)
     - Weight Decay Denylist for Norm, Bias and Embedding
     - Added LoRA fine-tuning
     - Added RAG for text generation

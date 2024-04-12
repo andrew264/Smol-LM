@@ -8,19 +8,19 @@ class ModelConfig:
     """
     The model configuration class.
     """
-    vocab_size = 512
-    hidden_size = 256
-    intermediate_size = 1024
-    num_hidden_layers = 1
-    num_attention_heads = 4
-    num_key_value_heads = 4
+    vocab_size = 32000
+    hidden_size = 1024
+    intermediate_size = 3072
+    num_hidden_layers = 8
+    num_attention_heads = 8
+    num_key_value_heads = 1
     is_moe = False
     sliding_window: Optional[int] = None
     num_experts = 1
     num_activated_experts = 1
     router_aux_loss_coef = 0.001
     hidden_act = "silu"
-    max_position_embeddings = 128
+    max_position_embeddings = 1024
     initializer_range = 0.02
     rms_norm_eps = 1e-06
     use_cache = True
@@ -30,12 +30,15 @@ class ModelConfig:
     tie_word_embeddings = False
     attention_bias = False
     attention_dropout = 0.0
-    gradient_checkpointing: Optional[str] = None  # 'mlp-only', 'attention-only', 'full', None
+    gradient_checkpointing_percent: Optional[float] = .0
     grad_accumulation_steps = 1
     max_batch_size = 1
     epochs = 1
     is_encoder_decoder = False
     router_jitter_noise = 0.0
+    block_types = ["attention", ]
+    conv1d_width = 2
+    lru_width = 256
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
@@ -61,13 +64,21 @@ class ModelConfig:
         with open(path, "w") as f:
             json.dump(self.__dict__, f, indent=4)
 
+    @property
+    def layers_block_types(self):
+        return [self.block_types[i % len(self.block_types)] for i in range(self.num_hidden_layers)]
+
+    @property
+    def checkpointing_layers(self) -> list[int]:
+        return [i for i in range(int(self.num_hidden_layers * self.gradient_checkpointing_percent))]
+
 
 @dataclass
 class LoRAConfig:
     lora_rank = 8
     lora_alpha = 16
     lora_dropout = 0.05
-    lora_layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp'
+    lora_layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp', l_x, l_y, l_out
 
     @classmethod
     def from_json(cls, path: str) -> "LoRAConfig":

@@ -8,7 +8,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import StoppingCriteria
 
-from model import ModelConfig, Transformer, LoRAConfig
+from model import ModelConfig, SmolLM, LoRAConfig
 from utils.lora_utils import to_lora_model
 
 
@@ -17,7 +17,7 @@ def load_model(config: ModelConfig,
                path: str = None,
                device: torch.device = torch.device('cuda'),
                dtype: torch.dtype = torch.bfloat16
-               ) -> Transformer:
+               ) -> SmolLM:
     state_dict = {}
     if path and os.path.exists(path):
         d = device.type if device.type == 'cpu' else device.index
@@ -29,7 +29,7 @@ def load_model(config: ModelConfig,
         print("Created new model.")
 
     is_lora_state = any('lora' in k for k in state_dict.keys())
-    model = Transformer(config)
+    model = SmolLM(config)
     model.to(dtype=dtype, device=device)
     if is_lora_state:
         assert lora_config is not None, "LoRA config must be provided if model weights have LoRA."

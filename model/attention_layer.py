@@ -10,11 +10,10 @@ from .lora import LoRALinear
 from .rotary import RotaryEmbedding, apply_rotary_pos_emb
 
 
-class Attention(nn.Module):
-    def __init__(self, config: ModelConfig, layer_idx: int) -> None:
+class AttentionBlock(nn.Module):
+    def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.config = config
-        self.layer_idx = layer_idx
 
         self.hidden_size = config.hidden_size
         self.head_dim = config.hidden_size // config.num_attention_heads
@@ -90,9 +89,11 @@ class Attention(nn.Module):
             return 0
         return (self.key_cache[0, :, 0].any(dim=-1)).sum()
 
-    def forward(self, hidden_states: Tensor, attention_mask: Optional[Tensor],
-                position_ids: Optional[torch.LongTensor] = None,
-                **kwargs,
+    def forward(self,
+                hidden_states: Tensor,
+                attention_mask: Optional[Tensor],
+                position_ids: Optional[Tensor] = None,
+                cache_position: Optional[Tensor] = None,
                 ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
         is_causal = attention_mask is None and seqlen > 1
@@ -112,7 +113,6 @@ class Attention(nn.Module):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        cache_position = kwargs.get("cache_position", None)
         if cache_position is not None and not self.training:
             key_states, value_states = self._update_cache(key_states, value_states, cache_position)
 

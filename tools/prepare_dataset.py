@@ -11,22 +11,22 @@ PROCESSED_DATA = "../data/processed"
 
 if __name__ == '__main__':
     tokenizer = tokenizers.Tokenizer.from_file("../weights/tokenizer.json")
-    eot = tokenizer.encode("<|endoftext|>").ids
+    bos = tokenizer.encode("<s>").ids
+    eot = tokenizer.encode("</s>").ids
 
-    cosmopedia = '/mnt/d/Datasets/cosmopedia'
-    dataset = datasets.load_dataset(path=cosmopedia, streaming=True, split='train').shuffle(seed=42)
+    ds = '/home/andrew264/datasets/RedPajama-Data-1T-Sample'
+    dataset = datasets.load_dataset(path=ds, streaming=True, split='train', trust_remote_code=True).shuffle(seed=42)
     batch_size = 20_000
     dataloader = DataLoader(dataset, num_workers=6, batch_size=batch_size, shuffle=False)
-    length = 31_064_744
     start = time.time()
 
 
     def get_batch():
         for batch in dataloader:
             out = []
-            encoded_tokens = tokenizer.encode_batch(batch['text'])
+            encoded_tokens = tokenizer.encode_batch(batch['text'], add_special_tokens=False)
             for sample in encoded_tokens:
-                out.extend(sample.ids + eot)
+                out.extend(bos + sample.ids + eot)
             yield out
 
 
@@ -37,7 +37,7 @@ if __name__ == '__main__':
         os.remove(filename)
     open(filename, "w").close()
     with open(filename, "ab+") as file:
-        for tokens in tqdm.tqdm(get_batch(), total=length // batch_size):
+        for tokens in tqdm.tqdm(get_batch()):
             arr = np.array(tokens, dtype=np.uint16)
             arr.tofile(file)
     print(f"Saved {split} to {PROCESSED_DATA}/{split}.bin")
