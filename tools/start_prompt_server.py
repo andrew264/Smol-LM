@@ -11,6 +11,7 @@ from model import ModelConfig, LoRAConfig, InternalCache
 from utils import StoppingCriteriaSub, load_model
 
 device = torch.device("cuda")
+dtype = torch.bfloat16
 weights = './ft-weights/model.safetensors'
 
 config = ModelConfig.from_json('weights/config.json')
@@ -23,7 +24,7 @@ if os.path.exists('./ft-weights/lora.json'):
 else:
     lora_params = None
 
-model = load_model(config, lora_params, weights, device)
+model = load_model(config, lora_params, weights, device, dtype=dtype)
 torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
 model.bos_token_id = tokenizer.token_to_id("<s>")
 
@@ -63,7 +64,7 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]) -> 
     out = model.generate(
         input_ids=tokens,
         attention_mask=attention_mask,
-        past_key_values=InternalCache(model),
+        past_key_values=InternalCache(model, dtype=dtype),
         logits_processor=processor,
         generation_config=generation_config,
         stopping_criteria=stopping_criteria)

@@ -2,13 +2,17 @@ from typing import Tuple, Optional
 
 import torch
 import torch.nn as nn
-from apex.normalization import FusedRMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 
 from .attention_layer import Attention
 from .config import ModelConfig
 from .feed_forward import SparseMoEBlock, FeedForward
+
+try:
+    from apex.normalization import FusedRMSNorm as RMSNorm
+except ImportError:
+    from .norm import RMSNorm
 
 
 class TransformerBlock(nn.Module):
@@ -23,8 +27,8 @@ class TransformerBlock(nn.Module):
         else:
             self.feed_forward = FeedForward(config)
 
-        self.input_layernorm = FusedRMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.post_attention_layernorm = FusedRMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
     def forward(self, hidden_states: Tensor,
                 attention_mask: Optional[Tensor],

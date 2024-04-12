@@ -12,8 +12,12 @@ from model import ModelConfig, Transformer, LoRAConfig
 from utils.lora_utils import to_lora_model
 
 
-def load_model(config: ModelConfig, lora_config: Optional[LoRAConfig] = None,
-               path: str = None, device: torch.device = torch.device('cpu')) -> Transformer:
+def load_model(config: ModelConfig,
+               lora_config: Optional[LoRAConfig] = None,
+               path: str = None,
+               device: torch.device = torch.device('cuda'),
+               dtype: torch.dtype = torch.bfloat16
+               ) -> Transformer:
     state_dict = {}
     if path and os.path.exists(path):
         d = device.type if device.type == 'cpu' else device.index
@@ -26,7 +30,7 @@ def load_model(config: ModelConfig, lora_config: Optional[LoRAConfig] = None,
 
     is_lora_state = any('lora' in k for k in state_dict.keys())
     model = Transformer(config)
-    model.to(dtype=torch.bfloat16, device=device)
+    model.to(dtype=dtype, device=device)
     if is_lora_state:
         assert lora_config is not None, "LoRA config must be provided if model weights have LoRA."
         model = to_lora_model(model, lora_config)

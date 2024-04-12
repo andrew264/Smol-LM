@@ -59,7 +59,7 @@ class Attention(nn.Module):
             v_weight = state_dict.pop(prefix + 'v_proj.weight')
             state_dict[prefix + 'qkv_proj.weight'] = torch.cat([q_weight, k_weight, v_weight])
 
-    def _setup_cache(self, dtype: torch.dtype, device: torch.device):
+    def setup_cache(self, dtype: torch.dtype, device: torch.device):
         cache_shape = (
             self.config.max_batch_size,
             self.max_position_embeddings,
@@ -68,13 +68,11 @@ class Attention(nn.Module):
         )
         self.key_cache = torch.zeros(cache_shape, dtype=dtype, device=device)
         self.value_cache = torch.zeros(cache_shape, dtype=dtype, device=device)
-        if self.layer_idx == 0:
-            print(f"KV Cache initialized with shape: {cache_shape}")
 
     @torch.no_grad()
     def _update_cache(self, key_states: Tensor, value_states: Tensor, cache_position: Tensor) -> Tuple[Tensor, Tensor]:
         if self.key_cache is None or self.value_cache is None:
-            self._setup_cache(dtype=key_states.dtype, device=key_states.device)
+            self.setup_cache(dtype=key_states.dtype, device=key_states.device)
 
         last_position = cache_position[-1] + 1
         self.key_cache[:, cache_position] = key_states
@@ -83,7 +81,7 @@ class Attention(nn.Module):
 
     @torch.no_grad()
     def reorder_cache(self, beam_idx: Tensor) -> None:
-        assert self.key_cache is not None, "Cache is not initialized, call _setup_cache() first."
+        assert self.key_cache is not None, "Cache is not initialized, call setup_cache() first."
         self.key_cache = self.key_cache.index_select(0, beam_idx.to(self.key_cache.device))
         self.value_cache = self.value_cache.index_select(0, beam_idx.to(self.value_cache.device))
 

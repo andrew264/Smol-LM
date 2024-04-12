@@ -2,7 +2,6 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from apex.normalization import FusedRMSNorm
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import GenerationMixin, Cache
@@ -12,6 +11,11 @@ from transformers.modeling_utils import ModuleUtilsMixin
 
 from .block import TransformerBlock
 from .config import ModelConfig
+
+try:
+    from apex.normalization import FusedRMSNorm as RMSNorm
+except ImportError:
+    from .norm import RMSNorm
 
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
@@ -110,7 +114,7 @@ class Transformer(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
         self.layers = nn.ModuleList(TransformerBlock(config, idx) for idx in range(self.num_hidden_layers))
-        self.norm = FusedRMSNorm(self.hidden_size, eps=config.rms_norm_eps)
+        self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
         if self.tie_word_embeddings:  # TODO: model does not converge if we tie the weights
             self.lm_head.weight = self.tok_embeddings.weight
