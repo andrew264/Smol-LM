@@ -39,13 +39,18 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
         self.layers = nn.ModuleList(Block(config, idx) for idx in range(self.num_hidden_layers))
         self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
-        self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
-        if self.tie_word_embeddings:  # TODO: model does not converge if we tie the weights
-            self.lm_head.weight = self.tok_embeddings.weight
+        if not self.tie_word_embeddings:
+            self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
 
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
         self._register_load_state_dict_pre_hook(self.hf_load_hook)
+        if self.config.normalize_embedding:
+            self.register_buffer("normalizer",
+                                 torch.tensor(self.config.hidden_size ** 0.5, dtype=torch.bfloat16),
+                                 persistent=False)
+        self.normalize_embedding = config.normalize_embedding
+        self.logits_soft_cap = config.logits_soft_cap
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -64,9 +69,15 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             return (_k
                     .replace("model.", "")
                     .replace("embed_tokens", "tok_embeddings")
-                    .replace("self_attn", "jonkler_block")
-                    .replace(".attention", ".jonkler_block")
-                    .replace("mlp", "feed_forward"))
+                    .replace(".self_attn.", ".jonkler_block.")
+                    .replace(".attention.", ".jonkler_block.")
+                    .replace(".temporal_block.", ".jonkler_block.")
+                    .replace(".mlp.", ".feed_forward.")
+                    .replace(".mlp_block.", ".feed_forward.")
+                    .replace("final_norm.", "norm.")
+                    .replace(".temporal_pre_norm.", ".input_layernorm.")
+                    .replace(".channel_pre_norm.", ".post_attention_layernorm.")
+                    )
 
         for k in list(state_dict.keys()):
             state_dict[get_updated_key(k)] = state_dict.pop(k)
@@ -128,6 +139,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             past_key_values: Optional[Cache] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
             labels: Optional[torch.LongTensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
             cache_position: Optional[torch.LongTensor] = None,
             **kwargs,
     ) -> Union[CausalLMOutputWithPast, MoeCausalLMOutputWithPast]:
@@ -138,18 +150,18 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         else:
             x = inputs_embeds
 
-        past_seen_tokens = 0
         if cache_position is None:
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + x.shape[1], device=x.device
-            )
-        position_ids = cache_position.unsqueeze(0)
+            cache_position = torch.arange(x.shape[1], device=x.device)
+        position_ids = cache_position.unsqueeze(0) if position_ids is None else position_ids
 
         causal_mask = self._update_causal_mask(attention_mask, x, cache_position)
 
+        if self.normalize_embedding:
+            x = x * self.normalizer.type(x.dtype)
+
         all_router_logits: Tuple[Tensor] = ()
         for i, layer in enumerate(self.layers):
-            if i in self.checkpointing_layers:
+            if self.training and i in self.checkpointing_layers:
                 layer_outputs = checkpoint(layer,
                                            x, causal_mask, position_ids, cache_position,
                                            use_reentrant=False, )
@@ -167,7 +179,16 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         x = self.norm(x)
 
-        logits = self.lm_head(x)
+        if not self.tie_word_embeddings:
+            logits = self.lm_head(x)
+        else:
+            logits = x @ self.tok_embeddings.weight.T
+
+        if self.logits_soft_cap is not None:
+            cap = self.logits_soft_cap
+            logits = nn.functional.tanh(logits / cap) * cap
+            logits = logits.float()
+
         loss = None
         aux_loss = None
         if labels is not None:
@@ -204,8 +225,10 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         model_inputs = {"input_ids": input_ids.contiguous()}
         input_length = input_ids.shape[-1]
-        if cache_position is None:
+        if cache_position is None and past_key_values is not None:
             cache_position = torch.arange(past_length, past_length + input_length, device=input_ids.device)
+        elif past_key_values is None:
+            cache_position = None
         else:
             cache_position = cache_position[-input_length:]
 

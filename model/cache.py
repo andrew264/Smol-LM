@@ -18,7 +18,7 @@ class InternalCache(Cache):
         self.dtype = dtype
         self.reset_cache()
 
-    def get_seq_length(self, layer_idx: Optional[int] = 0) -> int | torch.Tensor:
+    def get_seq_length(self, layer_idx: Optional[int] = -1) -> int | torch.Tensor:
         return self.model.layers[layer_idx].jonkler_block.get_cache_length()
 
     def reset_cache(self):

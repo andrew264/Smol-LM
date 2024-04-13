@@ -47,16 +47,15 @@ class Block(nn.Module):
                                attention_mask=attention_mask,
                                position_ids=position_ids,
                                cache_position=cache_position)
-        x = residual + x
 
-        # Block-sparse MoE
-        residual = x
+        residual = residual + x
         router_logits = None
-        x = self.post_attention_layernorm(x)
+
+        x = self.post_attention_layernorm(residual)
         if self.is_moe:
             x, router_logits = self.feed_forward(x)
         else:
             x = self.feed_forward(x)
-        output = residual + x
+        x = residual + x
 
-        return output, router_logits
+        return x, router_logits

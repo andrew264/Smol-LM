@@ -14,16 +14,19 @@ from utils.lora_utils import to_lora_model
 
 def load_model(config: ModelConfig,
                lora_config: Optional[LoRAConfig] = None,
-               path: str = None,
+               path: str | List[str] = None,
                device: torch.device = torch.device('cuda'),
                dtype: torch.dtype = torch.bfloat16
                ) -> SmolLM:
     state_dict = {}
-    if path and os.path.exists(path):
+    if isinstance(path, str):
+        path = [path]
+    if path and os.path.exists(path[0]):
         d = device.type if device.type == 'cpu' else device.index
-        with safe_open(path, framework="pt", device=d) as f:
-            for k in f.keys():
-                state_dict[k] = f.get_tensor(k)
+        for p in path:
+            with safe_open(p, framework="pt", device=d) as f:
+                for k in f.keys():
+                    state_dict[k] = f.get_tensor(k)
         print("Loaded model from weights file.")
     else:
         print("Created new model.")

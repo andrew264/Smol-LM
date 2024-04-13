@@ -5,12 +5,11 @@ from torch import nn
 
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, max_position_embeddings: int = 2048, base: float = 10000.,
+    def __init__(self, dim: int, base: float = 10000.,
                  scaling_factor: float = 1.0):
         super().__init__()
         self.scaling_factor = scaling_factor
         self.dim = dim
-        self.max_position_embeddings = max_position_embeddings
         self.base = base
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float64) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)

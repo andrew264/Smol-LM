@@ -28,8 +28,11 @@ class ModelConfig:
     rope_theta = 10000.0
     rope_scaling = None
     tie_word_embeddings = False
-    attention_bias = False
+    mlp_bias = False
+    attention_qkv_bias = False
+    attention_out_bias = False
     attention_dropout = 0.0
+    partial_rotary_factor = 1.0
     gradient_checkpointing_percent: Optional[float] = .0
     grad_accumulation_steps = 1
     max_batch_size = 1
@@ -39,6 +42,8 @@ class ModelConfig:
     block_types = ["attention", ]
     conv1d_width = 2
     lru_width = 256
+    logits_soft_cap = None
+    normalize_embedding = False
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
