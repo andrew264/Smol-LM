@@ -15,7 +15,7 @@ if __name__ == '__main__':
     weights = './ft-weights/model.safetensors'
     num_beams = 2
 
-    config = ModelConfig.from_json('./weights/config.json')
+    config = ModelConfig.from_json('./ft-weights/config.json')
     config.max_batch_size = num_beams
 
     tokenizer = Tokenizer.from_file('./weights/tokenizer.json')

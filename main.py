@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 import bitsandbytes as bnb
 import numpy as np
@@ -29,12 +29,14 @@ class NPDataset(Dataset):
             self.data = self.data[:-validation_size]
         self.num_samples = len(self.data) // block_size
         self.data = self.data[:self.num_samples * block_size].reshape(self.num_samples, block_size)
+        self.mask = np.ones_like(self.data[0], dtype=np.int64)
 
     def __len__(self):
         return self.num_samples
 
-    def __getitem__(self, index) -> [np.ndarray]:
-        return [np.int64(self.data[index])]
+    def __getitem__(self, index) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        ids = np.int64(self.data[index])
+        return ids, ids, self.mask
 
 
 class TextCorpus(Dataset):
@@ -68,10 +70,9 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
 
     for (i, item) in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
         ids = item[0].to(device)
-        if len(item) == 3:
-            labels, mask = item[1].to(device), item[2].to(device)
-        else:
-            labels, mask = ids, None
+        labels = item[1].to(device)
+        mask = item[2].to(device)
+
         with torch.no_grad():
             out = model(input_ids=ids, labels=labels, attention_mask=mask)
             logits, loss = out.logits, out.loss
@@ -161,10 +162,8 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
                 start_time = time.time()
 
             ids = item[0].to(device)
-            if len(item) == 3:
-                labels, mask = item[1].to(device), item[2].to(device)
-            else:
-                labels, mask = ids, None
+            labels = item[1].to(device)
+            mask = item[2].to(device)
 
             # train step
             with accelerator.accumulate(model):
@@ -257,7 +256,7 @@ if __name__ == '__main__':
           config=params,
           start_step=step,
           save_step_count=True,
-          disable_scheduler=False,
+          disable_scheduler=True,
           learning_rate=5e-4
           )
     # validate_model(None, val_data, True)
