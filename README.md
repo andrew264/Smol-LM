@@ -13,6 +13,12 @@
     - Added LoRA fine-tuning
     - Added RAG for text generation
 
+### Supports loading the following pretrained weights:
+    - LLaMa
+    - Mistral
+    - RecurrentGemma (idk why i added this)
+
+
 ### Usage
 
     - Run `python main.py` to train the model

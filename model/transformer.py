@@ -11,12 +11,8 @@ from transformers.modeling_utils import ModuleUtilsMixin
 
 from .block import Block
 from .config import ModelConfig
+from .norm import get_rms_norm_class
 from .utils import load_balancing_loss_func
-
-try:
-    from apex.normalization import FusedRMSNorm as RMSNorm
-except ImportError:
-    from .norm import RMSNorm
 
 
 class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
@@ -38,7 +34,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
         self.layers = nn.ModuleList(Block(config, idx) for idx in range(self.num_hidden_layers))
-        self.norm = RMSNorm(self.hidden_size, eps=config.rms_norm_eps)
+        self.norm = get_rms_norm_class(config.use_gemma_rms_norm)(self.hidden_size, eps=config.rms_norm_eps)
+
         if not self.tie_word_embeddings:
             self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
 

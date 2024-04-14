@@ -6,12 +6,8 @@ from torch import Tensor
 from .attention_layer import AttentionBlock
 from .config import ModelConfig
 from .feed_forward import SparseMoEBlock, FeedForward
+from .norm import get_rms_norm_class
 from .recurrent_layer import RecurrentBlock
-
-try:
-    from apex.normalization import FusedRMSNorm as RMSNorm
-except ImportError:
-    from .norm import RMSNorm
 
 BLOCK_CLASSES = {
     "attention": AttentionBlock,
@@ -32,8 +28,10 @@ class Block(nn.Module):
         self.is_moe = config.is_moe
         self.feed_forward: F_BLOCK = SparseMoEBlock(config) if self.is_moe else FeedForward(config)
 
-        self.input_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.input_layernorm = get_rms_norm_class(config.use_gemma_rms_norm)(config.hidden_size,
+                                                                             config.rms_norm_eps)
+        self.post_attention_layernorm = get_rms_norm_class(config.use_gemma_rms_norm)(config.hidden_size,
+                                                                                      config.rms_norm_eps)
 
     def forward(self, hidden_states: Tensor,
                 attention_mask: Optional[Tensor],

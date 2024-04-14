@@ -1,6 +1,6 @@
 import json
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 
 @dataclass
@@ -8,42 +8,64 @@ class ModelConfig:
     """
     The model configuration class.
     """
-    vocab_size = 32000
-    hidden_size = 1024
-    intermediate_size = 3072
-    num_hidden_layers = 8
-    num_attention_heads = 8
-    num_key_value_heads = 1
-    is_moe = False
+    # Basic Model Parameters
+    vocab_size: int = 32000
+    hidden_size: int = 1024
+    intermediate_size: int = 3072
+    num_hidden_layers: int = 8
+
+    # Huggingface compatibility
+    is_encoder_decoder: bool = False
+    use_cache: bool = True
+
+    # Embeddings and Rotary Stuff
+    max_position_embeddings: int = 1024
+    rope_theta: float = 10000.0
+    rope_scaling: Optional[float] = None
+    normalize_embedding: bool = False
+    partial_rotary_factor: float = 1.0
+    tie_word_embeddings: bool = False
+
+    # Attention
+    num_attention_heads: int = 8
+    num_key_value_heads: int = 1
     sliding_window: Optional[int] = None
-    num_experts = 1
-    num_activated_experts = 1
-    router_aux_loss_coef = 0.001
-    hidden_act = "silu"
-    max_position_embeddings = 1024
-    initializer_range = 0.02
-    rms_norm_eps = 1e-06
-    use_cache = True
-    pad_token_id = 0
-    rope_theta = 10000.0
-    rope_scaling = None
-    tie_word_embeddings = False
-    mlp_bias = False
-    attention_qkv_bias = False
-    attention_out_bias = False
-    attention_dropout = 0.0
-    partial_rotary_factor = 1.0
-    gradient_checkpointing_percent: Optional[float] = .0
-    grad_accumulation_steps = 1
-    max_batch_size = 1
-    epochs = 1
-    is_encoder_decoder = False
-    router_jitter_noise = 0.0
-    block_types = ["attention", ]
-    conv1d_width = 2
-    lru_width = 256
-    logits_soft_cap = None
-    normalize_embedding = False
+
+    # Feed Forward / Mixture of Experts
+    hidden_act: str = "silu"
+    is_moe: bool = False
+    num_experts: int = 1
+    num_activated_experts: int = 1
+    router_aux_loss_coef: float = 0.001
+    router_jitter_noise: float = 0.0
+
+    # Normalization
+    rms_norm_eps: float = 1e-06
+    use_gemma_rms_norm: bool = False
+
+    # Dropout and Regularization
+    attention_dropout: float = 0.0
+    initializer_range: float = 0.02
+
+    # Biases
+    mlp_bias: bool = False
+    attention_qkv_bias: bool = False
+    attention_out_bias: bool = False
+
+    # for training
+    gradient_checkpointing_percent: Optional[float] = 0.0
+    grad_accumulation_steps: int = 1
+    max_batch_size: int = 1
+    epochs: int = 1
+
+    # Other Parameters
+    pad_token_id: int = 0
+    block_types: List[str] = field(default_factory=lambda: ["attention"])
+    logits_soft_cap: Optional[float] = None
+
+    # Recurrent Gated Linear Recurrent Unit Parameters
+    conv1d_width: int = 2
+    lru_width: int = 256
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
