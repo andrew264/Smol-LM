@@ -63,7 +63,7 @@ class ModelConfig:
     block_types: List[str] = field(default_factory=lambda: ["attention"])
     logits_soft_cap: Optional[float] = None
 
-    # Recurrent Gated Linear Recurrent Unit Parameters
+    # Real-Gated Linear Recurrent Unit Parameters
     conv1d_width: int = 2
     lru_width: int = 256
 
