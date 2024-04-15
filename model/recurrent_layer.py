@@ -89,7 +89,8 @@ class RGLRU(nn.Module):
             reset=reset,
             recurrent_states=self.recurrent_states,
         )
-        self.recurrent_states = recurrent_states
+        if not self.training:
+            self.recurrent_states = recurrent_states
         return hidden_states
 
     # TODO refactor
@@ -183,7 +184,7 @@ class RecurrentBlock(nn.Module):
         x_branch = self.linear_x(input_states)
         x_branch = x_branch.transpose(1, 2)
 
-        if cache_position is not None:
+        if cache_position is not None and not self.training:
             if cache_position.shape[0] != 1:  # prefill
                 self.conv1d_state = nn.functional.pad(x_branch, (self.conv1d_width - x_branch.shape[-1] - 1, 0))
                 x_branch = self.conv_1d(x_branch)[..., :seq_len]
