@@ -1,4 +1,4 @@
-from typing import Optional, Union, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -6,8 +6,8 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from .config import ModelConfig
-from .lora import LoRALinear
 from .rotary import RotaryEmbedding, apply_rotary_pos_emb
+from .utils import LINEAR
 
 
 class AttentionBlock(nn.Module):
@@ -34,12 +34,10 @@ class AttentionBlock(nn.Module):
                 f"{self.num_key_value_heads} and `num_heads`: {self.num_heads})."
             )
 
-        self.qkv_proj: Union[nn.Linear, LoRALinear] = nn.Linear(
-            self.hidden_size,
-            self.hidden_size + 2 * self.num_key_value_heads * self.head_dim,
-            bias=config.attention_qkv_bias)
-        self.o_proj: Union[nn.Linear, LoRALinear] = nn.Linear(self.hidden_size, self.hidden_size,
-                                                              bias=config.attention_out_bias)
+        self.qkv_proj: LINEAR = nn.Linear(self.hidden_size,
+                                          self.hidden_size + 2 * self.num_key_value_heads * self.head_dim,
+                                          bias=config.attention_qkv_bias)
+        self.o_proj: LINEAR = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_out_bias)
 
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
                                           base=self.config.rope_theta, )

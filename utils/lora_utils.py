@@ -1,3 +1,5 @@
+import time
+
 from model import SmolLM, LoRAConfig
 from model.lora import LoRALinear
 
@@ -9,6 +11,7 @@ def to_lora_model(model: SmolLM, config: LoRAConfig) -> SmolLM:
     :param config: (LoRAConfig) The LoRA configuration.
     :return: (nn.Module) The LoRA model.
     """
+    start = time.time()
     lora_layers = config.lora_layers
     lora_dropout = config.lora_dropout
     lora_alpha = config.lora_alpha
@@ -37,4 +40,5 @@ def to_lora_model(model: SmolLM, config: LoRAConfig) -> SmolLM:
             ffn.up_proj = LoRALinear(ffn.up_proj, rank=lora_r, alpha=lora_alpha, dropout=lora_dropout)
             ffn.down_proj = LoRALinear(ffn.down_proj, rank=lora_r, alpha=lora_alpha, dropout=lora_dropout)
 
+    print(f"Converted model to LoRA in {time.time() - start:.2f}s")
     return model

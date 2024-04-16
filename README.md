@@ -10,13 +10,14 @@
     - Flash Attention - 2 (from F.scaled_dot_product_attention)
     - With Recurrent Blocks (from recurrent gemma)
     - Weight Decay Denylist for Norm, Bias and Embedding
-    - Added LoRA fine-tuning
-    - Added RAG for text generation
+    - LoRA fine-tuning
+    - RAG for text generation
 
 ### Supports loading the following pretrained weights:
-    - LLaMa
+    - LLaMa-2
     - Mistral
-    - RecurrentGemma (idk why i added this)
+    - Mixtral (should support it; not tested)
+    - RecurrentGemma (idk why i added this; like 10x slower than attention for training)
 
 
 ### Usage

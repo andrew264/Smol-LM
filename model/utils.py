@@ -1,8 +1,12 @@
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
+
+from .lora import LoRALinear
+
+LINEAR = Union[nn.Linear, LoRALinear]
 
 
 def load_balancing_loss_func(gate_logits: Tuple[Tensor], num_experts: int, top_k: int = 2,

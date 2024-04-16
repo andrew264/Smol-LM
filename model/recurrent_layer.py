@@ -5,7 +5,7 @@ from torch import nn, Tensor
 from transformers.activations import get_activation
 
 from .config import ModelConfig
-from .lora import LoRALinear
+from .utils import LINEAR
 
 _MAX_SQRT_GRADIENT = 1000.0
 
@@ -150,12 +150,9 @@ class RecurrentBlock(nn.Module):
         self.config = config
         self.lru_width = config.lru_width
         self.hidden_size = config.hidden_size
-        self.linear_y: Union[nn.Linear, LoRALinear] = nn.Linear(in_features=config.hidden_size,
-                                                                out_features=config.lru_width)
-        self.linear_x: Union[nn.Linear, LoRALinear] = nn.Linear(in_features=config.hidden_size,
-                                                                out_features=config.lru_width)
-        self.linear_out: Union[nn.Linear, LoRALinear] = nn.Linear(in_features=config.lru_width,
-                                                                  out_features=config.hidden_size)
+        self.linear_y: LINEAR = nn.Linear(in_features=config.hidden_size, out_features=config.lru_width)
+        self.linear_x: LINEAR = nn.Linear(in_features=config.hidden_size, out_features=config.lru_width)
+        self.linear_out: LINEAR = nn.Linear(in_features=config.lru_width, out_features=config.hidden_size)
         self.conv1d_width = config.conv1d_width
         self.conv_1d = nn.Conv1d(
             config.lru_width,
@@ -168,6 +165,7 @@ class RecurrentBlock(nn.Module):
         self.act_fn = get_activation(config.hidden_act)
 
         self.conv1d_state = None
+        self._cache_length = 0
 
     def forward(
             self,
@@ -185,6 +183,7 @@ class RecurrentBlock(nn.Module):
         x_branch = x_branch.transpose(1, 2)
 
         if cache_position is not None and not self.training:
+            self._cache_length = cache_position[-1] + 1
             if cache_position.shape[0] != 1:  # prefill
                 self.conv1d_state = nn.functional.pad(x_branch, (self.conv1d_width - x_branch.shape[-1] - 1, 0))
                 x_branch = self.conv_1d(x_branch)[..., :seq_len]
@@ -211,3 +210,17 @@ class RecurrentBlock(nn.Module):
              self.hidden_size,
              self.conv1d_width - 1),
             device=device, dtype=dtype)
+
+    @torch.no_grad()
+    def reorder_cache(self, beam_idx: Tensor) -> None:
+        assert self.rg_lru.recurrent_states is not None, "Cache is not initialized, call setup_cache() first."
+        self.rg_lru.recurrent_states = self.rg_lru.recurrent_states.index_select(
+            0,
+            beam_idx.to(self.rg_lru.recurrent_states.device)
+        )
+        self.conv1d_state = self.conv1d_state.index_select(
+            0, beam_idx.to(self.conv1d_state.device)
+        )
+
+    def get_cache_length(self) -> int | Tensor:
+        return self._cache_length

@@ -11,7 +11,7 @@ from model import HFNomicEmbeddings
 class Role(Enum):
     SYSTEM = "<|system|>"
     USER = "<|user|>"
-    ASSISTANT = "<|assistant|>"
+    ASSISTANT = "<|sydney|>"
 
 
 class Message(TypedDict):

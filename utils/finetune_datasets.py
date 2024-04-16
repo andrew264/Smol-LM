@@ -18,6 +18,7 @@ class DS(Dataset):
         self._tokenizer = tokenizer
         self._sys_p = sys_prompt
         self._data = None
+        self.assistant_name = "sydney"
 
     def __len__(self) -> int:
         return len(self._data)
@@ -29,7 +30,7 @@ class DS(Dataset):
             case Role.USER:
                 prefix = "\n" + Role.USER.value + "\n"
             case Role.ASSISTANT:
-                prefix = "\n<|sydney|>\n"
+                prefix = f"\n<|{self.assistant_name}|>\n"
             case _:
                 raise ValueError(f"Invalid role: {role}")
 
@@ -156,18 +157,19 @@ class DiscordConversations(Dataset):
     def __init__(self, path: str, tokenizer: Tokenizer, sys_prompt: str):
         self._tokenizer = tokenizer
         self._sys_p = sys_prompt
+        self.assistant_name = "sydney"
         self._files = glob.glob(f"{path}/*.json")
         enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}{sys_prompt.strip()}{self.EOT}",
                                           add_special_tokens=False)
         self._enc_sys_prompt = (enc_sys_prompt.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc_sys_prompt.ids))
-        response_head = tokenizer.encode(f"\n<|sydney|>\n", add_special_tokens=False)
+        response_head = tokenizer.encode(f"\n<|{self.assistant_name}|>\n", add_special_tokens=False)
         self._response_head = (response_head.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(response_head.ids))
 
     def __len__(self) -> int:
         return len(self._files)
 
     def _get_id_label(self, role: str, content: str) -> Tuple[List[int], List[int]]:
-        if role == "sydney":
+        if role == self.assistant_name:
             resp_enc = self._tokenizer.encode(f"{content.strip()}{self.EOT}", add_special_tokens=False)
             ids = self._response_head[0] + resp_enc.ids
             labels = self._response_head[1] + resp_enc.ids

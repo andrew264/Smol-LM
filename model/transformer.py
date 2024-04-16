@@ -12,7 +12,7 @@ from transformers.modeling_utils import ModuleUtilsMixin
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rms_norm_class
-from .utils import load_balancing_loss_func
+from .utils import load_balancing_loss_func, LINEAR
 
 
 class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
@@ -37,7 +37,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.norm = get_rms_norm_class(config.use_gemma_rms_norm)(self.hidden_size, eps=config.rms_norm_eps)
 
         if not self.tie_word_embeddings:
-            self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
+            self.lm_head: LINEAR = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
 
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
@@ -62,19 +62,28 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
     @staticmethod
     def hf_load_hook(state_dict: dict, prefix, *args, **kwargs):
-        def get_updated_key(_k: str) -> str:
-            return (_k
-                    .replace("model.", "")
-                    .replace("embed_tokens", "tok_embeddings")
-                    .replace(".self_attn.", ".jonkler_block.")
-                    .replace(".attention.", ".jonkler_block.")
-                    .replace(".temporal_block.", ".jonkler_block.")
-                    .replace(".mlp.", ".feed_forward.")
-                    .replace(".mlp_block.", ".feed_forward.")
-                    .replace("final_norm.", "norm.")
-                    .replace(".temporal_pre_norm.", ".input_layernorm.")
-                    .replace(".channel_pre_norm.", ".post_attention_layernorm.")
-                    )
+        mappings = {
+            "model.": "",
+            "embed_tokens": "tok_embeddings",
+            ".self_attn.": ".jonkler_block.",
+            ".attention.": ".jonkler_block.",
+            ".temporal_block.": ".jonkler_block.",
+            ".mlp.": ".feed_forward.",
+            ".mlp_block.": ".feed_forward.",
+            ".block_sparse_moe.": ".feed_forward.",
+            ".w1.": ".gate_proj.",
+            ".w2.": ".up_proj.",
+            ".w3.": ".up_proj.",
+            "final_norm.": "norm.",
+            ".temporal_pre_norm.": ".input_layernorm.",
+            ".channel_pre_norm.": ".post_attention_layernorm.",
+        }
+
+        def get_updated_key(key: str) -> str:
+            updated_key = str(key)
+            for old, new in mappings.items():
+                updated_key = updated_key.replace(old, new)
+            return updated_key
 
         for k in list(state_dict.keys()):
             state_dict[get_updated_key(k)] = state_dict.pop(k)

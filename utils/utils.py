@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Optional, List
 
 import torch
@@ -22,12 +23,13 @@ def load_model(config: ModelConfig,
     if isinstance(path, str):
         path = [path]
     if path and os.path.exists(path[0]):
+        start = time.time()
         d = device.type if device.type == 'cpu' else device.index
         for p in path:
             with safe_open(p, framework="pt", device=d) as f:
                 for k in f.keys():
                     state_dict[k] = f.get_tensor(k)
-        print("Loaded model from weights file.")
+        print("Loaded model from weights file in", time.time() - start, "s.")
     else:
         print("Created new model.")
 
@@ -56,7 +58,9 @@ def save_model(model: torch.nn.Module, path: str):
     :param model: (torch.nn.Module) The model to save.
     :param path: (str) The path to save the model to.
     """
+    start = time.time()
     safe_save_file(model.state_dict(), path)
+    print("Saved model weights in", time.time() - start, "s.")
 
 
 def load_optimizer(optimizer: Optimizer, path: str, device: torch.device = torch.device('cuda:0')):
