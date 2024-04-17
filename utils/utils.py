@@ -129,12 +129,10 @@ class StoppingCriteriaSub(StoppingCriteria):
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
         stop_count = 0
-        for stop in self.stops:
-            if isinstance(stop, torch.Tensor):
-                if stop in input_ids[:, -len(stop):]:
+        for batch in input_ids:
+            for stop in self.stops:
+                if torch.equal(stop, batch[-len(stop):]):
                     stop_count += 1
-            elif stop in input_ids[:, -1]:
-                stop_count += 1
 
         return stop_count >= self.ENCOUNTERS
 

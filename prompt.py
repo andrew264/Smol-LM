@@ -3,11 +3,10 @@ import os
 
 import torch
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
-    StoppingCriteriaList
+from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig
 
 from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings  # noqa
-from utils import Prompt, StoppingCriteriaSub, load_model, compile_model
+from utils import Prompt, load_model, compile_model, get_stopping_criteria
 
 device = torch.device("cuda:0")
 
@@ -46,8 +45,7 @@ if __name__ == '__main__':
     )
     model.generation_config = generation_config
 
-    stopping_tokens = [i for i in range(3)]
-    stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
+    stopping_criteria = get_stopping_criteria(device)
 
     dt = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     with open('data/finetune/sysprompt.txt', 'r') as f:
