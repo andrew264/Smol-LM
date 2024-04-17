@@ -1,21 +1,20 @@
 import os
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 import torch
 from aiohttp import web
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig, \
-    StoppingCriteriaList
+from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, LoRAConfig, InternalCache
-from utils import StoppingCriteriaSub, load_model
+from utils import load_model, compile_model, get_stopping_criteria, get_generation_config
 
-device = torch.device("cuda")
+device = torch.device("cuda:0")
 dtype = torch.bfloat16
 weights = './ft-weights/model.safetensors'
 
-config = ModelConfig.from_json('weights/config.json')
-tokenizer = Tokenizer.from_file('weights/tokenizer.json')
+config = ModelConfig.from_json('ft-weights/config.json')
+tokenizer = Tokenizer.from_file('ft-weights/tokenizer.json')
 config.max_batch_size = 1
 
 if os.path.exists('./ft-weights/lora.json'):
@@ -25,25 +24,11 @@ else:
     lora_params = None
 
 model = load_model(config, lora_params, weights, device, dtype=dtype)
-torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
-model.bos_token_id = tokenizer.token_to_id("<s>")
+compile_model(model)
 
-generation_config: GenerationConfig = GenerationConfig(
-    max_length=config.max_position_embeddings,
-    do_sample=True,
-    num_beams=1,
-    use_cache=True,
-    pad_token_id=0,
-    bos_token_id=1,
-    eos_token_id=2,
-)
+generation_config = get_generation_config(config.max_position_embeddings)
+stopping_criteria = get_stopping_criteria(device=device)
 model.generation_config = generation_config
-
-bad_tokens = [[523, 28766], [28789, 28766]]
-stopping_tokens: List[int | List[int] | torch.Tensor] = [i for i in range(3)]
-stopping_tokens.append(torch.tensor(bad_tokens[0], device=device))
-stopping_tokens.append(torch.tensor(bad_tokens[1], device=device))
-stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
 max_length = config.max_position_embeddings - 128
 
@@ -71,7 +56,7 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]) -> 
 
     # output
     out_tokens = out[0].tolist()
-    for bad in bad_tokens:
+    for bad in [[523, 28766], [28789, 28766]]:
         if bad == out_tokens[-len(bad):]:
             out_tokens = out_tokens[:-len(bad)]
     decoded = tokenizer.decode(out_tokens[len(tokens[0]):])

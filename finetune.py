@@ -68,7 +68,7 @@ if __name__ == '__main__':
           config=params,
           lora_config=lora_params,
           disable_scheduler=True,
-          learning_rate=1e-5,
+          learning_rate=2e-5,
           save_every=5000,
           )
     # validate_model(None, dataloader, True)

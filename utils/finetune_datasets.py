@@ -158,7 +158,7 @@ class DiscordConversations(Dataset):
         self._tokenizer = tokenizer
         self._sys_p = sys_prompt
         self.assistant_name = "sydney"
-        self._files = glob.glob(f"{path}/*.json")
+        self._files = glob.glob(f"{path}/**/*.json")
         enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}{sys_prompt.strip()}{self.EOT}",
                                           add_special_tokens=False)
         self._enc_sys_prompt = (enc_sys_prompt.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc_sys_prompt.ids))

@@ -14,7 +14,7 @@ from transformers import get_cosine_schedule_with_warmup
 
 from model import ModelConfig, LoRAConfig
 from utils import load_model, load_optimizer, save_model, save_optimizer, count_parameters, load_scheduler, \
-    save_scheduler
+    save_scheduler, compile_model
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -111,7 +111,7 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
 
     # accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
-    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
+    compile_model(model)
     model = accelerator.prepare_model(model)
 
     # total steps

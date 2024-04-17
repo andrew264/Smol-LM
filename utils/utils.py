@@ -7,7 +7,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file as safe_save_file
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from transformers import StoppingCriteria
+from transformers import StoppingCriteria, StoppingCriteriaList, GenerationConfig
 
 from model import ModelConfig, SmolLM, LoRAConfig
 from utils.lora_utils import to_lora_model
@@ -29,13 +29,13 @@ def load_model(config: ModelConfig,
             with safe_open(p, framework="pt", device=d) as f:
                 for k in f.keys():
                     state_dict[k] = f.get_tensor(k)
-        print("Loaded model from weights file in", time.time() - start, "s.")
+        print(f"Loaded weights from {path} in {time.time() - start:.3f}s.")
     else:
         print("Created new model.")
 
+    start = time.time()
     is_lora_state = any('lora' in k for k in state_dict.keys())
-    model = SmolLM(config)
-    model.to(dtype=dtype, device=device)
+    model = SmolLM(config).to(device=device, dtype=dtype)
     if is_lora_state:
         assert lora_config is not None, "LoRA config must be provided if model weights have LoRA."
         model = to_lora_model(model, lora_config)
@@ -49,6 +49,7 @@ def load_model(config: ModelConfig,
     del state_dict
     torch.cuda.empty_cache()
     model.eval()
+    print(f"Loaded model in {time.time() - start:.3f}s.")
     return model
 
 
@@ -60,7 +61,18 @@ def save_model(model: torch.nn.Module, path: str):
     """
     start = time.time()
     safe_save_file(model.state_dict(), path)
-    print("Saved model weights in", time.time() - start, "s.")
+    print(f"Saved model to {path} in {time.time() - start:.3f}s.")
+
+
+def compile_model(model: torch.nn.Module, ) -> None:
+    """
+    Compiles a model to optimize performance.
+    :param model: (torch.nn.Module) The model to compile.
+    :return: (torch.nn.Module) The compiled model.
+    """
+    start = time.time()
+    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
+    print(f"Compiled model in {time.time() - start:.3f}s.")
 
 
 def load_optimizer(optimizer: Optimizer, path: str, device: torch.device = torch.device('cuda:0')):
@@ -108,7 +120,7 @@ def save_scheduler(scheduler: LRScheduler, path: str):
 
 class StoppingCriteriaSub(StoppingCriteria):
 
-    def __init__(self, stops: Optional[List[int | List[int] | torch.Tensor]] = None, encounters=1):
+    def __init__(self, stops: Optional[List[torch.Tensor]] = None, encounters=1):
         super().__init__()
         if stops is None:
             stops = []
@@ -118,7 +130,7 @@ class StoppingCriteriaSub(StoppingCriteria):
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
         stop_count = 0
         for stop in self.stops:
-            if isinstance(stop, list) or isinstance(stop, torch.Tensor):
+            if isinstance(stop, torch.Tensor):
                 if stop in input_ids[:, -len(stop):]:
                     stop_count += 1
             elif stop in input_ids[:, -1]:
@@ -138,3 +150,22 @@ def count_parameters(model: torch.nn.Module):
     if total_params != total_trainable_params:
         print(f'{total_trainable_params:,} trainable parameters.')
         print(f'Percentage of trainable parameters: {total_trainable_params / total_params * 100:.2f}%')
+
+
+def get_stopping_criteria(device: torch.device) -> StoppingCriteriaList:
+    stopping_tokens: List[torch.Tensor] = [torch.tensor([i], device=device) for i in range(3)]
+    stopping_tokens.append(torch.tensor([523, 28766], device=device))
+    stopping_tokens.append(torch.tensor([28789, 28766], device=device))
+    return StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
+
+
+def get_generation_config(max_length: int) -> GenerationConfig:
+    return GenerationConfig(
+        max_length=max_length,
+        do_sample=True,
+        num_beams=1,
+        use_cache=True,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+    )

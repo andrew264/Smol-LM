@@ -7,7 +7,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenalt
     StoppingCriteriaList
 
 from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings  # noqa
-from utils import Prompt, StoppingCriteriaSub, load_model
+from utils import Prompt, StoppingCriteriaSub, load_model, compile_model
 
 device = torch.device("cuda:0")
 
@@ -27,7 +27,7 @@ if __name__ == '__main__':
         lora_params = None
 
     model = load_model(config, lora_config=lora_params, path=weights, device=device)
-    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
+    compile_model(model)
     model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor
