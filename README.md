@@ -14,7 +14,7 @@
     - RAG for text generation
 
 ### Supports loading the following pretrained weights:
-    - LLaMa-2
+    - LLaMa-2, LLaMa3
     - Mistral
     - Mixtral (should support it; not tested)
     - RecurrentGemma (idk why i added this; like 10x slower than attention for training)
