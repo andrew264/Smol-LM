@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 import bitsandbytes as bnb
 import numpy as np
@@ -29,14 +29,12 @@ class NPDataset(Dataset):
             self.data = self.data[:-validation_size]
         self.num_samples = len(self.data) // block_size
         self.data = self.data[:self.num_samples * block_size].reshape(self.num_samples, block_size)
-        self.mask = np.ones_like(self.data[0], dtype=np.int64)
 
     def __len__(self):
         return self.num_samples
 
-    def __getitem__(self, index) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        ids = np.int64(self.data[index])
-        return ids, ids, self.mask
+    def __getitem__(self, index) -> [np.ndarray]:
+        return [np.int64(self.data[index])]
 
 
 class TextCorpus(Dataset):
@@ -69,9 +67,15 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     accumulated_loss = 0
 
     for (i, item) in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
-        ids = item[0].to(device)
-        labels = item[1].to(device)
-        mask = item[2].to(device)
+
+        if len(item) == 1:
+            ids = item[0].to(device)
+            labels = ids
+            mask = None
+        else:
+            ids = item[0].to(device)
+            labels = item[1].to(device)
+            mask = item[2].to(device)
 
         with torch.no_grad():
             out = model(input_ids=ids, labels=labels, attention_mask=mask)
@@ -161,9 +165,14 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
             if i == start_step + 1:
                 start_time = time.time()
 
-            ids = item[0].to(device)
-            labels = item[1].to(device)
-            mask = item[2].to(device)
+            if len(item) == 1:
+                ids = item[0].to(device)
+                labels = ids
+                mask = None  # no mask for pre-training
+            else:
+                ids = item[0].to(device)
+                labels = item[1].to(device)
+                mask = item[2].to(device)
 
             # train step
             with accelerator.accumulate(model):

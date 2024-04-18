@@ -2,6 +2,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import GenerationMixin, Cache
@@ -188,7 +189,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if not self.tie_word_embeddings:
             logits = self.lm_head(x)
         else:
-            logits = x @ self.tok_embeddings.weight.T
+            logits = F.linear(x, self.tok_embeddings.weight)
 
         if self.logits_soft_cap is not None:
             cap = self.logits_soft_cap
@@ -246,6 +247,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     @staticmethod
     def _update_causal_mask(attention_mask, input_tensor, cache_position):
+        if attention_mask is None:
+            return None
 
         dtype, device = input_tensor.dtype, input_tensor.device
         min_dtype = torch.finfo(dtype).min
