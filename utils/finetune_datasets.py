@@ -2,7 +2,6 @@ import glob
 import json
 from typing import List, Optional, Tuple
 
-import pandas as pd
 from datasets import load_dataset
 from tokenizers import Tokenizer
 from torch.utils.data import Dataset
@@ -57,27 +56,6 @@ class HFnoRobotsDataset(DS):
         for ex in row['messages']:
             role = Role.USER if ex['role'] == 'user' else Role.ASSISTANT
             id_, label = self._get_id_label(role, ex['content'])
-            ids.extend(id_)
-            labels.extend(label)
-        return ids, labels
-
-
-class CSVDatasetV2(DS):
-    def __init__(self, path: str,
-                 tokenizer: Tokenizer,
-                 sys_prompt: str):
-        super().__init__(tokenizer, sys_prompt)
-        self._data = pd.read_csv(path)
-        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
-
-    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
-        row = self._data.iloc[idx]
-        ids, labels = [], []
-        ids.extend(self._enc_sys_prompt[0])
-        labels.extend(self._enc_sys_prompt[1])
-        for i in range(0, 2):
-            role = Role.USER if i % 2 == 0 else Role.ASSISTANT
-            id_, label = self._get_id_label(role, row.iloc[i])
             ids.extend(id_)
             labels.extend(label)
         return ids, labels
