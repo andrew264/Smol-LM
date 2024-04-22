@@ -105,7 +105,7 @@ class LoRAConfig:
     lora_rank = 8
     lora_alpha = 16
     lora_dropout = 0.05
-    lora_layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp', l_x, l_y, l_out
+    lora_layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp', l_x, l_y, l_out, lm_head
 
     @classmethod
     def from_json(cls, path: str) -> "LoRAConfig":

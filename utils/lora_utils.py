@@ -39,6 +39,8 @@ def to_lora_model(model: SmolLM, config: LoRAConfig) -> SmolLM:
             ffn.gate_proj = LoRALinear(ffn.gate_proj, rank=lora_r, alpha=lora_alpha, dropout=lora_dropout)
             ffn.up_proj = LoRALinear(ffn.up_proj, rank=lora_r, alpha=lora_alpha, dropout=lora_dropout)
             ffn.down_proj = LoRALinear(ffn.down_proj, rank=lora_r, alpha=lora_alpha, dropout=lora_dropout)
+    if 'lm_head' in lora_layers:
+        model.lm_head = LoRALinear(model.lm_head, rank=lora_r, alpha=lora_alpha, dropout=lora_dropout)
 
     print(f"Converted model to LoRA in {time.time() - start:.2f}s")
     return model
