@@ -157,9 +157,9 @@ def get_stopping_criteria(device: torch.device) -> StoppingCriteriaList:
     return StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
 
-def get_generation_config(max_length: int) -> GenerationConfig:
+def get_generation_config(max_new_length: int) -> GenerationConfig:
     return GenerationConfig(
-        max_length=max_length,
+        max_new_tokens=max_new_length,
         do_sample=True,
         num_beams=1,
         use_cache=True,

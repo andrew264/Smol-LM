@@ -26,7 +26,7 @@ else:
 model = load_model(config, lora_params, weights, device, dtype=dtype)
 compile_model(model)
 
-generation_config = get_generation_config(config.max_position_embeddings)
+generation_config = get_generation_config(1024)
 stopping_criteria = get_stopping_criteria(device=device)
 model.generation_config = generation_config
 

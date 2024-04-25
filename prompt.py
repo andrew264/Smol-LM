@@ -3,7 +3,8 @@ import os
 
 import torch
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor, GenerationConfig
+from transformers import (LogitsProcessorList, TemperatureLogitsWarper, TopPLogitsWarper,
+                          RepetitionPenaltyLogitsProcessor, GenerationConfig)
 
 from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings  # noqa
 from utils import Prompt, load_model, compile_model, get_stopping_criteria
@@ -31,11 +32,12 @@ if __name__ == '__main__':
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
-    processor.append(RepetitionPenaltyLogitsProcessor(1.05))
-    processor.append(TopKLogitsWarper(12))
+    processor.append(RepetitionPenaltyLogitsProcessor(1.15))
+    processor.append(TemperatureLogitsWarper(1.0))
+    processor.append(TopPLogitsWarper(top_p=0.95))
 
     generation_config: GenerationConfig = GenerationConfig(
-        max_length=config.max_position_embeddings,
+        max_new_tokens=512,
         do_sample=True,
         num_beams=num_beams,
         use_cache=True,
