@@ -6,28 +6,40 @@ from tokenizers import Tokenizer
 from transformers import (LogitsProcessorList, TemperatureLogitsWarper, TopPLogitsWarper,
                           RepetitionPenaltyLogitsProcessor, GenerationConfig)
 
-from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings  # noqa
-from utils import Prompt, load_model, compile_model, get_stopping_criteria
+from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings, SmolLM  # noqa
+from utils import Prompt, inject_lora_adapter, get_state_dict_from_safetensors, compile_model, get_stopping_criteria
 
 device = torch.device("cuda:0")
 
 if __name__ == '__main__':
-    weights = './ft-weights/model.safetensors'
+    path = './ft-weights/'
     num_beams = 2
 
-    config = ModelConfig.from_json('./ft-weights/config.json')
+    config = ModelConfig.from_json(os.path.join(path, 'config.json'))
     config.max_batch_size = num_beams
 
-    tokenizer = Tokenizer.from_file('./weights/tokenizer.json')
+    tokenizer = Tokenizer.from_file(os.path.join(path, 'tokenizer.json'))
 
-    if os.path.exists('./ft-weights/lora.json'):
-        lora_params = LoRAConfig.from_json('./ft-weights/lora.json')
-        print("Loaded LoRA config from file.")
+    if os.path.exists(os.path.join(path, 'lora.json')):
+        lora_params = LoRAConfig.from_json(os.path.join(path, 'lora.json'))
     else:
-        lora_params = None
+        raise ValueError("LoRA config not found.")
 
-    model = load_model(config, lora_config=lora_params, path=weights, device=device)
+    # Load model
+    model_sd = get_state_dict_from_safetensors(os.path.join(path, 'model.safetensors'), device)
+    model = SmolLM(config).to(device=device, dtype=torch.bfloat16)
+    model.load_state_dict(model_sd)
+    del model_sd
+
+    # Inject LoRA
+    adapter_sd = get_state_dict_from_safetensors(os.path.join(path, 'adapter.safetensors'), device)
+    model = inject_lora_adapter(model, lora_params, adapter_sd)
+    del adapter_sd
+
+    # Prepare model
+    model.eval()
     compile_model(model)
+    torch.cuda.empty_cache()
     model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor

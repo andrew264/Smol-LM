@@ -102,10 +102,10 @@ class ModelConfig:
 
 @dataclass
 class LoRAConfig:
-    lora_rank = 8
-    lora_alpha = 16
-    lora_dropout = 0.05
-    lora_layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp', l_x, l_y, l_out, lm_head
+    rank = 8
+    alpha = 16
+    dropout = 0.05
+    layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp', l_x, l_y, l_out, lm_head
 
     @classmethod
     def from_json(cls, path: str) -> "LoRAConfig":
@@ -124,3 +124,7 @@ class LoRAConfig:
     def to_json(self, path: str) -> None:
         with open(path, "w") as f:
             json.dump(self.__dict__, f, indent=4)
+
+    def __repr__(self) -> str:
+        return (f"LoRAConfig(rank={self.rank}, alpha={self.alpha}, "
+                f"dropout={self.dropout}, layers={self.layers})")

@@ -12,9 +12,9 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import get_cosine_schedule_with_warmup
 
-from model import ModelConfig, LoRAConfig
-from utils import load_model, load_optimizer, save_model, save_optimizer, count_parameters, load_scheduler, \
-    save_scheduler, compile_model
+from model import ModelConfig, SmolLM
+from utils import (count_parameters, compile_model, get_state_dict_from_safetensors, save_as_safetensors,
+                   save_state_dict, get_state_dict)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -56,12 +56,7 @@ class TextCorpus(Dataset):
 
 
 @torch.no_grad()
-def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full_validation: bool = False):
-    if not model:
-        model = load_model(config=ModelConfig.from_json('./weights/config.json'),
-                           path='weights/model.safetensors',
-                           device=device)
-        torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
+def validate_model(model: nn.Module, validation_data: DataLoader, full_validation: bool = False):
     model.eval()
     total = len(validation_data) if full_validation or len(validation_data) < 100 else 100
     accumulated_loss = 0
@@ -91,16 +86,14 @@ def validate_model(model: Optional[nn.Module], validation_data: DataLoader, full
     model.train()
 
 
-def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_config: LoRAConfig = None,
-          validation_data: Optional[DataLoader] = None, start_step: int = 0,
-          save_step_count: bool = False, disable_scheduler: bool = False, learning_rate: float = 3e-4,
-          save_every: int = 2000):
+def train(model_path: str, training_data: DataLoader, config: ModelConfig, validation_data: Optional[DataLoader] = None,
+          start_step: int = 0, save_step_count: bool = False, disable_scheduler: bool = False,
+          learning_rate: float = 3e-4, save_every: int = 2000):
     """
 
     :param model_path: Model path to save model weights
     :param training_data: DataLoader for training data
     :param config: ModelConfig
-    :param lora_config: LoRAConfig
     :param validation_data: DataLoader for validation data
     :param start_step: Start training from this step (useful for resuming training)
     :param save_step_count: Save the current step count to model_path/step.txt
@@ -109,30 +102,30 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
     :param save_every: Save the model weights every `save_every` steps
     :return:
     """
+    # Load model
+    model_sd = get_state_dict_from_safetensors(os.path.join(model_path, 'model.safetensors'), device)
+    model = SmolLM(config).to(device=device, dtype=torch.bfloat16)
+    model.load_state_dict(model_sd)
+    del model_sd
 
-    model = load_model(config, lora_config=lora_config, path=model_path + 'model.safetensors', device=device)
-    model.train()
+    count_parameters(model)
+    total_steps = len(training_data)
 
-    # accelerator
+    # Accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
     compile_model(model)
     model = accelerator.prepare_model(model)
 
-    # total steps
-    total_steps = len(training_data) * config.epochs if isinstance(training_data, DataLoader) else None
-    if total_steps is None:
-        print("Could not determine total steps. Disabling scheduler.")
-        disable_scheduler = True
-
-    # optimizer
+    # Optimizer
     betas = (0.9, 0.95)
     weight_decay = 0.1
+    optimizer_sd = get_state_dict(os.path.join(model_path + 'optimizer.pt'), device=device)
     _params = model.get_optimizer_grouped_parameters(weight_decay)
     optimizer = bnb.optim.AdamW8bit(_params, lr=learning_rate, betas=betas, weight_decay=weight_decay)
+    if optimizer_sd:
+        optimizer.load_state_dict(optimizer_sd)
+    del optimizer_sd
     optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
-    # TODO: figure out why loading optimizer states is using more memory
-    # TODO: figure out why setting device to CPU or GPU use different amount of memory [GPU uses more]
-    optimizer = load_optimizer(optimizer, model_path + 'optimizer.bin', device=device)
     optimizer.optimizer.to_gpu()
 
     # scheduler
@@ -144,9 +137,10 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
                                                     num_warmup_steps=int(s_steps * 0.02),
                                                     num_training_steps=s_steps)
         scheduler = accelerator.prepare_scheduler(scheduler)
-        scheduler = load_scheduler(scheduler, model_path + 'scheduler.bin', device=device)
-
-    count_parameters(model)
+        scheduler_sd = get_state_dict(os.path.join(model_path + 'scheduler.pt'),
+                                      device=device)
+        scheduler.load_state_dict(scheduler_sd)
+        del scheduler_sd
 
     accumulated_loss = 0
     start_time, time_delta = time.time(), 0.
@@ -157,74 +151,68 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, lora_
 
     print(f"Training Step: {start_step} of {total_steps} | {start_step / total_steps * 100:.2f}%")
 
-    for epoch in range(config.epochs):
-        print(f"Epoch: {epoch + 1} of {config.epochs}")
-        for (i, item) in enumerate(training_data):
-            if i <= start_step:
-                continue
-            if i == start_step + 1:
-                start_time = time.time()
+    torch.cuda.empty_cache()
+    for i, (item) in enumerate(training_data):
+        if i <= start_step:
+            continue
+        if i == start_step + 1:
+            start_time = time.time()
 
-            if len(item) == 1:
-                ids = item[0].to(device)
-                labels = ids
-                mask = None  # no mask for pre-training
-            else:
-                ids = item[0].to(device)
-                labels = item[1].to(device)
-                mask = item[2].to(device)
+        ids = item[0].to(device)
+        labels = ids
+        mask = None
 
-            # train step
-            with accelerator.accumulate(model):
-                loss = model(input_ids=ids, labels=labels, attention_mask=mask).loss  # forward pass
-                accumulated_loss += loss.item()
-                accelerator.backward(loss)  # backward pass
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # train step
+        with accelerator.accumulate(model):
+            loss = model(input_ids=ids, labels=labels, attention_mask=mask).loss  # forward pass
+            accumulated_loss += loss.item()
+            accelerator.backward(loss)  # backward pass
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-                optimizer.step()
-                if scheduler is not None:
-                    scheduler.step()
-                optimizer.zero_grad()
+            optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
+            optimizer.zero_grad()
 
-            if i % print_step == 0 and i > 0:
-                time_delta = time.time() - start_time
-                avg_loss = accumulated_loss / print_step
-                avg_perplexity = torch.exp(torch.tensor(avg_loss))
-                batch_per_sec = print_step / time_delta
+        if i % print_step == 0 and i > 0:
+            time_delta = time.time() - start_time
+            avg_loss = accumulated_loss / print_step
+            avg_perplexity = torch.exp(torch.tensor(avg_loss))
+            batch_per_sec = print_step / time_delta
 
-                accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                                  f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.1f}")
+            accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
+                              f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.1f}")
 
-                start_time = time.time()
-                accumulated_loss = 0
+            start_time = time.time()
+            accumulated_loss = 0
 
-            if i % save_every == 0 and i > 0:
-                save_model(model, model_path + 'model.safetensors')
-                save_optimizer(optimizer, model_path + 'optimizer.bin')
-                if scheduler is not None:
-                    save_scheduler(scheduler, model_path + 'scheduler.bin')
-                print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
-                      f"Time left: {((total_steps - i) * (time_delta / print_step)) / 60:.2f} minutes")
+        if i % save_every == 0 and i > 0:
+            save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
+            save_state_dict(optimizer.state_dict(), os.path.join(model_path, 'optimizer.pt'))
+            if scheduler is not None:
+                save_state_dict(scheduler.state_dict(), os.path.join(model_path, 'scheduler.pt'))
+            print(f"Percent of dataset consumed: {i / total_steps * 100:.2f}% | "
+                  f"Time left: {((total_steps - i) * (time_delta / print_step)) / 60:.2f} minutes")
 
-                if save_step_count:
-                    with open(model_path + 'step.txt', 'w') as step_file:
-                        step_file.write(f"{i}\n")
+            if save_step_count:
+                with open(model_path + 'step.txt', 'w') as step_file:
+                    step_file.write(f"{i}\n")
 
-                if validation_data is not None:
-                    if i % 10000 == 0:
-                        validate_model(model, validation_data, full_validation=True)
-                    else:
-                        validate_model(model, validation_data)
+            if validation_data is not None:
+                if i % 10000 == 0:
+                    validate_model(model, validation_data, full_validation=True)
+                else:
+                    validate_model(model, validation_data)
 
-                start_time = time.time()
+            start_time = time.time()
 
-        if validation_data is not None:
-            validate_model(model, validation_data, full_validation=True)
+    if validation_data is not None:
+        validate_model(model, validation_data, full_validation=True)
 
-    save_model(model, model_path + 'model.safetensors')
-    save_optimizer(optimizer, model_path + 'optimizer.bin')
+    save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
+    save_state_dict(optimizer.state_dict(), os.path.join(model_path, 'optimizer.pt'))
     if scheduler is not None:
-        save_scheduler(scheduler, model_path + 'scheduler.bin')
+        save_state_dict(scheduler.state_dict(), os.path.join(model_path, 'scheduler.pt'))
 
     print("Training complete.")
 

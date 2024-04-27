@@ -1,16 +1,96 @@
 import datetime
 import os
+import time
 from typing import Tuple, List
 
+import bitsandbytes as bnb
 import torch
+from accelerate import Accelerator
 from torch.utils.data import DataLoader
+from transformers import get_cosine_schedule_with_warmup
 
-from main import train, validate_model  # noqa
-from model import ModelConfig, LoRAConfig
-from utils import JsonlConversations, DiscordConversations
+from main import validate_model  # noqa
+from model import ModelConfig, LoRAConfig, SmolLM
+from utils import (JsonlConversations, DiscordConversations,
+                   get_state_dict_from_safetensors, compile_model,
+                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors, count_parameters)  # noqa
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
+
+
+def train(_path: str,
+          training_data: DataLoader,
+          validation_data: DataLoader,
+          config: ModelConfig,
+          lora_config: LoRAConfig,
+          disable_scheduler: bool = False,
+          learning_rate: float = 2e-5,
+          ):
+    # Load model
+    model_sd = get_state_dict_from_safetensors(os.path.join(_path, 'model.safetensors'), device)
+    model = SmolLM(config).to(device=device, dtype=torch.bfloat16)
+    model.load_state_dict(model_sd)
+    del model_sd
+
+    # Inject LoRA
+    model = inject_lora_adapter(model, lora_config, )
+
+    count_parameters(model)
+    total_steps = len(training_data) * config.epochs
+
+    # Accelerator
+    accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
+    compile_model(model)
+    model = accelerator.prepare_model(model)
+
+    # Optimizer
+    betas = (0.9, 0.999)
+    optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=learning_rate, betas=betas)
+    optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
+
+    # Scheduler
+    scheduler = None
+    if not disable_scheduler:
+        s_steps = total_steps // config.grad_accumulation_steps
+        scheduler = get_cosine_schedule_with_warmup(optimizer,
+                                                    num_warmup_steps=int(s_steps * 0.02),
+                                                    num_training_steps=s_steps)
+        scheduler = accelerator.prepare_scheduler(scheduler)
+
+    # Training loop
+    torch.cuda.empty_cache()
+    for epoch in range(config.epochs):
+        model.train()
+        accu_loss = 0
+        start = time.time()
+        # Start of epoch
+        for i, (input_ids, labels, attention_mask) in enumerate(training_data):
+            input_ids, labels, attention_mask = input_ids.to(device), labels.to(device), attention_mask.to(device)
+            with accelerator.accumulate(model):
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss
+                accu_loss += loss.item()
+                accelerator.backward(loss)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+                optimizer.step()
+                if not disable_scheduler:
+                    scheduler.step()
+                optimizer.zero_grad()
+
+        # End of epoch
+        avg_loss = accu_loss / len(training_data)
+        avg_ppl = torch.exp(torch.tensor(avg_loss))
+        print(f"Epoch {epoch + 1} took {time.time() - start:.1f}s | "
+              f"Loss: {avg_loss:.3f} | Perplexity: {avg_ppl:.3f}")
+        validate_model(model, validation_data, full_validation=True)
+
+    # Save model
+    adapter_sd = get_lora_state_dict(model)
+    save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
+    print("Saved adapter state_dict.")
+
 
 if __name__ == '__main__':
     from tokenizers import Tokenizer
@@ -47,7 +127,7 @@ if __name__ == '__main__':
         max_len = max([len(x[0]) for x in batch])
         input_ids = torch.stack([torch.tensor(x[0] + [0] * (max_len - len(x[0]))) for x in batch])
         labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (max_len - len(x[1]))) for x in batch])
-        attention_mask = (input_ids != 0).long()
+        attention_mask = (input_ids != torch.tensor(0)).long()
         return input_ids[:, :MAX_LEN], labels[:, :MAX_LEN], attention_mask[:, :MAX_LEN]
         # return input_ids, labels, attention_mask
 
@@ -67,6 +147,5 @@ if __name__ == '__main__':
           lora_config=lora_params,
           disable_scheduler=True,
           learning_rate=2e-5,
-          save_every=5000,
           )
     # validate_model(None, dataloader, True)

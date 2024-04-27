@@ -3,8 +3,8 @@ from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, \
     RepetitionPenaltyLogitsProcessor, GenerationConfig, StoppingCriteriaList
 
-from model import ModelConfig, InternalCache
-from utils import load_model, StoppingCriteriaSub
+from model import ModelConfig, InternalCache, SmolLM
+from utils import get_state_dict_from_safetensors, compile_model, StoppingCriteriaSub
 
 weights = './weights/model.safetensors'
 tokenizer_path = 'weights/tokenizer.json'
@@ -17,7 +17,16 @@ if __name__ == '__main__':
     config.max_batch_size = 1
 
     tokenizer = Tokenizer.from_file(tokenizer_path)
-    model = load_model(config, None, path=weights, device=device)
+    # model
+    model_sd = get_state_dict_from_safetensors(os.path.join(path, 'model.safetensors'), device)
+    model = SmolLM(config).to(device=device, dtype=torch.bfloat16)
+    model.load_state_dict(model_sd)
+    del model_sd
+
+    # Prepare model
+    model.eval()
+    compile_model(model)
+    torch.cuda.empty_cache()
     model.bos_token_id = tokenizer.token_to_id("<s>")
 
     # Logits processor

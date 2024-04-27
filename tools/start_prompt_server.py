@@ -6,25 +6,38 @@ from aiohttp import web
 from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
 
-from model import ModelConfig, LoRAConfig, InternalCache
-from utils import load_model, compile_model, get_stopping_criteria, get_generation_config
+from model import ModelConfig, LoRAConfig, InternalCache, SmolLM
+from utils import inject_lora_adapter, get_state_dict_from_safetensors, compile_model, get_stopping_criteria, get_generation_config
 
 device = torch.device("cuda:0")
 dtype = torch.bfloat16
-weights = './ft-weights/model.safetensors'
+path = './ft-weights/'
 
-config = ModelConfig.from_json('ft-weights/config.json')
-tokenizer = Tokenizer.from_file('ft-weights/tokenizer.json')
+config = ModelConfig.from_json(os.path.join(path, 'config.json'))
+tokenizer = Tokenizer.from_file(os.path.join(path, 'tokenizer.json'))
 config.max_batch_size = 1
 
-if os.path.exists('./ft-weights/lora.json'):
-    lora_params = LoRAConfig.from_json('./ft-weights/lora.json')
-    print("Loaded LoRA config from file.")
+if os.path.exists(os.path.join(path, 'lora.json')):
+    lora_params = LoRAConfig.from_json(os.path.join(path, 'lora.json'))
 else:
-    lora_params = None
+    raise ValueError("LoRA config not found.")
 
-model = load_model(config, lora_params, weights, device, dtype=dtype)
+# Load model
+model_sd = get_state_dict_from_safetensors(os.path.join(path, 'model.safetensors'), device)
+model = SmolLM(config).to(device=device, dtype=torch.bfloat16)
+model.load_state_dict(model_sd)
+del model_sd
+
+# Inject LoRA
+adapter_sd = get_state_dict_from_safetensors(os.path.join(path, 'adapter.safetensors'), device)
+model = inject_lora_adapter(model, lora_params, adapter_sd)
+del adapter_sd
+
+# Prepare model
+model.eval()
 compile_model(model)
+torch.cuda.empty_cache()
+model.bos_token_id = tokenizer.token_to_id("<s>")
 
 generation_config = get_generation_config(1024)
 stopping_criteria = get_stopping_criteria(device=device)
