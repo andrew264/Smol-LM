@@ -1,14 +1,18 @@
 import time
 from typing import Optional
 
+import torch
+
 from model import SmolLM, LoRAConfig
-from model.lora import LoRALinear
+from model.lora import LoRALinear, LoRAEmbedding
 
 
 def inject_lora_adapter(model: SmolLM, lora_config: LoRAConfig, adapter_state_dict: Optional[dict] = None) -> SmolLM:
     start = time.time()
     for param in model.parameters():
         param.requires_grad = False
+    if 'embedding' in lora_config.layers and hasattr(model, 'tok_embeddings'):
+        model.tok_embeddings = LoRAEmbedding(model.tok_embeddings, lora_config)
     if 'lm_head' in lora_config.layers and hasattr(model, 'lm_head'):
         model.lm_head = LoRALinear(model.lm_head, lora_config)
     for layer in model.layers:
@@ -32,10 +36,12 @@ def inject_lora_adapter(model: SmolLM, lora_config: LoRAConfig, adapter_state_di
         if 'l_out' in lora_config.layers and hasattr(block, 'linear_out'):
             block.linear_out = LoRALinear(block.linear_out, lora_config)
 
+    torch.cuda.synchronize()
     print(f"LoRA injection took {time.time() - start:.3f}s")
     if adapter_state_dict is not None:
         start = time.time()
         model.load_state_dict(adapter_state_dict, strict=False)
+        torch.cuda.synchronize()
         print(f"Adapter state dict loading took {time.time() - start:.3f}s")
     return model
 

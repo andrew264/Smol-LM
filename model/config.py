@@ -105,7 +105,7 @@ class LoRAConfig:
     rank = 8
     alpha = 16
     dropout = 0.05
-    layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp', l_x, l_y, l_out, lm_head
+    layers = ['qkv_proj']  # 'qkv_proj', 'o_proj', 'mlp', l_x, l_y, l_out, lm_head, embedding
 
     @classmethod
     def from_json(cls, path: str) -> "LoRAConfig":
