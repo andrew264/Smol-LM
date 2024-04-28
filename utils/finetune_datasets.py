@@ -33,7 +33,7 @@ class DS(Dataset):
             case _:
                 raise ValueError(f"Invalid role: {role}")
 
-        c = f"{prefix}{content.strip()}{self.EOT}"
+        c = f"{prefix}{content.strip()}\n{self.EOT}"
         enc = self._tokenizer.encode(c, add_special_tokens=False)
         if role in (Role.SYSTEM, Role.USER):
             labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids)
@@ -56,27 +56,6 @@ class HFnoRobotsDataset(DS):
         for ex in row['messages']:
             role = Role.USER if ex['role'] == 'user' else Role.ASSISTANT
             id_, label = self._get_id_label(role, ex['content'])
-            ids.extend(id_)
-            labels.extend(label)
-        return ids, labels
-
-
-class JsonlConversations(DS):
-    def __init__(self, path: str,
-                 tokenizer: Tokenizer,
-                 sys_prompt: str, ):
-        super().__init__(tokenizer, sys_prompt)
-        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
-        self._data = [json.loads(line) for line in open(path, 'r')]
-
-    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
-        row = self._data[idx]
-        ids, labels = [], []
-        ids.extend(self._enc_sys_prompt[0])
-        labels.extend(self._enc_sys_prompt[1])
-        for i in range(0, len(row)):
-            role = Role.USER if i % 2 == 0 else Role.ASSISTANT
-            id_, label = self._get_id_label(role, row[i])
             ids.extend(id_)
             labels.extend(label)
         return ids, labels
@@ -137,7 +116,7 @@ class DiscordConversations(Dataset):
         self._sys_p = sys_prompt
         self.assistant_name = "sydney"
         self._files = glob.glob(f"{path}/**/*.json")
-        enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}{sys_prompt.strip()}{self.EOT}",
+        enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}{sys_prompt.strip()}\n{self.EOT}",
                                           add_special_tokens=False)
         self._enc_sys_prompt = (enc_sys_prompt.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc_sys_prompt.ids))
         response_head = tokenizer.encode(f"\n<|{self.assistant_name}|>\n", add_special_tokens=False)
@@ -148,12 +127,12 @@ class DiscordConversations(Dataset):
 
     def _get_id_label(self, role: str, content: str) -> Tuple[List[int], List[int]]:
         if role == self.assistant_name:
-            resp_enc = self._tokenizer.encode(f"{content.strip()}{self.EOT}", add_special_tokens=False)
+            resp_enc = self._tokenizer.encode(f"{content.strip()}\n{self.EOT}", add_special_tokens=False)
             ids = self._response_head[0] + resp_enc.ids
             labels = self._response_head[1] + resp_enc.ids
             return ids, labels
         else:
-            prompt = f"\n<|{role.strip()}|>\n{content.strip()}{self.EOT}"
+            prompt = f"\n<|{role.strip()}|>\n{content.strip()}\n{self.EOT}"
             enc = self._tokenizer.encode(prompt, add_special_tokens=False)
             labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids)
             return enc.ids, labels

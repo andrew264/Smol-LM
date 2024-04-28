@@ -11,7 +11,7 @@ from transformers import get_cosine_schedule_with_warmup
 
 from main import validate_model  # noqa
 from model import ModelConfig, LoRAConfig, SmolLM
-from utils import (JsonlConversations, DiscordConversations,
+from utils import (DiscordConversations,
                    get_state_dict_from_safetensors, compile_model,
                    inject_lora_adapter, get_lora_state_dict, save_as_safetensors, count_parameters)  # noqa
 
@@ -38,6 +38,7 @@ def train(_path: str,
 
     count_parameters(model)
     total_steps = len(training_data) * config.epochs
+    print(f"Total steps: {total_steps} | Steps per epoch: {len(training_data)}")
 
     # Accelerator
     accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
@@ -54,12 +55,13 @@ def train(_path: str,
     if not disable_scheduler:
         s_steps = total_steps // config.grad_accumulation_steps
         scheduler = get_cosine_schedule_with_warmup(optimizer,
-                                                    num_warmup_steps=int(s_steps * 0.02),
+                                                    num_warmup_steps=10,
                                                     num_training_steps=s_steps)
         scheduler = accelerator.prepare_scheduler(scheduler)
 
     # Training loop
     torch.cuda.empty_cache()
+    print("Starting training...")
     for epoch in range(config.epochs):
         model.train()
         accu_loss = 0
@@ -83,7 +85,7 @@ def train(_path: str,
         avg_loss = accu_loss / len(training_data)
         avg_ppl = torch.exp(torch.tensor(avg_loss))
         print(f"Epoch {epoch + 1} took {time.time() - start:.1f}s | "
-              f"Loss: {avg_loss:.3f} | Perplexity: {avg_ppl:.3f}")
+              f"Loss: {avg_loss:.3f} | Perplexity: {avg_ppl:.3f} | LR: {optimizer.param_groups[0]['lr']:.1e}")
         validate_model(model, validation_data, full_validation=True)
 
     # Save model
@@ -132,13 +134,9 @@ if __name__ == '__main__':
         # return input_ids, labels, attention_mask
 
 
-    print("Loading datasets...")
-    ds2 = JsonlConversations(path="data/finetune/convos.jsonl", tokenizer=tokenizer, sys_prompt=sys_prompt)
-    ds3 = DiscordConversations(path="data/finetune/conversations", tokenizer=tokenizer, sys_prompt=sys_prompt)
-    dataset = torch.utils.data.ConcatDataset([ds2, ds3])
+    dataset = DiscordConversations(path="data/finetune/conversations", tokenizer=tokenizer, sys_prompt=sys_prompt)
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
                             shuffle=True, collate_fn=collate_pad_batch_fn)
-    print("Loaded datasets.")
 
     train(path,
           training_data=dataloader,
