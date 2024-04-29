@@ -45,7 +45,7 @@ if __name__ == '__main__':
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
     processor.append(RepetitionPenaltyLogitsProcessor(1.15))
-    processor.append(TemperatureLogitsWarper(1.0))
+    processor.append(TemperatureLogitsWarper(0.5))
     processor.append(TopPLogitsWarper(top_p=0.95))
 
     generation_config: GenerationConfig = GenerationConfig(
@@ -114,6 +114,6 @@ if __name__ == '__main__':
 
         # output
         out_tokens = out[0].tolist()[len(encoded.ids):]
-        decoded = tokenizer.decode(out_tokens)
+        decoded = tokenizer.decode(out_tokens, skip_special_tokens=False)
         prompt.add_assistant_message(decoded)
         print(f"Assistant: {decoded}")

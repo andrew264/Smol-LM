@@ -13,7 +13,8 @@ from main import validate_model  # noqa
 from model import ModelConfig, LoRAConfig, SmolLM
 from utils import (DiscordConversations,
                    get_state_dict_from_safetensors, compile_model,
-                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors, count_parameters)  # noqa
+                   inject_lora_adapter, get_lora_state_dict, get_lora_plus_optimizer_group,
+                   save_as_safetensors, count_parameters)  # noqa
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
@@ -47,7 +48,7 @@ def train(_path: str,
 
     # Optimizer
     betas = (0.9, 0.999)
-    optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=learning_rate, betas=betas)
+    optimizer = bnb.optim.AdamW8bit(get_lora_plus_optimizer_group(model, lr=learning_rate), betas=betas)
     optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
 
     # Scheduler
@@ -84,14 +85,14 @@ def train(_path: str,
         # End of epoch
         avg_loss = accu_loss / len(training_data)
         avg_ppl = torch.exp(torch.tensor(avg_loss))
+        lrs = [f"{param_group['lr']:.1e}" for param_group in optimizer.param_groups]
         print(f"Epoch {epoch + 1} took {time.time() - start:.1f}s | "
-              f"Loss: {avg_loss:.3f} | Perplexity: {avg_ppl:.3f} | LR: {optimizer.param_groups[0]['lr']:.1e}")
+              f"Loss: {avg_loss:.3f} | Perplexity: {avg_ppl:.3f} | LR: {lrs}")
         validate_model(model, validation_data, full_validation=True)
 
-    # Save model
-    adapter_sd = get_lora_state_dict(model)
-    save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
-    print("Saved adapter state_dict.")
+        # Save model
+        adapter_sd = get_lora_state_dict(model)
+        save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
 
 
 if __name__ == '__main__':
@@ -143,7 +144,7 @@ if __name__ == '__main__':
           validation_data=dataloader,
           config=params,
           lora_config=lora_params,
-          disable_scheduler=True,
+          disable_scheduler=False,
           learning_rate=2e-5,
           )
     # validate_model(None, dataloader, True)
