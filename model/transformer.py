@@ -15,6 +15,14 @@ from .config import ModelConfig
 from .norm import get_rms_norm_class
 from .utils import load_balancing_loss_func, LINEAR
 
+try:
+    from functools import partial
+    from flash_attn.losses.cross_entropy import CrossEntropyLoss
+    CrossEntropyLoss = partial(CrossEntropyLoss, inplace_backward=True)
+    print("Using CrossEntropyLoss from flash_attn.")
+except ImportError:
+    from torch.nn import CrossEntropyLoss
+
 
 class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     main_input_name = "inputs_embeds"
@@ -40,7 +48,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if not self.tie_word_embeddings:
             self.lm_head: LINEAR = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
 
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        self.loss_fn = CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
         self._register_load_state_dict_pre_hook(self.hf_load_hook)
         if self.config.normalize_embedding:
@@ -199,10 +207,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         loss = None
         aux_loss = None
         if labels is not None:
-            _logits = logits[..., :-1, :].contiguous()
-            labels = labels[..., 1:].contiguous()
-            _logits = _logits.transpose(1, 2)
-            loss = self.loss_fn(_logits, labels, )
+            loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
             if self.is_moe:
                 aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts,
                                                     top_k=2, attention_mask=attention_mask, )
@@ -263,8 +268,11 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if attention_mask is not None:
             causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
             mask_length = attention_mask.shape[-1]
-            padding_mask = causal_mask[..., :mask_length].eq(0.0) * attention_mask[:, None, None, :].eq(0.0)
-            causal_mask[..., :mask_length] = causal_mask[..., :mask_length].masked_fill(padding_mask, min_dtype)
+            padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
+            padding_mask = padding_mask == 0
+            causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
+                padding_mask, min_dtype
+            )
 
         if attention_mask is not None and attention_mask.device.type == "cuda":
             # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when

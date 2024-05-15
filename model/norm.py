@@ -5,6 +5,7 @@ from torch import nn
 
 try:
     from apex.normalization import FusedRMSNorm
+    print("Found FusedRMSNorm")
 except ImportError:
     FusedRMSNorm = None
 

@@ -94,7 +94,7 @@ class AttentionBlock(nn.Module):
                 cache_position: Optional[Tensor] = None,
                 ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
-        is_causal = attention_mask is None and seqlen > 1
+        is_causal = True if attention_mask is None and seqlen > 1 else False
         qkv_states = self.qkv_proj(hidden_states)
         query_states, key_states, value_states = qkv_states.split(
             [
