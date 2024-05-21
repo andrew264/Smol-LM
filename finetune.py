@@ -20,6 +20,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
 
 
+def move_to_device(batch):
+    return {k: v.to(device) for k, v in batch.items()}
+
+
 def train(_path: str,
           training_data: DataLoader,
           validation_data: DataLoader,
@@ -68,11 +72,9 @@ def train(_path: str,
         accu_loss = 0
         start = time.time()
         # Start of epoch
-        for i, (input_ids, labels, attention_mask) in enumerate(training_data):
-            input_ids, labels, attention_mask = input_ids.to(device), labels.to(device), attention_mask.to(device)
+        for i, (item) in enumerate(training_data):
             with accelerator.accumulate(model):
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                loss = outputs.loss
+                loss = model(**move_to_device(item)).loss
                 accu_loss += loss.item()
                 accelerator.backward(loss)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -124,15 +126,16 @@ if __name__ == '__main__':
     sys_prompt = sys_prompt.format(datetime=dt)
 
 
-    def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) -> \
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) -> dict:
         MAX_LEN = params.max_position_embeddings
         max_len = max([len(x[0]) for x in batch])
         input_ids = torch.stack([torch.tensor(x[0] + [0] * (max_len - len(x[0]))) for x in batch])
         labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (max_len - len(x[1]))) for x in batch])
         attention_mask = (input_ids != torch.tensor(0)).long()
-        return input_ids[:, :MAX_LEN], labels[:, :MAX_LEN], attention_mask[:, :MAX_LEN]
-        # return input_ids, labels, attention_mask
+        # return input_ids[:, :MAX_LEN], labels[:, :MAX_LEN], attention_mask[:, :MAX_LEN]
+        return {"input_ids": input_ids[:, :MAX_LEN],
+                "labels": labels[:, :MAX_LEN],
+                "attention_mask": attention_mask[:, :MAX_LEN]}
 
 
     dataset = DiscordConversations(path="data/finetune/conversations", tokenizer=tokenizer, sys_prompt=sys_prompt)

@@ -25,12 +25,15 @@ class AudioHead(torch.nn.Module):
         self.act = nn.GELU()
 
     def _fix_low_precision_training(self):
+        """
+        no fp16 in spectrogram for now cuz complex32 is not fully supported
+        """
         self.mel_spectrogram = self.mel_spectrogram.to(dtype=torch.float32)
 
     def forward(self, x):
         with torch.autocast(enabled=False, device_type=x.device.type):
             features = self.mel_spectrogram(x)
-        if features.dtype == torch.float32:
+        if features.dtype in (torch.float16, torch.float32):
             features = features.to(torch.bfloat16)
         features = self.act(self.conv1(features))
         features = self.act(self.conv2(features))

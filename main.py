@@ -19,6 +19,10 @@ from utils import (count_parameters, compile_model, get_state_dict_from_safetens
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
+def move_to_device(batch):
+    return {k: v.to(device) for k, v in batch.items()}
+
+
 class NPDataset(Dataset):
     def __init__(self, _path, block_size=1024, validation_split=False):
         validation_size = 5000 * block_size
@@ -33,8 +37,9 @@ class NPDataset(Dataset):
     def __len__(self):
         return self.num_samples
 
-    def __getitem__(self, index) -> [np.ndarray]:
-        return [np.int64(self.data[index])]
+    def __getitem__(self, index) -> dict:
+        item = np.int64(self.data[index])
+        return {"input_ids": item, "labels": item}
 
 
 class TextCorpus(Dataset):
@@ -62,19 +67,8 @@ def validate_model(model: nn.Module, validation_data: DataLoader, full_validatio
     accumulated_loss = 0
 
     for (i, item) in tqdm.tqdm(enumerate(validation_data), total=total, desc="Validating"):
-
-        if len(item) == 1:
-            ids = item[0].to(device)
-            labels = ids
-            mask = None
-        else:
-            ids = item[0].to(device)
-            labels = item[1].to(device)
-            mask = item[2].to(device)
-
         with torch.no_grad():
-            out = model(input_ids=ids, labels=labels, attention_mask=mask)
-            logits, loss = out.logits, out.loss
+            loss = model(**move_to_device(item)).loss
             accumulated_loss += loss.item()
 
         if not full_validation and i > 99:
@@ -158,13 +152,9 @@ def train(model_path: str, training_data: DataLoader, config: ModelConfig, valid
         if i == start_step + 1:
             start_time = time.time()
 
-        ids = item[0].to(device)
-        labels = ids
-        mask = None
-
         # train step
         with accelerator.accumulate(model):
-            loss = model(input_ids=ids, labels=labels, attention_mask=mask).loss  # forward pass
+            loss = model(**move_to_device(item)).loss  # forward pass
             accumulated_loss += loss.item()
             accelerator.backward(loss)  # backward pass
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
