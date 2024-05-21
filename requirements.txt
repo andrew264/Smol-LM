@@ -1,4 +1,5 @@
 torch
+torchaudio
 numpy
 accelerate
 tokenizers

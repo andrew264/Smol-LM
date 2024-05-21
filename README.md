@@ -2,6 +2,10 @@
 
 ## A small language model for text generation in PyTorch
 
+## Multimodality
+
+    - Initial multimodal support (text, audio, etc.) for text generation (WIP) [will add image support soon]
+
 ### Changes made
 
     - Added Gradient Checkpointing

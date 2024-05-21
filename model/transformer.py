@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List
 
 import torch
 import torch.nn as nn
@@ -10,14 +10,16 @@ from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast, MoeCausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
+from .audio_head import AudioHead
 from .block import Block
-from .config import ModelConfig
+from .config import ModelConfig, AudioConfig
 from .norm import get_rms_norm_class
 from .utils import load_balancing_loss_func, LINEAR
 
 try:
     from functools import partial
     from flash_attn.losses.cross_entropy import CrossEntropyLoss
+
     CrossEntropyLoss = partial(CrossEntropyLoss, inplace_backward=True)
     print("Using CrossEntropyLoss from flash_attn.")
 except ImportError:
@@ -28,7 +30,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     main_input_name = "inputs_embeds"
     _supports_cache_class = True
 
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, audio_cfg: Optional[AudioConfig] = None) -> None:
         super().__init__()
         self.config = config
 
@@ -44,6 +46,9 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
         self.layers = nn.ModuleList(Block(config, idx) for idx in range(self.num_hidden_layers))
         self.norm = get_rms_norm_class(config.use_gemma_rms_norm)(self.hidden_size, eps=config.rms_norm_eps)
+
+        if audio_cfg:
+            self.audio_head = AudioHead(audio_cfg, self.hidden_size)
 
         if not self.tie_word_embeddings:
             self.lm_head: LINEAR = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
@@ -147,9 +152,20 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         return optim_groups
 
+    def process_modalities(self, input_embeds: Tensor, labels: Tensor, audio: Tensor):
+        device = input_embeds.device
+        max_length = self.config.max_position_embeddings
+        audio_features = self.audio_head(audio)
+        feature_length = audio_features.shape[1]
+        if labels is not None:
+            label_pad = torch.full((audio.shape[0], feature_length), -100, dtype=torch.long, device=device)
+            labels = torch.cat((label_pad, labels), dim=1)
+        return torch.cat((input_embeds, audio_features), dim=1)[:, :max_length], labels[:, :max_length]
+
     def forward(
             self,
             input_ids: torch.LongTensor = None,
+            audio: Optional[Tensor] = None,
             attention_mask: Optional[torch.Tensor] = None,
             past_key_values: Optional[Cache] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -164,6 +180,9 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             x = self.tok_embeddings(input_ids)
         else:
             x = inputs_embeds
+
+        if audio is not None:
+            x, labels = self.process_modalities(x, labels, audio)
 
         if cache_position is None:
             cache_position = torch.arange(x.shape[1], device=x.device)

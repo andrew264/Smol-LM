@@ -128,3 +128,34 @@ class LoRAConfig:
     def __repr__(self) -> str:
         return (f"LoRAConfig(rank={self.rank}, alpha={self.alpha}, "
                 f"dropout={self.dropout}, layers={self.layers})")
+
+
+class AudioConfig:
+    sample_rate: int = 16000
+    n_fft: int = 1024
+    win_length: Optional[int] = None
+    hop_length: int = 256
+    n_mels: int = 80
+
+    @classmethod
+    def from_json(cls, path: str) -> "AudioConfig":
+        """
+        Loads a configuration from a json file.
+        :param path: (str) The path to the json file.
+        :return: (AudioConfig) The configuration class.
+        """
+        with open(path, "r") as f:
+            config_dict = json.load(f)
+        conf = cls()
+        for k, v in config_dict.items():
+            setattr(conf, k, v)
+        return conf
+
+    def to_json(self, path: str) -> None:
+        with open(path, "w") as f:
+            json.dump(self.__dict__, f, indent=4)
+
+    def __repr__(self) -> str:
+        return (f"AudioConfig(sample_rate={self.sample_rate}, n_fft={self.n_fft}, "
+                f"win_length={self.win_length}, hop_length={self.hop_length}, "
+                f"n_mels={self.n_mels})")

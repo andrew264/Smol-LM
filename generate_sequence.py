@@ -1,3 +1,5 @@
+import os
+
 import torch
 from tokenizers import Tokenizer
 from transformers import LogitsProcessorList, TopKLogitsWarper, \
@@ -6,8 +8,7 @@ from transformers import LogitsProcessorList, TopKLogitsWarper, \
 from model import ModelConfig, InternalCache, SmolLM
 from utils import get_state_dict_from_safetensors, compile_model, StoppingCriteriaSub
 
-weights = './weights/model.safetensors'
-tokenizer_path = 'weights/tokenizer.json'
+path = './weights'
 config = './weights/config.json'
 device = torch.device("cuda:0")
 
@@ -16,7 +17,7 @@ if __name__ == '__main__':
     config = ModelConfig.from_json(config)
     config.max_batch_size = 1
 
-    tokenizer = Tokenizer.from_file(tokenizer_path)
+    tokenizer = Tokenizer.from_file('weights/tokenizer.json')
     # model
     model_sd = get_state_dict_from_safetensors(os.path.join(path, 'model.safetensors'), device)
     model = SmolLM(config).to(device=device, dtype=torch.bfloat16)
