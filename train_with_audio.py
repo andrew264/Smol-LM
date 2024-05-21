@@ -117,7 +117,9 @@ for item in dataloaders:
         start_time = time.time()
         accumulated_loss = 0
 
-    if i % 5000 == 0:
+    if i % 5000 == 0 and i > 0:
         save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
 
     i += 1
+
+save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))

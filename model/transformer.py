@@ -152,7 +152,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         return optim_groups
 
-    def process_modalities(self, input_embeds: Tensor, labels: Tensor, audio: Tensor):
+    def process_modalities(self, input_embeds: Tensor, labels: Optional[Tensor], audio: Tensor):
         device = input_embeds.device
         max_length = self.config.max_position_embeddings
         audio_features = self.audio_head(audio)
@@ -160,7 +160,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if labels is not None:
             label_pad = torch.full((audio.shape[0], feature_length), -100, dtype=torch.long, device=device)
             labels = torch.cat((label_pad, labels), dim=1)
-        return torch.cat((input_embeds, audio_features), dim=1)[:, :max_length], labels[:, :max_length]
+        return torch.cat((input_embeds, audio_features), dim=1)[:, :max_length], labels[:, :max_length] if labels is not None else None
 
     def forward(
             self,
@@ -240,7 +240,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
                                           past_key_values=past_key_values, )
 
     def prepare_inputs_for_generation(
-            self, input_ids: Tensor, past_key_values: Optional[Cache] = None,
+            self, input_ids: Tensor, audio: Optional[Tensor] = None, past_key_values: Optional[Cache] = None,
             attention_mask: Optional[Tensor] = None, cache_position=None,
             **kwargs
     ):
@@ -263,9 +263,12 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         else:
             cache_position = cache_position[-input_length:]
 
-        model_inputs.update(
-            {"cache_position": cache_position, "past_key_values": past_key_values, "attention_mask": attention_mask, }
-        )
+        model_inputs.update({
+            "cache_position": cache_position,
+            "past_key_values": past_key_values,
+            "attention_mask": attention_mask,
+            "audio": audio
+        })
         return model_inputs
 
     # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
