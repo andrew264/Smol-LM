@@ -29,7 +29,7 @@ class LibreSpeechDataset(IterableDataset):
     def __iter__(self):
         for item in self._data:
             audio = item['audio']['array']
-            sentence = self.tokenizer.encode(item['text'].lower() + "</s>")
+            sentence = self.tokenizer.encode("<s>" + item['text'].lower() + "</s>")
             yield {"input_ids": sentence.ids, "audio": audio.tolist()}
 
 
