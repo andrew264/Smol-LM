@@ -160,7 +160,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if labels is not None:
             label_pad = torch.full((audio.shape[0], feature_length), -100, dtype=torch.long, device=device)
             labels = torch.cat((label_pad, labels), dim=1)
-        return torch.cat((input_embeds, audio_features), dim=1)[:, :max_length], labels[:, :max_length] if labels is not None else None
+        return (torch.cat((input_embeds, audio_features), dim=1)[:, :max_length],
+                labels[:, :max_length] if labels is not None else None)
 
     def forward(
             self,
@@ -176,6 +177,23 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     ) -> Union[CausalLMOutputWithPast, MoeCausalLMOutputWithPast]:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+        past_length = 0
+        if past_key_values is not None:
+            past_length = past_key_values.get_seq_length()
+            cache_position = None
+            position_ids = None
+            audio = None
+
+            if input_ids.shape[1] > past_length:
+                input_ids = input_ids[:, past_length:]
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, past_length:]
+            else:
+                input_ids = input_ids[:, -1:]
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, -1:]
+
         if input_ids is not None:
             x = self.tok_embeddings(input_ids)
         else:
@@ -184,9 +202,14 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if audio is not None:
             x, labels = self.process_modalities(x, labels, audio)
 
-        if cache_position is None:
-            cache_position = torch.arange(x.shape[1], device=x.device)
-        position_ids = cache_position.unsqueeze(0) if position_ids is None else position_ids
+        if past_length == 0:
+            if cache_position is None:
+                cache_position = torch.arange(x.shape[1], device=x.device)
+            if position_ids is None:
+                position_ids = cache_position.unsqueeze(0)
+        else:
+            cache_position = torch.arange(past_length, past_length + x.shape[1], device=x.device)
+            position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(attention_mask, x, cache_position)
 
@@ -204,8 +227,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
                 layer_outputs = layer(x,
                                       attention_mask=causal_mask,
                                       position_ids=position_ids,
-                                      cache_position=cache_position,
-                                      )
+                                      cache_position=cache_position, )
+
             x = layer_outputs[0]
             if self.is_moe:
                 router_logits = layer_outputs[1]
@@ -244,31 +267,14 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             attention_mask: Optional[Tensor] = None, cache_position=None,
             **kwargs
     ):
-        if past_key_values is not None:
-            past_length = past_key_values.get_seq_length()
-            if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
-                input_ids = input_ids[:, -(attention_mask.shape[1] - past_length):]
-            elif past_length < input_ids.shape[1]:
-                input_ids = input_ids[:, past_length:]
-                attention_mask = attention_mask[:, past_length:]
-        else:
-            past_length = 0
-
-        model_inputs = {"input_ids": input_ids.contiguous()}
-        input_length = input_ids.shape[-1]
-        if cache_position is None and past_key_values is not None:
-            cache_position = torch.arange(past_length, past_length + input_length, device=input_ids.device)
-        elif past_key_values is None:
-            cache_position = None
-        else:
-            cache_position = cache_position[-input_length:]
-
-        model_inputs.update({
+        model_inputs = {
+            "input_ids": input_ids.contiguous(),
             "cache_position": cache_position,
             "past_key_values": past_key_values,
             "attention_mask": attention_mask,
             "audio": audio
-        })
+        }
+
         return model_inputs
 
     # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py

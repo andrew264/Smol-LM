@@ -125,7 +125,6 @@ class AttentionBlock(nn.Module):
                                  attention_mask=attention_mask,
                                  dropout=self.attention_dropout,
                                  is_causal=is_causal)
-
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
         attn_output = self.o_proj(attn_output)
         return attn_output

@@ -132,9 +132,9 @@ class LoRAConfig:
 
 class AudioConfig:
     sample_rate: int = 16000
-    n_fft: int = 1024
+    n_fft: int = 400
     win_length: Optional[int] = None
-    hop_length: int = 256
+    hop_length: int = 160
     n_mels: int = 80
 
     @classmethod
