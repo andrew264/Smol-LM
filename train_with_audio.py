@@ -1,3 +1,4 @@
+import itertools
 import os
 import time
 from typing import List
@@ -30,6 +31,22 @@ class LibreSpeechDataset(IterableDataset):
         for item in self._data:
             audio = item['audio']['array']
             sentence = self.tokenizer.encode("<s>" + item['text'].lower() + "</s>")
+            yield {"input_ids": sentence.ids, "audio": audio.tolist()}
+
+
+class PeopleSpeechDataset(IterableDataset):
+    def __init__(self, tokenizer: Tokenizer, subset: str = "clean", streaming: bool = False):
+        super().__init__()
+        self.tokenizer = tokenizer
+        self._data = load_dataset("MLCommons/peoples_speech", name=subset, streaming=streaming,
+                                  trust_remote_code=True)
+
+    def __iter__(self):
+        for item in itertools.chain(self._data['train'],
+                                    self._data['test'],
+                                    self._data['validation']):
+            audio = item['audio']['array']
+            sentence = self.tokenizer.encode("<s>" + item['text'] + "</s>")
             yield {"input_ids": sentence.ids, "audio": audio.tolist()}
 
 
@@ -71,7 +88,7 @@ count_parameters(model)
 accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
 compile_model(model)
 model = accelerator.prepare_model(model)
-optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=2e-4, betas=(0.9, 0.95), weight_decay=0.1)
+optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=1e-4, betas=(0.9, 0.95), weight_decay=0.1)
 optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
 
 if os.path.exists(os.path.join(model_path, 'model.safetensors')):
@@ -83,10 +100,12 @@ if os.path.exists(os.path.join(model_path, 'model.safetensors')):
 torch.cuda.empty_cache()
 text_ds = NPDataset('./data/processed/train.bin', config.max_position_embeddings)
 text_dl = DataLoader(text_ds, batch_size=config.max_batch_size, )
-audio_dl = DataLoader(LibreSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
-                      collate_fn=collate_pad_audio_batch_fn)
+audio1_dl = DataLoader(LibreSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
+                       collate_fn=collate_pad_audio_batch_fn)
+audio2_dl = DataLoader(PeopleSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
+                       collate_fn=collate_pad_audio_batch_fn)
 
-dataloaders = CyclingDataLoader(text_dl, audio_dl)
+dataloaders = CyclingDataLoader(audio1_dl, audio2_dl, text_dl)
 
 accumulated_loss = 0
 start_time, time_delta = time.time(), 0.

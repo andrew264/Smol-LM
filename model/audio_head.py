@@ -24,8 +24,6 @@ class AudioHead(torch.nn.Module):
         NORM_CLASS = get_rms_norm_class()
         self.conv1 = nn.Conv1d(config.n_mels, hidden_size, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(hidden_size, hidden_size, kernel_size=3, stride=2, padding=1)
-        self.conv3 = nn.Conv1d(hidden_size, hidden_size, kernel_size=3, stride=2, padding=1)
-        self.conv4 = nn.Conv1d(hidden_size, hidden_size, kernel_size=3, stride=2, padding=1)
         self.act = nn.GELU()
 
         self.ln1 = NORM_CLASS(hidden_size)
@@ -43,8 +41,6 @@ class AudioHead(torch.nn.Module):
             features = features.to(torch.bfloat16)
         features = self.act(self.conv1(features))
         features = self.act(self.conv2(features))
-        features = self.act(self.conv3(features))
-        features = self.act(self.conv4(features))
         features = features.permute(0, 2, 1)
 
         return self.ln1(features)  # batch, seq_len, hidden_size
