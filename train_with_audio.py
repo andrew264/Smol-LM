@@ -9,6 +9,7 @@ from accelerate import Accelerator
 from datasets import load_dataset
 from tokenizers import Tokenizer
 from torch.utils.data import IterableDataset, DataLoader
+import torchaudio.functional as F
 
 from main import NPDataset
 from model import ModelConfig, SmolLM, AudioConfig
@@ -34,19 +35,22 @@ class LibreSpeechDataset(IterableDataset):
             yield {"input_ids": sentence.ids, "audio": audio.tolist()}
 
 
-class PeopleSpeechDataset(IterableDataset):
-    def __init__(self, tokenizer: Tokenizer, subset: str = "clean", streaming: bool = False):
+class MFCV13(IterableDataset):
+    def __init__(self, tokenizer: Tokenizer, subset: str = "en", streaming: bool = False):
         super().__init__()
         self.tokenizer = tokenizer
-        self._data = load_dataset("MLCommons/peoples_speech", name=subset, streaming=streaming,
-                                  trust_remote_code=True)
+        self._data = load_dataset("/home/andrew264/datasets/common_voice_13_0", name=subset, streaming=streaming,
+                                  trust_remote_code=True, num_proc=3, token=True)
 
     def __iter__(self):
         for item in itertools.chain(self._data['train'],
                                     self._data['test'],
-                                    self._data['validation']):
+                                    self._data['validation'],
+                                    self._data['other']):
             audio = item['audio']['array']
-            sentence = self.tokenizer.encode("<s>" + item['text'] + "</s>")
+            sr = item['audio']['sampling_rate']
+            audio = F.resample(torch.tensor(audio, device=device), sr, 16000, lowpass_filter_width=6)
+            sentence = self.tokenizer.encode("<s>" + item['sentence'] + "</s>")
             yield {"input_ids": sentence.ids, "audio": audio.tolist()}
 
 
@@ -102,7 +106,7 @@ text_ds = NPDataset('./data/processed/train.bin', config.max_position_embeddings
 text_dl = DataLoader(text_ds, batch_size=config.max_batch_size, )
 audio1_dl = DataLoader(LibreSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
                        collate_fn=collate_pad_audio_batch_fn)
-audio2_dl = DataLoader(PeopleSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
+audio2_dl = DataLoader(MFCV13(tokenizer=tokenizer), batch_size=config.max_batch_size,
                        collate_fn=collate_pad_audio_batch_fn)
 
 dataloaders = CyclingDataLoader(audio1_dl, audio2_dl, text_dl)
