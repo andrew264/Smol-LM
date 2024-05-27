@@ -30,7 +30,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     main_input_name = "inputs_embeds"
     _supports_cache_class = True
 
-    def __init__(self, config: ModelConfig, audio_cfg: Optional[AudioConfig] = None) -> None:
+    def __init__(self, config: ModelConfig, enable_audio: bool = False) -> None:
         super().__init__()
         self.config = config
 
@@ -47,8 +47,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.layers = nn.ModuleList(Block(config, idx) for idx in range(self.num_hidden_layers))
         self.norm = get_rms_norm_class(config.use_gemma_rms_norm)(self.hidden_size, eps=config.rms_norm_eps)
 
-        if audio_cfg:
-            self.audio_head = AudioHead(audio_cfg, self.hidden_size)
+        if enable_audio:
+            self.audio_head = AudioHead(config)
 
         if not self.tie_word_embeddings:
             self.lm_head: LINEAR = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
@@ -155,13 +155,31 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     def process_modalities(self, input_embeds: Tensor, labels: Optional[Tensor], audio: Tensor):
         device = input_embeds.device
         max_length = self.config.max_position_embeddings
-        audio_features = self.audio_head(audio)
-        feature_length = audio_features.shape[1]
+
+        # Compute audio features
+        audio_features = checkpoint(self.audio_head, audio, use_reentrant=False)
+        # feature_length = audio_features.shape[1]
+
         if labels is not None:
-            label_pad = torch.full((audio.shape[0], feature_length), -100, dtype=torch.long, device=device)
+            label_pad = torch.full(
+                (audio_features.shape[0], audio_features.shape[1]),
+                -100,
+                dtype=torch.long,
+                device=device
+            )
             labels = torch.cat((label_pad, labels), dim=1)
-        return (torch.cat((input_embeds, audio_features), dim=1)[:, :max_length],
-                labels[:, :max_length] if labels is not None else None)
+
+        combined_features = torch.cat((audio_features, input_embeds), dim=1)
+
+        if combined_features.shape[1] > max_length:
+            combined_features = combined_features[:, -max_length:]
+
+        if labels is not None:
+            truncated_labels = labels[:, -max_length:] if labels.shape[1] > max_length else labels
+        else:
+            truncated_labels = None
+
+        return combined_features, truncated_labels
 
     def forward(
             self,

@@ -40,7 +40,7 @@ def save_state_dict(state_dict: dict, path: str):
     print(f"Saved state_dict to {path} in {time.time() - start:.3f}s.")
 
 
-def get_state_dict(path: str, device: torch.device) -> dict:
+def get_state_dict(path: str, device: torch.device) -> Optional[dict]:
     """
     Load the saved `state_dict` from the given path.
     """
@@ -50,7 +50,7 @@ def get_state_dict(path: str, device: torch.device) -> dict:
         print(f"Loaded state_dict from {path} in {time.time() - start:.3f}s.")
         return state_dict
     else:
-        return {}
+        return None
 
 
 def compile_model(model: torch.nn.Module, ) -> None:

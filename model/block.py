@@ -34,7 +34,7 @@ class Block(nn.Module):
                                                                                       config.rms_norm_eps)
 
     def forward(self, hidden_states: Tensor,
-                attention_mask: Optional[Tensor],
+                attention_mask: Optional[Tensor] = None,
                 position_ids: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None, ) -> Tuple[Tensor, Optional[Tensor]]:
         # Self-attention

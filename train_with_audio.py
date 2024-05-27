@@ -1,22 +1,22 @@
 import itertools
 import os
 import time
-from typing import List
+from typing import List, Dict
 
 import bitsandbytes as bnb
 import torch
+import torchaudio.functional as F
 from accelerate import Accelerator
 from datasets import load_dataset
 from tokenizers import Tokenizer
 from torch.utils.data import IterableDataset, DataLoader
-import torchaudio.functional as F
 
 from main import NPDataset
-from model import ModelConfig, SmolLM, AudioConfig
+from model import ModelConfig, SmolLM
 from utils import count_parameters, compile_model, save_as_safetensors, CyclingDataLoader, \
-    get_state_dict_from_safetensors
+    get_state_dict_from_safetensors, get_state_dict, save_state_dict
 
-model_path = './weights/test'
+model_path = './weights/test/'
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -49,7 +49,7 @@ class MFCV13(IterableDataset):
                                     self._data['other']):
             audio = item['audio']['array']
             sr = item['audio']['sampling_rate']
-            audio = F.resample(torch.tensor(audio, device=device), sr, 16000, lowpass_filter_width=6)
+            audio = F.resample(torch.tensor(audio), sr, 16000, lowpass_filter_width=8)
             sentence = self.tokenizer.encode("<s>" + item['sentence'] + "</s>")
             yield {"input_ids": sentence.ids, "audio": audio.tolist()}
 
@@ -60,30 +60,39 @@ def move_to_device(batch):
 
 config = ModelConfig()
 config.hidden_size = 768
-config.intermediate_size = 2560
-config.num_hidden_layers = 16
-config.num_attention_heads = 12
-config.max_position_embeddings = 1280
-config.num_key_value_heads = 4
+config.intermediate_size = 3072
+config.num_hidden_layers = 8
+config.num_attention_heads = 24
+config.max_position_embeddings = 2048
+config.num_key_value_heads = 8
 config.max_batch_size = 4
 config.grad_accumulation_steps = 32
+config.gradient_checkpointing_percent = 0.0
 
 MAX_LEN = config.max_position_embeddings
 
 
-def collate_pad_audio_batch_fn(batch: List[dict]) -> dict:
-    # pad audio
-    max_audio_len = max(len(a['audio']) for a in batch)
-    audio = torch.stack([torch.tensor(a['audio'] + [0] * (max_audio_len - len(a['audio']))) for a in batch])
-    # pad sentence
-    max_len = max([len(x['input_ids']) for x in batch])
-    input_ids = torch.stack([torch.tensor(x['input_ids'] + [0] * (max_len - len(x['input_ids']))) for x in batch])
-    labels = torch.stack([torch.tensor(x['input_ids'] + [-100] * (max_len - len(x['input_ids']))) for x in batch])
+def pad_audio_sequence(batch: List[torch.Tensor]) -> torch.Tensor:
+    return torch.nn.utils.rnn.pad_sequence(batch, batch_first=True)
+
+
+def collate_pad_audio_batch_fn(batch: List[Dict]) -> Dict:
+    # Pad audio sequences
+    audio = pad_audio_sequence([torch.tensor(b['audio'], dtype=torch.float32) for b in batch])
+
+    max_len = max(len(b['input_ids']) for b in batch)
+    input_ids = torch.zeros((len(batch), max_len), dtype=torch.long)
+    labels = torch.full((len(batch), max_len), -100, dtype=torch.long)
+
+    for i, b in enumerate(batch):
+        length = len(b['input_ids'])
+        input_ids[i, :length] = torch.tensor(b['input_ids'], dtype=torch.long)
+        labels[i, :length] = torch.tensor(b['input_ids'], dtype=torch.long)
+
     return {"input_ids": input_ids, "labels": labels, "audio": audio}
 
 
-model = SmolLM(config, audio_cfg=AudioConfig()).to(device=device, dtype=torch.bfloat16)
-model.audio_head._fix_low_precision_training()
+model = SmolLM(config, True).to(device=device, dtype=torch.bfloat16)
 
 tokenizer = Tokenizer.from_file('weights/tokenizer.json')
 
@@ -92,8 +101,14 @@ count_parameters(model)
 accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
 compile_model(model)
 model = accelerator.prepare_model(model)
-optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=1e-4, betas=(0.9, 0.95), weight_decay=0.1)
+
+optimizer_sd = get_state_dict(os.path.join(model_path + 'optimizer.pt'), device=device)
+
+optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=2e-4, betas=(0.9, 0.95), weight_decay=0.1)
 optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
+
+if optimizer_sd is not None:
+    optimizer.load_state_dict(optimizer_sd)
 
 if os.path.exists(os.path.join(model_path, 'model.safetensors')):
     state_dict = get_state_dict_from_safetensors(os.path.join(model_path, 'model.safetensors'), device)
@@ -105,9 +120,9 @@ torch.cuda.empty_cache()
 text_ds = NPDataset('./data/processed/train.bin', config.max_position_embeddings)
 text_dl = DataLoader(text_ds, batch_size=config.max_batch_size, )
 audio1_dl = DataLoader(LibreSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
-                       collate_fn=collate_pad_audio_batch_fn)
+                       collate_fn=collate_pad_audio_batch_fn, num_workers=1, pin_memory=True)
 audio2_dl = DataLoader(MFCV13(tokenizer=tokenizer), batch_size=config.max_batch_size,
-                       collate_fn=collate_pad_audio_batch_fn)
+                       collate_fn=collate_pad_audio_batch_fn, num_workers=1, pin_memory=True)
 
 dataloaders = CyclingDataLoader(audio1_dl, audio2_dl, text_dl)
 
@@ -142,7 +157,9 @@ for item in dataloaders:
 
     if i % 5000 == 0 and i > 0:
         save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
+        save_state_dict(optimizer.state_dict(), os.path.join(model_path, 'optimizer.pt'))
 
     i += 1
 
 save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
+save_state_dict(optimizer.state_dict(), os.path.join(model_path, 'optimizer.pt'))
