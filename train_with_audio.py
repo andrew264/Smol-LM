@@ -61,12 +61,12 @@ def move_to_device(batch):
 config = ModelConfig()
 config.hidden_size = 768
 config.intermediate_size = 3072
-config.num_hidden_layers = 8
+config.num_hidden_layers = 12
 config.num_attention_heads = 24
 config.max_position_embeddings = 2048
-config.num_key_value_heads = 8
-config.max_batch_size = 4
-config.grad_accumulation_steps = 32
+config.num_key_value_heads = 24
+config.max_batch_size = 2
+config.grad_accumulation_steps = 100
 config.gradient_checkpointing_percent = 0.0
 
 MAX_LEN = config.max_position_embeddings
@@ -120,9 +120,9 @@ torch.cuda.empty_cache()
 text_ds = NPDataset('./data/processed/train.bin', config.max_position_embeddings)
 text_dl = DataLoader(text_ds, batch_size=config.max_batch_size, )
 audio1_dl = DataLoader(LibreSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
-                       collate_fn=collate_pad_audio_batch_fn, num_workers=1, pin_memory=True)
+                       collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
 audio2_dl = DataLoader(MFCV13(tokenizer=tokenizer), batch_size=config.max_batch_size,
-                       collate_fn=collate_pad_audio_batch_fn, num_workers=1, pin_memory=True)
+                       collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
 
 dataloaders = CyclingDataLoader(audio1_dl, audio2_dl, text_dl)
 

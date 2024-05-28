@@ -6,7 +6,7 @@ from tokenizers import Tokenizer
 from transformers import (LogitsProcessorList, TopKLogitsWarper,
                           GenerationConfig)
 
-from model import ModelConfig, SmolLM, AudioConfig, InternalCache
+from model import ModelConfig, SmolLM, InternalCache
 from utils import get_state_dict_from_safetensors
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -14,29 +14,22 @@ tokenizer = Tokenizer.from_file('../weights/tokenizer.json')
 
 config = ModelConfig()
 config.hidden_size = 768
-config.intermediate_size = 2560
-config.num_hidden_layers = 16
-config.num_attention_heads = 12
-config.max_position_embeddings = 1280
-config.num_key_value_heads = 4
+config.intermediate_size = 3072
+config.num_hidden_layers = 12
+config.num_attention_heads = 24
+config.max_position_embeddings = 2048
+config.num_key_value_heads = 24
 config.max_batch_size = 1
-config.grad_accumulation_steps = 32
 
-model = SmolLM(config, audio_cfg=AudioConfig()).to(device=device, dtype=torch.bfloat16)
+model = SmolLM(config, enable_audio=True).to(device=device, dtype=torch.bfloat16)
 
 state_dict = get_state_dict_from_safetensors(os.path.join('../weights/test', 'model.safetensors'), device)
 model.load_state_dict(state_dict)
 del state_dict
-model.audio_head._fix_low_precision_training()
 
 model.eval()
 
 ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation", trust_remote_code=True)
-
-sample = ds[6]["audio"]
-sample_rate, waveform = sample['sampling_rate'], sample['array']
-text = ds[6]['text']
-print(sample_rate, waveform.shape, text)
 
 processor: LogitsProcessorList = LogitsProcessorList()
 processor.append(TopKLogitsWarper(top_k=10))
@@ -51,14 +44,18 @@ generation_config: GenerationConfig = GenerationConfig(
     eos_token_id=2,
 )
 model.generation_config = generation_config
+for i in range(len(ds)):
+    sample = ds[i]["audio"]
+    sample_rate, waveform = sample['sampling_rate'], sample['array']
+    text = ds[i]['text']
+    audio = torch.tensor(waveform, device=device, dtype=torch.bfloat16).unsqueeze(0)
+    input_ids = torch.tensor(tokenizer.encode("<s>", add_special_tokens=False).ids, device=device).unsqueeze(0)
+    print(text)
+    out = model.generate(input_ids=input_ids,
+                         audio=audio,
+                         past_key_values=InternalCache(model),
+                         logits_processor=processor,
+                         generation_config=generation_config, )
 
-audio = torch.tensor(waveform, device=device, dtype=torch.float).unsqueeze(0)
-input_ids = torch.tensor(tokenizer.encode("<s>", add_special_tokens=False).ids, device=device).unsqueeze(0)
-
-out = model.generate(input_ids=input_ids,
-                     audio=audio,
-                     past_key_values=InternalCache(model),
-                     logits_processor=processor,
-                     generation_config=generation_config, )
-
-print(tokenizer.decode(out[0].cpu().numpy(), skip_special_tokens=True))
+    print(tokenizer.decode(out[0].cpu().numpy(), skip_special_tokens=True))
+    print("_"*50)
