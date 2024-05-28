@@ -19,12 +19,12 @@ class InternalCache(Cache):
         self.reset_cache()
 
     def get_seq_length(self, layer_idx: Optional[int] = -1) -> int | torch.Tensor:
-        return self.model.layers[layer_idx].jonkler_block.get_cache_length()
+        return self.model.layers[layer_idx].attention_block.get_cache_length()
 
     def reset_cache(self):
         for layer in self.model.layers:
-            layer.jonkler_block.setup_cache(dtype=self.dtype, device=self.model.device)
+            layer.attention_block.setup_cache(dtype=self.dtype, device=self.model.device)
 
     def reorder_cache(self, beam_idx: torch.LongTensor):
         for layer in self.model.layers:
-            layer.jonkler_block.reorder_cache(beam_idx)
+            layer.attention_block.reorder_cache(beam_idx)

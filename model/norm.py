@@ -5,24 +5,10 @@ from torch import nn
 
 try:
     from apex.normalization import FusedRMSNorm
+
     print("Found FusedRMSNorm")
 except ImportError:
     FusedRMSNorm = None
-
-
-class GemmaRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.zeros(hidden_size))
-        self.variance_epsilon = eps
-
-    def _norm(self, x: torch.Tensor) -> torch.Tensor:
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.variance_epsilon)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        input_dtype = hidden_states.dtype
-        hidden_states = self._norm(hidden_states.float()) * (1.0 + self.weight.float())
-        return hidden_states.to(input_dtype)
 
 
 class RMSNorm(nn.Module):
@@ -40,9 +26,7 @@ class RMSNorm(nn.Module):
         return hidden_states.to(input_dtype)
 
 
-def get_rms_norm_class(gemma: bool = False) -> Type[nn.Module]:
-    if gemma:
-        return GemmaRMSNorm
+def get_rmsnorm_class() -> Type[nn.Module]:
     if FusedRMSNorm is not None:
         return FusedRMSNorm
     return RMSNorm

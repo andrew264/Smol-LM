@@ -2,21 +2,22 @@ import time
 from typing import Optional, List
 
 import torch
+from torch import nn
 
 from model import SmolLM, LoRAConfig
 from model.lora import LoRALinear, LoRAEmbedding
 
 
-def inject_lora_adapter(model: SmolLM, lora_config: LoRAConfig, adapter_state_dict: Optional[dict] = None) -> SmolLM:
+def inject_lora_adapter(model: nn.Module, lora_config: LoRAConfig, adapter_state_dict: Optional[dict] = None) -> SmolLM:
     start = time.time()
     for param in model.parameters():
         param.requires_grad = False
-    if 'embedding' in lora_config.layers and hasattr(model, 'tok_embeddings'):
-        model.tok_embeddings = LoRAEmbedding(model.tok_embeddings, lora_config)
+    if 'embedding' in lora_config.layers and hasattr(model, 'embed_tokens'):
+        model.embed_tokens = LoRAEmbedding(model.embed_tokens, lora_config)
     if 'lm_head' in lora_config.layers and hasattr(model, 'lm_head'):
         model.lm_head = LoRALinear(model.lm_head, lora_config)
     for layer in model.layers:
-        block = layer.jonkler_block
+        block = layer.attention_block
         # Attention
         if 'qkv_proj' in lora_config.layers and hasattr(block, 'qkv_proj'):
             block.qkv_proj = LoRALinear(block.qkv_proj, lora_config)
@@ -28,13 +29,6 @@ def inject_lora_adapter(model: SmolLM, lora_config: LoRAConfig, adapter_state_di
             ffn.gate_proj = LoRALinear(ffn.gate_proj, lora_config)
             ffn.up_proj = LoRALinear(ffn.up_proj, lora_config)
             ffn.down_proj = LoRALinear(ffn.down_proj, lora_config)
-        # Recurrent
-        if 'l_x' in lora_config.layers and hasattr(block, 'linear_x'):
-            block.linear_x = LoRALinear(block.linear_x, lora_config)
-        if 'l_y' in lora_config.layers and hasattr(block, 'linear_y'):
-            block.linear_y = LoRALinear(block.linear_y, lora_config)
-        if 'l_out' in lora_config.layers and hasattr(block, 'linear_out'):
-            block.linear_out = LoRALinear(block.linear_out, lora_config)
 
     torch.cuda.synchronize()
     print(f"LoRA injection took {time.time() - start:.3f}s")
@@ -46,7 +40,7 @@ def inject_lora_adapter(model: SmolLM, lora_config: LoRAConfig, adapter_state_di
     return model
 
 
-def get_lora_state_dict(model: SmolLM) -> dict:
+def get_lora_state_dict(model: nn.Module) -> dict:
     state_dict = {}
     for param_name, param in model.named_parameters():
         if 'lora' in param_name:
@@ -54,7 +48,7 @@ def get_lora_state_dict(model: SmolLM) -> dict:
     return state_dict
 
 
-def get_lora_plus_optimizer_group(model: SmolLM,
+def get_lora_plus_optimizer_group(model: nn.Module,
                                   lr: float,
                                   lr_ratio: int = 4,
                                   lr_embedding: float = 1e-6,

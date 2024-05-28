@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union, List
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -7,14 +7,14 @@ from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import GenerationMixin, Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.modeling_outputs import CausalLMOutputWithPast, MoeCausalLMOutputWithPast
+from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
 from .audio_head import AudioHead
 from .block import Block
-from .config import ModelConfig, AudioConfig
-from .norm import get_rms_norm_class
-from .utils import load_balancing_loss_func, LINEAR
+from .config import ModelConfig
+from .norm import get_rmsnorm_class
+from .utils import LINEAR, hf_load_hook
 
 try:
     from functools import partial
@@ -37,15 +37,12 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.hidden_size = config.hidden_size
         self.vocab_size = config.vocab_size
         self.num_hidden_layers = config.num_hidden_layers
-        self.router_aux_loss_coef = config.router_aux_loss_coef
-        self.num_experts = config.num_experts
         self.tie_word_embeddings = config.tie_word_embeddings
-        self.is_moe = config.is_moe
         self.checkpointing_layers = config.checkpointing_layers
 
-        self.tok_embeddings = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
-        self.layers = nn.ModuleList(Block(config, idx) for idx in range(self.num_hidden_layers))
-        self.norm = get_rms_norm_class(config.use_gemma_rms_norm)(self.hidden_size, eps=config.rms_norm_eps)
+        self.embed_tokens = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
+        self.layers = nn.ModuleList(Block(config) for _ in range(self.num_hidden_layers))
+        self.norm = get_rmsnorm_class()(self.hidden_size, eps=config.rms_norm_eps)
 
         if enable_audio:
             self.audio_head = AudioHead(config)
@@ -55,13 +52,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.loss_fn = CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
-        self._register_load_state_dict_pre_hook(self.hf_load_hook)
-        if self.config.normalize_embedding:
-            self.register_buffer("normalizer",
-                                 torch.tensor(self.config.hidden_size ** 0.5, dtype=torch.bfloat16),
-                                 persistent=False)
-        self.normalize_embedding = config.normalize_embedding
-        self.logits_soft_cap = config.logits_soft_cap
+        self._register_load_state_dict_pre_hook(hf_load_hook)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -73,34 +64,6 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-
-    @staticmethod
-    def hf_load_hook(state_dict: dict, prefix, *args, **kwargs):
-        mappings = {
-            "model.": "",
-            "embed_tokens": "tok_embeddings",
-            ".self_attn.": ".jonkler_block.",
-            ".attention.": ".jonkler_block.",
-            ".temporal_block.": ".jonkler_block.",
-            ".mlp.": ".feed_forward.",
-            ".mlp_block.": ".feed_forward.",
-            ".block_sparse_moe.": ".feed_forward.",
-            ".w1.": ".gate_proj.",
-            ".w2.": ".up_proj.",
-            ".w3.": ".up_proj.",
-            "final_norm.": "norm.",
-            ".temporal_pre_norm.": ".input_layernorm.",
-            ".channel_pre_norm.": ".post_attention_layernorm.",
-        }
-
-        def get_updated_key(key: str) -> str:
-            updated_key = str(key)
-            for old, new in mappings.items():
-                updated_key = updated_key.replace(old, new)
-            return updated_key
-
-        for k in list(state_dict.keys()):
-            state_dict[get_updated_key(k)] = state_dict.pop(k)
 
     def resize_embeddings(self, new_num_tokens: int) -> None:
         pad_to_multiple_of = 8
@@ -116,7 +79,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         new_embeddings.weight.data[:num_tokens_to_copy, :] = self.tok_embeddings.weight.data[:num_tokens_to_copy, :]
 
         # replace the old embeddings with the new embeddings
-        self.tok_embeddings = new_embeddings
+        self.embed_tokens = new_embeddings
 
         # resize the output layer
         new_lm_head = nn.Linear(self.hidden_size, new_num_tokens, bias=False).to(device=device, dtype=dtype)
@@ -126,7 +89,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.vocab_size = new_num_tokens
 
     def get_optimizer_grouped_parameters(self, weight_decay) -> list[dict]:
-        decay_denylist = ["tok_embeddings.weight"]
+        decay_denylist = ["embed_tokens.weight"]
         # start with all the candidate parameters
         decay = set()
         no_decay = set()
@@ -192,7 +155,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             position_ids: Optional[torch.LongTensor] = None,
             cache_position: Optional[torch.LongTensor] = None,
             **kwargs,
-    ) -> Union[CausalLMOutputWithPast, MoeCausalLMOutputWithPast]:
+    ) -> CausalLMOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
@@ -213,7 +176,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
                     attention_mask = attention_mask[:, -1:]
 
         if input_ids is not None:
-            x = self.tok_embeddings(input_ids)
+            x = self.embed_tokens(input_ids)
         else:
             x = inputs_embeds
 
@@ -231,54 +194,25 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         causal_mask = self._update_causal_mask(attention_mask, x, cache_position)
 
-        if self.normalize_embedding:
-            x = x * self.normalizer.type(x.dtype)
-
-        all_router_logits: Tuple[Tensor] = ()
-        for i, layer in enumerate(self.layers):
-            if self.training and i in self.checkpointing_layers:
-                layer_outputs = checkpoint(layer,
-                                           x, causal_mask, position_ids, cache_position,
-                                           use_reentrant=False, )
-
-            else:
-                layer_outputs = layer(x,
-                                      attention_mask=causal_mask,
-                                      position_ids=position_ids,
-                                      cache_position=cache_position, )
-
-            x = layer_outputs[0]
-            if self.is_moe:
-                router_logits = layer_outputs[1]
-                all_router_logits += (router_logits,)
+        for layer in self.layers:
+            x = layer(x,
+                      attention_mask=causal_mask,
+                      position_ids=position_ids,
+                      cache_position=cache_position, )
 
         x = self.norm(x)
 
         if not self.tie_word_embeddings:
             logits = self.lm_head(x)
         else:
-            logits = F.linear(x, self.tok_embeddings.weight)
-
-        if self.logits_soft_cap is not None:
-            cap = self.logits_soft_cap
-            logits = nn.functional.tanh(logits / cap) * cap
-            logits = logits.float()
+            logits = F.linear(x, self.embed_tokens.weight)
 
         loss = None
-        aux_loss = None
         if labels is not None:
             loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
-            if self.is_moe:
-                aux_loss = load_balancing_loss_func(all_router_logits, self.num_experts,
-                                                    top_k=2, attention_mask=attention_mask, )
-                loss += self.router_aux_loss_coef * aux_loss
 
-        if self.is_moe:
-            return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits,
-                                             past_key_values=past_key_values, )
-        else:
-            return CausalLMOutputWithPast(loss=loss, logits=logits,
-                                          past_key_values=past_key_values, )
+        return CausalLMOutputWithPast(loss=loss, logits=logits,
+                                      past_key_values=past_key_values, )
 
     def prepare_inputs_for_generation(
             self, input_ids: Tensor, audio: Optional[Tensor] = None, past_key_values: Optional[Cache] = None,

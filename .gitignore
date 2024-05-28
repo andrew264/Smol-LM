@@ -22,6 +22,7 @@ ft-weights/
 
 # logs
 logs/
+lightning_logs/
 
 # testing stuff (not sure if this is needed)
 notebooks/

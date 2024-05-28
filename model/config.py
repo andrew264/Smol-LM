@@ -1,6 +1,6 @@
 import json
-from dataclasses import dataclass, field
-from typing import Optional, List
+from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -11,7 +11,6 @@ class ModelConfig:
     # Basic Model Parameters
     vocab_size: int = 32000
     hidden_size: int = 1024
-    intermediate_size: int = 3072
     num_hidden_layers: int = 8
 
     # Huggingface compatibility
@@ -22,26 +21,18 @@ class ModelConfig:
     max_position_embeddings: int = 1024
     rope_theta: float = 10000.0
     rope_scaling: Optional[float] = None
-    normalize_embedding: bool = False
-    partial_rotary_factor: float = 1.0
     tie_word_embeddings: bool = False
 
     # Attention
     num_attention_heads: int = 8
     num_key_value_heads: int = 1
-    sliding_window: Optional[int] = None
 
-    # Feed Forward / Mixture of Experts
+    # Feed Forward
     hidden_act: str = "silu"
-    is_moe: bool = False
-    num_experts: int = 1
-    num_activated_experts: int = 1
-    router_aux_loss_coef: float = 0.001
-    router_jitter_noise: float = 0.0
+    intermediate_size: int = 3072
 
     # Normalization
     rms_norm_eps: float = 1e-06
-    use_gemma_rms_norm: bool = False
 
     # Dropout and Regularization
     attention_dropout: float = 0.0
@@ -57,15 +48,13 @@ class ModelConfig:
     grad_accumulation_steps: int = 1
     max_batch_size: int = 1
     epochs: int = 1
+    lr = 2e-5
 
     # Other Parameters
     pad_token_id: int = 0
-    block_types: List[str] = field(default_factory=lambda: ["attention"])
-    logits_soft_cap: Optional[float] = None
 
-    # Real-Gated Linear Recurrent Unit Parameters
-    conv1d_width: int = 2
-    lru_width: int = 256
+    # multi-modality
+    has_audio: bool = False
 
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
@@ -79,21 +68,11 @@ class ModelConfig:
         conf = cls()
         for k, v in config_dict.items():
             setattr(conf, k, v)
-        if conf.num_experts == 1:
-            conf.is_moe = False
-        if conf.sliding_window is not None and conf.sliding_window < 1:
-            conf.sliding_window = None
-        if conf.is_moe and conf.num_activated_experts > conf.num_experts:
-            raise ValueError("num_activated_experts must be less than or equal to num_experts.")
         return conf
 
     def to_json(self, path: str) -> None:
         with open(path, "w") as f:
             json.dump(self.__dict__, f, indent=4)
-
-    @property
-    def layers_block_types(self):
-        return [self.block_types[i % len(self.block_types)] for i in range(self.num_hidden_layers)]
 
     @property
     def checkpointing_layers(self) -> list[int]:

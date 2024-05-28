@@ -41,7 +41,7 @@ class AttentionBlock(nn.Module):
 
         self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
                                           base=self.config.rope_theta, )
-        self.partial_rotary_factor = config.partial_rotary_factor
+
         self._register_load_state_dict_pre_hook(self.fused_qkv_hook)
 
         # kv cache
@@ -109,14 +109,7 @@ class AttentionBlock(nn.Module):
         value_states = value_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
 
         cos, sin = self.rotary_emb(value_states, position_ids)
-        if self.partial_rotary_factor != 1.0:
-            query_rot, query_pass = torch.chunk(query_states, int(1 / self.partial_rotary_factor), dim=-1)
-            key_rot, key_pass = torch.chunk(key_states, int(1 / self.partial_rotary_factor), dim=-1)
-            query_rot, key_rot = apply_rotary_pos_emb(query_rot, key_rot, cos, sin)
-            query_states = torch.cat((query_rot, query_pass), dim=-1)
-            key_states = torch.cat((key_rot, key_pass), dim=-1)
-        else:
-            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if cache_position is not None and not self.training:
             key_states, value_states = self._update_cache(key_states, value_states, cache_position)

@@ -1,23 +1,21 @@
 import datetime
 import os
-import time
 from typing import Tuple, List
 
-import bitsandbytes as bnb
 import torch
-from accelerate import Accelerator
+from lightning import Trainer
 from torch.utils.data import DataLoader
-from transformers import get_cosine_schedule_with_warmup
 
 from main import validate_model  # noqa
-from model import ModelConfig, LoRAConfig, SmolLM
+from model import ModelConfig, LoRAConfig
+from model.lightning_model import SmolLMLightning
 from utils import (DiscordConversations,
                    get_state_dict_from_safetensors, compile_model,
-                   inject_lora_adapter, get_lora_state_dict, get_lora_plus_optimizer_group,
-                   save_as_safetensors, count_parameters)  # noqa
+                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors, count_parameters)  # noqa
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
+torch.set_float32_matmul_precision('medium')
 
 
 def move_to_device(batch):
@@ -29,72 +27,35 @@ def train(_path: str,
           validation_data: DataLoader,
           config: ModelConfig,
           lora_config: LoRAConfig,
-          disable_scheduler: bool = False,
-          learning_rate: float = 2e-5,
+          use_scheduler: bool = False,
           ):
     # Load model
     model_sd = get_state_dict_from_safetensors(os.path.join(_path, 'model.safetensors'), device)
-    model = SmolLM(config).to(device=device, dtype=torch.bfloat16)
+    model = SmolLMLightning(config,
+                            use_lora_opt_grp=True,
+                            use_scheduler=use_scheduler,
+                            ).to(device=device, dtype=torch.bfloat16)
     model.load_state_dict(model_sd)
     del model_sd
 
     # Inject LoRA
     model = inject_lora_adapter(model, lora_config, )
-
-    count_parameters(model)
-    total_steps = len(training_data) * config.epochs
-    print(f"Total steps: {total_steps} | Steps per epoch: {len(training_data)}")
-
-    # Accelerator
-    accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
     compile_model(model)
-    model = accelerator.prepare_model(model)
-
-    # Optimizer
-    betas = (0.9, 0.999)
-    optimizer = bnb.optim.AdamW8bit(get_lora_plus_optimizer_group(model, lr=learning_rate), betas=betas)
-    optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
-
-    # Scheduler
-    scheduler = None
-    if not disable_scheduler:
-        s_steps = total_steps // config.grad_accumulation_steps
-        scheduler = get_cosine_schedule_with_warmup(optimizer,
-                                                    num_warmup_steps=10,
-                                                    num_training_steps=s_steps)
-        scheduler = accelerator.prepare_scheduler(scheduler)
 
     # Training loop
     torch.cuda.empty_cache()
     print("Starting training...")
-    for epoch in range(config.epochs):
-        model.train()
-        accu_loss = 0
-        start = time.time()
-        # Start of epoch
-        for i, (item) in enumerate(training_data):
-            with accelerator.accumulate(model):
-                loss = model(**move_to_device(item)).loss
-                accu_loss += loss.item()
-                accelerator.backward(loss)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-                optimizer.step()
-                if not disable_scheduler:
-                    scheduler.step()
-                optimizer.zero_grad()
+    trainer = Trainer(accelerator="gpu",
+                      precision="bf16-true",
+                      max_epochs=config.epochs,
+                      enable_progress_bar=True,
+                      accumulate_grad_batches=config.grad_accumulation_steps)
+    trainer.fit(model, training_data, validation_data)
 
-        # End of epoch
-        avg_loss = accu_loss / len(training_data)
-        avg_ppl = torch.exp(torch.tensor(avg_loss))
-        lrs = [f"{param_group['lr']:.1e}" for param_group in optimizer.param_groups]
-        print(f"Epoch {epoch + 1} took {time.time() - start:.1f}s | "
-              f"Loss: {avg_loss:.3f} | Perplexity: {avg_ppl:.3f} | LR: {lrs}")
-        validate_model(model, validation_data, full_validation=True)
-
-        # Save model
-        adapter_sd = get_lora_state_dict(model)
-        save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
+    # Save model
+    adapter_sd = get_lora_state_dict(model)
+    save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
 
 
 if __name__ == '__main__':
@@ -140,14 +101,15 @@ if __name__ == '__main__':
 
     dataset = DiscordConversations(path="data/finetune/conversations", tokenizer=tokenizer, sys_prompt=sys_prompt)
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
-                            shuffle=True, collate_fn=collate_pad_batch_fn)
+                            shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=4)
+    val_data = DataLoader(dataset, batch_size=params.max_batch_size,
+                          shuffle=False, collate_fn=collate_pad_batch_fn, num_workers=4)
 
     train(path,
           training_data=dataloader,
-          validation_data=dataloader,
+          validation_data=val_data,
           config=params,
           lora_config=lora_params,
-          disable_scheduler=False,
-          learning_rate=2e-5,
+          use_scheduler=True,
           )
     # validate_model(None, dataloader, True)
