@@ -16,4 +16,4 @@ chromadb
 sentence-transformers
 jupyter
 apex
-lightning
+lightning[extra]

@@ -1,14 +1,16 @@
 import time
-from typing import Optional, List
+from typing import Optional, List, TypeVar
 
 import torch
 from torch import nn
 
-from model import SmolLM, LoRAConfig
+from model import LoRAConfig
 from model.lora import LoRALinear, LoRAEmbedding
 
+T = TypeVar('T', bound=nn.Module)
 
-def inject_lora_adapter(model: nn.Module, lora_config: LoRAConfig, adapter_state_dict: Optional[dict] = None) -> SmolLM:
+
+def inject_lora_adapter(model: T, lora_config: LoRAConfig, adapter_state_dict: Optional[dict] = None) -> T:
     start = time.time()
     for param in model.parameters():
         param.requires_grad = False

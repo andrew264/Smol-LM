@@ -32,7 +32,7 @@ class LibreSpeechDataset(IterableDataset):
         for item in self._data:
             audio = item['audio']['array']
             sentence = self.tokenizer.encode("<s>" + item['text'].lower() + "</s>")
-            yield {"input_ids": sentence.ids, "audio": audio.tolist()}
+            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio.tolist()}
 
 
 class MFCV13(IterableDataset):
@@ -51,7 +51,7 @@ class MFCV13(IterableDataset):
             sr = item['audio']['sampling_rate']
             audio = F.resample(torch.tensor(audio), sr, 16000, lowpass_filter_width=8)
             sentence = self.tokenizer.encode("<s>" + item['sentence'] + "</s>")
-            yield {"input_ids": sentence.ids, "audio": audio.tolist()}
+            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio.tolist()}
 
 
 def move_to_device(batch):
@@ -77,19 +77,31 @@ def pad_audio_sequence(batch: List[torch.Tensor]) -> torch.Tensor:
 
 
 def collate_pad_audio_batch_fn(batch: List[Dict]) -> Dict:
-    # Pad audio sequences
-    audio = pad_audio_sequence([torch.tensor(b['audio'], dtype=torch.float32) for b in batch])
+    audio_list = []
+    for b in batch:
+        audio_tensor = torch.tensor(b['audio'], dtype=torch.float32)
+        audio_tensor = (audio_tensor - audio_tensor.mean()) / audio_tensor.std()
+        audio_list.append(audio_tensor)
+    audio = pad_audio_sequence(audio_list)
 
     max_len = max(len(b['input_ids']) for b in batch)
-    input_ids = torch.zeros((len(batch), max_len), dtype=torch.long)
-    labels = torch.full((len(batch), max_len), -100, dtype=torch.long)
+    batch_size = len(batch)
+    input_ids = torch.zeros((batch_size, max_len), dtype=torch.long)
+    attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
+    labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
 
     for i, b in enumerate(batch):
         length = len(b['input_ids'])
         input_ids[i, :length] = torch.tensor(b['input_ids'], dtype=torch.long)
+        attention_mask[i, :length] = torch.tensor(b['attention_mask'], dtype=torch.long)
         labels[i, :length] = torch.tensor(b['input_ids'], dtype=torch.long)
 
-    return {"input_ids": input_ids, "labels": labels, "audio": audio}
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
+        "audio": audio
+    }
 
 
 model = SmolLM(config, True).to(device=device, dtype=torch.bfloat16)

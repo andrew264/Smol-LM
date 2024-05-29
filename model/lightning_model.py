@@ -15,7 +15,7 @@ from .audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
-from .utils import LINEAR, hf_load_hook
+from .utils import LINEAR, hf_load_hook, merge_audio_features, get_optimizer_grouped_parameters
 
 try:
     from flash_attn.losses.cross_entropy import CrossEntropyLoss
@@ -25,12 +25,13 @@ except ImportError:
     from torch.nn import CrossEntropyLoss
 
 
-class SmolLMLightning(L.LightningModule):
+class SmolLMLit(L.LightningModule):
     def __init__(self, config: ModelConfig, use_lora_opt_grp: bool = False, use_scheduler: bool = False):
         super().__init__()
         self.config = config
         self.tie_word_embeddings = config.tie_word_embeddings
         self.checkpointing_layers = config.checkpointing_layers
+        self.max_length = config.max_position_embeddings
         self.use_lora_opt_grp = use_lora_opt_grp
         self.use_scheduler = use_scheduler
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
@@ -59,6 +60,10 @@ class SmolLMLightning(L.LightningModule):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.Conv1d):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
 
     def configure_optimizers(self):
         lr = self.config.lr
@@ -70,10 +75,9 @@ class SmolLMLightning(L.LightningModule):
             )
         else:
             optimizer = bnb.optim.AdamW8bit(
-                params=self.parameters(),
+                params=get_optimizer_grouped_parameters(self, weight_decay=0.1),
                 lr=lr,
                 betas=(0.9, 0.95),
-                weight_decay=0.1,
             )
         if self.use_scheduler:
             scheduler = get_cosine_schedule_with_warmup(optimizer,
@@ -90,46 +94,6 @@ class SmolLMLightning(L.LightningModule):
                 "lr_scheduler": lr_scheduler_config,
             }
         return optimizer
-
-    def process_modalities(self, input_embeds: Tensor,
-                           attention_mask: Optional[Tensor],
-                           labels: Optional[Tensor],
-                           audio: Tensor):
-        device = input_embeds.device
-        max_length = self.config.max_position_embeddings
-
-        # Compute audio features
-        audio_features = checkpoint(self.audio_head, audio, use_reentrant=False)
-        # feature_length = audio_features.shape[1]
-
-        if labels is not None:
-            label_pad = torch.full(
-                (audio_features.shape[0], audio_features.shape[1]),
-                -100,
-                dtype=torch.long,
-                device=device
-            )
-            labels = torch.cat((label_pad, labels), dim=1)
-
-        if attention_mask is not None:
-            attention_pad = torch.ones(
-                (audio_features.shape[0], audio_features.shape[1]),
-                dtype=torch.long,
-                device=device
-            )
-            attention_mask = torch.cat((attention_pad, attention_mask), dim=1)
-
-        combined_features = torch.cat((audio_features, input_embeds), dim=1)
-
-        if combined_features.shape[1] > max_length:
-            combined_features = combined_features[:, -max_length:]
-
-        if labels is not None:
-            truncated_labels = labels[:, -max_length:] if labels.shape[1] > max_length else labels
-        else:
-            truncated_labels = None
-
-        return combined_features, attention_mask, truncated_labels
 
     @staticmethod
     def _generate_causal_mask(attention_mask, input_tensor):
@@ -167,7 +131,8 @@ class SmolLMLightning(L.LightningModule):
         x = self.embed_tokens(input_ids)
 
         if audio is not None:
-            x, attention_mask, labels = self.process_modalities(x, attention_mask, labels, audio)
+            audio_features = self.audio_head(audio)
+            x, attention_mask, labels = merge_audio_features(x, attention_mask, labels, audio_features, self.max_length)
 
         causal_mask = self._generate_causal_mask(attention_mask, x)
 

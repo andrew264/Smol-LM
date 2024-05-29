@@ -8,10 +8,10 @@ from torch.utils.data import DataLoader
 
 from main import validate_model  # noqa
 from model import ModelConfig, LoRAConfig
-from model.lightning_model import SmolLMLightning
+from model import SmolLMLit
 from utils import (DiscordConversations,
                    get_state_dict_from_safetensors, compile_model,
-                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors, count_parameters)  # noqa
+                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors)  # noqa
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
@@ -31,10 +31,10 @@ def train(_path: str,
           ):
     # Load model
     model_sd = get_state_dict_from_safetensors(os.path.join(_path, 'model.safetensors'), device)
-    model = SmolLMLightning(config,
-                            use_lora_opt_grp=True,
-                            use_scheduler=use_scheduler,
-                            ).to(device=device, dtype=torch.bfloat16)
+    model = SmolLMLit(config,
+                      use_lora_opt_grp=True,
+                      use_scheduler=use_scheduler,
+                      ).to(device=device, dtype=torch.bfloat16)
     model.load_state_dict(model_sd)
     del model_sd
 
@@ -50,6 +50,7 @@ def train(_path: str,
                       precision="bf16-true",
                       max_epochs=config.epochs,
                       enable_progress_bar=True,
+                      gradient_clip_val=1.0,
                       accumulate_grad_batches=config.grad_accumulation_steps)
     trainer.fit(model, training_data, validation_data)
 

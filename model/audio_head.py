@@ -30,7 +30,7 @@ class AudioHead(torch.nn.Module):
             conv_layers.append(ConvNorm(conv_dim[i], conv_dim[i + 1], conv_kernel[i], conv_stride[i]))
         self.conv_layers = nn.ModuleList(conv_layers)
 
-        self.attn_blocks = nn.ModuleList([Block(config, i) for i in range(3)])
+        self.attn_blocks = nn.ModuleList([Block(config) for _ in range(3)])
 
     def forward(self, x):
         if x.dtype == torch.float32:
@@ -41,5 +41,5 @@ class AudioHead(torch.nn.Module):
         x = x.permute(0, 2, 1)
         position_ids = torch.arange(x.size(1), device=x.device).unsqueeze(0)
         for block in self.attn_blocks:
-            x = block(x, position_ids=position_ids)[0]
+            x = block(x, position_ids=position_ids)
         return x

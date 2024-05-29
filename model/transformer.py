@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.utils.checkpoint import checkpoint
 from transformers import GenerationMixin, Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -14,7 +13,7 @@ from .audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
-from .utils import LINEAR, hf_load_hook
+from .utils import LINEAR, hf_load_hook, merge_audio_features
 
 try:
     from functools import partial
@@ -35,20 +34,19 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.config = config
 
         self.hidden_size = config.hidden_size
-        self.vocab_size = config.vocab_size
-        self.num_hidden_layers = config.num_hidden_layers
         self.tie_word_embeddings = config.tie_word_embeddings
         self.checkpointing_layers = config.checkpointing_layers
+        self.max_length = config.max_position_embeddings
 
-        self.embed_tokens = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=config.pad_token_id)
-        self.layers = nn.ModuleList(Block(config) for _ in range(self.num_hidden_layers))
-        self.norm = get_rmsnorm_class()(self.hidden_size, eps=config.rms_norm_eps)
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
+        self.layers = nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers))
+        self.norm = get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps)
 
         if enable_audio:
             self.audio_head = AudioHead(config)
 
         if not self.tie_word_embeddings:
-            self.lm_head: LINEAR = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
+            self.lm_head: LINEAR = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         self.loss_fn = CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
@@ -86,63 +84,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         new_lm_head.weight.data[:num_tokens_to_copy, :] = self.lm_head.weight.data[:num_tokens_to_copy, :]
         self.lm_head = new_lm_head
 
-        self.vocab_size = new_num_tokens
-
-    def get_optimizer_grouped_parameters(self, weight_decay) -> list[dict]:
-        decay_denylist = ["embed_tokens.weight"]
-        # start with all the candidate parameters
-        decay = set()
-        no_decay = set()
-        param_dict = {}
-        for name, param in self.named_parameters():
-            param_dict[name] = param
-            if param.ndimension() == 1 or any(nd in name for nd in decay_denylist):
-                no_decay.add(name)
-            else:
-                decay.add(name)
-
-        inter_params = decay & no_decay
-        union_params = decay | no_decay
-        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
-        assert len(param_dict.keys() - union_params) == 0, \
-            "parameters %s were not separated into either decay/no_decay set!" \
-            % (str(param_dict.keys() - union_params),)
-
-        optim_groups = [
-            {'params': [param_dict[pn] for pn in sorted(list(no_decay))], 'weight_decay': 0.0},
-            {'params': [param_dict[pn] for pn in sorted(list(decay))], 'weight_decay': weight_decay},
-        ]
-
-        return optim_groups
-
-    def process_modalities(self, input_embeds: Tensor, labels: Optional[Tensor], audio: Tensor):
-        device = input_embeds.device
-        max_length = self.config.max_position_embeddings
-
-        # Compute audio features
-        audio_features = checkpoint(self.audio_head, audio, use_reentrant=False)
-        # feature_length = audio_features.shape[1]
-
-        if labels is not None:
-            label_pad = torch.full(
-                (audio_features.shape[0], audio_features.shape[1]),
-                -100,
-                dtype=torch.long,
-                device=device
-            )
-            labels = torch.cat((label_pad, labels), dim=1)
-
-        combined_features = torch.cat((audio_features, input_embeds), dim=1)
-
-        if combined_features.shape[1] > max_length:
-            combined_features = combined_features[:, -max_length:]
-
-        if labels is not None:
-            truncated_labels = labels[:, -max_length:] if labels.shape[1] > max_length else labels
-        else:
-            truncated_labels = None
-
-        return combined_features, truncated_labels
+        self.config.vocab_size = new_num_tokens
 
     def forward(
             self,
@@ -181,7 +123,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             x = inputs_embeds
 
         if audio is not None:
-            x, labels = self.process_modalities(x, labels, audio)
+            audio_features = self.audio_head(audio)
+            x, attention_mask, labels = merge_audio_features(x, attention_mask, labels, audio_features, self.max_length)
 
         if past_length == 0:
             if cache_position is None:
