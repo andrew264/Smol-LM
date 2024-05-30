@@ -107,6 +107,10 @@ def get_generation_config(max_new_length: int) -> GenerationConfig:
 
 
 class CyclingDataLoader:
+    """
+    Just a bunch of DataLoaders that cycle through each other.
+    """
+
     def __init__(self, *iterators):
         self.iterators = [iter(it) for it in iterators]
         self.cycle = cycle(self.iterators)

@@ -1,75 +1,83 @@
 import itertools
 import os
-import time
 from typing import List, Dict
 
-import bitsandbytes as bnb
 import torch
 import torchaudio.functional as F
-from accelerate import Accelerator
 from datasets import load_dataset
+from lightning import Trainer
+from lightning.pytorch.callbacks import ModelCheckpoint
 from tokenizers import Tokenizer
 from torch.utils.data import IterableDataset, DataLoader
 
 from main import NPDataset
-from model import ModelConfig, SmolLM
-from utils import count_parameters, compile_model, save_as_safetensors, CyclingDataLoader, \
-    get_state_dict_from_safetensors, get_state_dict, save_state_dict
+from model import ModelConfig, SmolLMLit
+from utils import save_as_safetensors, CyclingDataLoader
 
 model_path = './weights/test/'
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+tokenizer = Tokenizer.from_file('weights/tokenizer.json')
 
 
 class LibreSpeechDataset(IterableDataset):
-    def __init__(self, tokenizer: Tokenizer, split: str = "train.360", streaming: bool = False):
+    def __init__(self, split: str = "train.360", streaming: bool = False):
         super().__init__()
-        self.tokenizer = tokenizer
         self._data = load_dataset("/home/andrew264/datasets/librispeech_asr", "clean",
                                   split=split, streaming=streaming, trust_remote_code=True)
 
     def __iter__(self):
         for item in self._data:
             audio = item['audio']['array']
-            sentence = self.tokenizer.encode("<s>" + item['text'].lower() + "</s>")
+            sentence = tokenizer.encode("<|audio_end|>" + item['text'].lower() + "<|end_of_text|>",
+                                        add_special_tokens=False)
             yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio.tolist()}
 
 
 class MFCV13(IterableDataset):
-    def __init__(self, tokenizer: Tokenizer, subset: str = "en", streaming: bool = False):
+    def __init__(self, subset: str = "en", streaming: bool = False):
         super().__init__()
-        self.tokenizer = tokenizer
         self._data = load_dataset("/home/andrew264/datasets/common_voice_13_0", name=subset, streaming=streaming,
                                   trust_remote_code=True, num_proc=3, token=True)
 
     def __iter__(self):
-        for item in itertools.chain(self._data['train'],
-                                    self._data['test'],
-                                    self._data['validation'],
-                                    self._data['other']):
-            audio = item['audio']['array']
-            sr = item['audio']['sampling_rate']
+        for it in itertools.chain(self._data['train'],
+                                  self._data['test'],
+                                  self._data['validation'],
+                                  self._data['other']):
+            audio = it['audio']['array']
+            sr = it['audio']['sampling_rate']
             audio = F.resample(torch.tensor(audio), sr, 16000, lowpass_filter_width=8)
-            sentence = self.tokenizer.encode("<s>" + item['sentence'] + "</s>")
+            sentence = tokenizer.encode("<|audio_end|>" + it['sentence'] + "<|end_of_text|>",
+                                        add_special_tokens=False)
             yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio.tolist()}
 
 
-def move_to_device(batch):
-    return {k: v.to(device) for k, v in batch.items()}
-
-
 config = ModelConfig()
+config.vocab_size = tokenizer.get_vocab_size()
+config.tie_word_embeddings = True
 config.hidden_size = 768
 config.intermediate_size = 3072
 config.num_hidden_layers = 12
-config.num_attention_heads = 24
+config.num_attention_heads = 12
 config.max_position_embeddings = 2048
-config.num_key_value_heads = 24
+config.num_key_value_heads = 6
 config.max_batch_size = 2
-config.grad_accumulation_steps = 100
+config.grad_accumulation_steps = 50
 config.gradient_checkpointing_percent = 0.0
+config.has_audio = True
+config.lr = 5e-4
 
 MAX_LEN = config.max_position_embeddings
+
+
+def get_dataloader():
+    text_ds = NPDataset("data/processed/fineweb_train_*.bin", MAX_LEN)
+    text_dl = DataLoader(text_ds, batch_size=config.max_batch_size, num_workers=4, pin_memory=True)
+    audio1_dl = DataLoader(LibreSpeechDataset(), batch_size=config.max_batch_size,
+                           collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
+    audio2_dl = DataLoader(MFCV13(), batch_size=config.max_batch_size,
+                           collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
+
+    return CyclingDataLoader(audio1_dl, audio2_dl, text_dl)
 
 
 def pad_audio_sequence(batch: List[torch.Tensor]) -> torch.Tensor:
@@ -104,74 +112,29 @@ def collate_pad_audio_batch_fn(batch: List[Dict]) -> Dict:
     }
 
 
-model = SmolLM(config, True).to(device=device, dtype=torch.bfloat16)
+if __name__ == '__main__':
+    model = SmolLMLit(config)
+    dataloader = get_dataloader()
+    torch.cuda.empty_cache()
 
-tokenizer = Tokenizer.from_file('weights/tokenizer.json')
+    trainer = Trainer(accelerator="gpu",
+                      precision="bf16-true",
+                      max_epochs=config.epochs,
+                      enable_progress_bar=True,
+                      log_every_n_steps=10,
+                      gradient_clip_val=1.0,
+                      accumulate_grad_batches=config.grad_accumulation_steps,
+                      default_root_dir=model_path,
+                      callbacks=[ModelCheckpoint(dirpath=model_path, save_last=True, filename='last'), ]
+                      )
 
-count_parameters(model)
+    if os.path.exists(model_path + 'last.ckpt'):
+        ckpt_path = model_path + 'last.ckpt'
+        print("Resuming training from checkpoint: ", ckpt_path)
+    else:
+        ckpt_path = None
+        print("Starting training from scratch.")
 
-accelerator = Accelerator(gradient_accumulation_steps=config.grad_accumulation_steps)
-compile_model(model)
-model = accelerator.prepare_model(model)
+    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=ckpt_path)
 
-optimizer_sd = get_state_dict(os.path.join(model_path + 'optimizer.pt'), device=device)
-
-optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=2e-4, betas=(0.9, 0.95), weight_decay=0.1)
-optimizer = accelerator.prepare_optimizer(optimizer, device_placement=True)
-
-if optimizer_sd is not None:
-    optimizer.load_state_dict(optimizer_sd)
-
-if os.path.exists(os.path.join(model_path, 'model.safetensors')):
-    state_dict = get_state_dict_from_safetensors(os.path.join(model_path, 'model.safetensors'), device)
-    model.load_state_dict(state_dict)
-    del state_dict
-    print("Loaded model weights.")
-
-torch.cuda.empty_cache()
-text_ds = NPDataset('./data/processed/train.bin', config.max_position_embeddings)
-text_dl = DataLoader(text_ds, batch_size=config.max_batch_size, )
-audio1_dl = DataLoader(LibreSpeechDataset(tokenizer=tokenizer), batch_size=config.max_batch_size,
-                       collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
-audio2_dl = DataLoader(MFCV13(tokenizer=tokenizer), batch_size=config.max_batch_size,
-                       collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
-
-dataloaders = CyclingDataLoader(audio1_dl, audio2_dl, text_dl)
-
-accumulated_loss = 0
-start_time, time_delta = time.time(), 0.
-print_step = max(250, config.grad_accumulation_steps)
-model.train()
-print(f"Tokens per batch: {config.max_batch_size * config.grad_accumulation_steps * config.max_position_embeddings}")
-
-i = 0
-for item in dataloaders:
-    with accelerator.accumulate(model):
-        loss = model(**move_to_device(item)).loss
-    accumulated_loss += loss.item()
-    accelerator.backward(loss)  # backward pass
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-    optimizer.step()
-    optimizer.zero_grad()
-
-    if i % print_step == 0 and i > 0:
-        time_delta = time.time() - start_time
-        avg_loss = accumulated_loss / print_step
-        avg_perplexity = torch.exp(torch.tensor(avg_loss))
-        batch_per_sec = print_step / time_delta
-
-        accelerator.print(f"Step: {i} | Loss: {avg_loss:.3f} | Perplexity: {avg_perplexity:.3f} | "
-                          f"Elapsed Time: {time_delta:.1f}s | Batch/sec: {batch_per_sec:.1f}")
-
-        start_time = time.time()
-        accumulated_loss = 0
-
-    if i % 5000 == 0 and i > 0:
-        save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
-        save_state_dict(optimizer.state_dict(), os.path.join(model_path, 'optimizer.pt'))
-
-    i += 1
-
-save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
-save_state_dict(optimizer.state_dict(), os.path.join(model_path, 'optimizer.pt'))
+    save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))

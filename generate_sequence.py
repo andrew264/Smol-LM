@@ -46,7 +46,7 @@ if __name__ == '__main__':
     )
     model.generation_config = generation_config
 
-    stopping_tokens = [torch.tensor(128000, device=device), torch.tensor(128001, device=device)]
+    stopping_tokens = [torch.tensor([128000], device=device), torch.tensor([128001], device=device)]
     stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
     print('model loaded')

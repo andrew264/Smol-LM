@@ -119,6 +119,7 @@ class SmolLMLit(L.LightningModule):
 
         return causal_mask
 
+    @torch.compile
     def forward(
             self,
             input_ids: Tensor = None,
@@ -126,13 +127,14 @@ class SmolLMLit(L.LightningModule):
             attention_mask: Optional[Tensor] = None,
             labels: Optional[torch.LongTensor] = None,
     ):
-        position_ids = torch.arange(input_ids.size(1), device=input_ids.device).unsqueeze(0)
 
         x = self.embed_tokens(input_ids)
 
         if audio is not None:
             audio_features = self.audio_head(audio)
             x, attention_mask, labels = merge_audio_features(x, attention_mask, labels, audio_features, self.max_length)
+
+        position_ids = torch.arange(x.size(1), device=x.device).unsqueeze(0)
 
         causal_mask = self._generate_causal_mask(attention_mask, x)
 
@@ -154,7 +156,7 @@ class SmolLMLit(L.LightningModule):
         else:
             logits = F.linear(x, self.embed_tokens.weight)
 
-        return logits
+        return logits, labels
 
     def training_step(self, batch: dict, batch_idx):
         input_ids = batch.get("input_ids")
@@ -162,7 +164,9 @@ class SmolLMLit(L.LightningModule):
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits = self.forward(input_ids, audio, attention_mask, labels)
+        logits, labels2 = self.forward(input_ids, audio, attention_mask, labels)
+        if labels2 is not None:
+            labels = labels2
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
         self.log("train_loss", loss, on_step=True, on_epoch=True, )
