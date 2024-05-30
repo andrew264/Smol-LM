@@ -3,13 +3,6 @@ from typing import Type
 import torch
 from torch import nn
 
-try:
-    from apex.normalization import FusedRMSNorm
-
-    print("Found FusedRMSNorm")
-except ImportError:
-    FusedRMSNorm = None
-
 
 class RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
@@ -27,6 +20,8 @@ class RMSNorm(nn.Module):
 
 
 def get_rmsnorm_class() -> Type[nn.Module]:
-    if FusedRMSNorm is not None:
-        return FusedRMSNorm
-    return RMSNorm
+    try:
+        from flash_attn.ops.rms_norm import RMSNorm as FlashRMSNorm
+        return FlashRMSNorm
+    except ImportError:
+        return RMSNorm

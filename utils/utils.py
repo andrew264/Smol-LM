@@ -9,7 +9,7 @@ from safetensors.torch import save_file as safe_save_file
 from transformers import StoppingCriteria, StoppingCriteriaList, GenerationConfig
 
 
-def get_state_dict_from_safetensors(path: str | List[str], device: torch.device) -> dict:
+def get_state_dict_from_safetensors(path: str | List[str], device: torch.device) -> Optional[dict]:
     state_dict = {}
     if isinstance(path, str):
         path = [path]
@@ -25,7 +25,7 @@ def get_state_dict_from_safetensors(path: str | List[str], device: torch.device)
         print(f"Loaded weights from {path} in {time.time() - start:.3f}s.")
     else:
         print("No weights found.")
-    return state_dict
+    return state_dict if state_dict else None
 
 
 def save_as_safetensors(state_dict: dict, path: str):
@@ -98,7 +98,7 @@ def get_generation_config(max_new_length: int) -> GenerationConfig:
     return GenerationConfig(
         max_new_tokens=max_new_length,
         do_sample=True,
-        num_beams=1,
+        num_beams=2,
         use_cache=True,
         pad_token_id=0,
         bos_token_id=1,

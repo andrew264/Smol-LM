@@ -4,10 +4,12 @@ from typing import Optional, Tuple
 import torch
 from aiohttp import web
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopKLogitsWarper, RepetitionPenaltyLogitsProcessor
+from transformers import LogitsProcessorList, TopPLogitsWarper, TemperatureLogitsWarper, \
+    RepetitionPenaltyLogitsProcessor
 
 from model import ModelConfig, LoRAConfig, InternalCache, SmolLM
-from utils import inject_lora_adapter, get_state_dict_from_safetensors, compile_model, get_stopping_criteria, get_generation_config
+from utils import inject_lora_adapter, get_state_dict_from_safetensors, compile_model, get_stopping_criteria, \
+    get_generation_config
 
 device = torch.device("cuda:0")
 dtype = torch.bfloat16
@@ -15,7 +17,7 @@ path = './ft-weights/'
 
 config = ModelConfig.from_json(os.path.join(path, 'config.json'))
 tokenizer = Tokenizer.from_file(os.path.join(path, 'tokenizer.json'))
-config.max_batch_size = 1
+config.max_batch_size = 2
 
 if os.path.exists(os.path.join(path, 'lora.json')):
     lora_params = LoRAConfig.from_json(os.path.join(path, 'lora.json'))
@@ -39,20 +41,23 @@ compile_model(model)
 torch.cuda.empty_cache()
 model.bos_token_id = tokenizer.token_to_id("<s>")
 
-generation_config = get_generation_config(1024)
+generation_config = get_generation_config(2000)
 stopping_criteria = get_stopping_criteria(device=device)
 model.generation_config = generation_config
 
 max_length = config.max_position_embeddings - 128
 
 
-def get_response(input_text, top_k: Optional[int], penalty: Optional[float]) -> Tuple[str, int]:
+def get_response(input_text, top_p: Optional[float], penalty: Optional[float], temp: Optional[float]) -> Tuple[
+    str, int]:
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
     if penalty is not None and penalty > 0:
         processor.append(RepetitionPenaltyLogitsProcessor(penalty=penalty))
-    if top_k is not None and top_k > 0:
-        processor.append(TopKLogitsWarper(top_k=top_k))
+    if top_p is not None and top_p > 0:
+        processor.append(TopPLogitsWarper(top_p=top_p))
+    if temp is not None and temp > 0:
+        processor.append(TemperatureLogitsWarper(temperature=temp))
 
     encoded = tokenizer.encode(input_text)
     tokens = torch.tensor(encoded.ids[-max_length:]).unsqueeze(0).to(device)
@@ -79,9 +84,10 @@ def get_response(input_text, top_k: Optional[int], penalty: Optional[float]) -> 
 async def handle(request):
     data = await request.json()
     input_text = data['input']
-    top_k = data.get('top_k', )
-    penalty = data.get('penalty', )
-    output_text, length = get_response(input_text, top_k, penalty)
+    top_p = data.get('top_p', 0.95)
+    penalty = data.get('penalty', 1.15)
+    temp = data.get('temp', 0.7)
+    output_text, length = get_response(input_text, top_p, penalty, temp)
 
     return web.json_response({'response': output_text, 'cur_length': length,
                               'max_length': config.max_position_embeddings, })

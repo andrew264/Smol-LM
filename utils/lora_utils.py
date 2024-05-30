@@ -1,5 +1,5 @@
 import time
-from typing import Optional, List, TypeVar
+from typing import Optional, TypeVar
 
 import torch
 from torch import nn
@@ -48,31 +48,3 @@ def get_lora_state_dict(model: nn.Module) -> dict:
         if 'lora' in param_name:
             state_dict[param_name] = param
     return state_dict
-
-
-def get_lora_plus_optimizer_group(model: nn.Module,
-                                  lr: float,
-                                  lr_ratio: int = 4,
-                                  lr_embedding: float = 1e-6,
-                                  ) -> List[dict]:
-    param_groups = {
-        "groupA": {},
-        "groupB": {},
-        "embedding": {},
-    }
-    for param_name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if 'tok_embeddings' in param_name:
-            param_groups["embedding"][param_name] = param
-        elif 'lora_A' in param_name:
-            param_groups["groupA"][param_name] = param
-        elif 'lora_B' in param_name:
-            param_groups["groupB"][param_name] = param
-
-    optimizer_grouped_parameters = [
-        {"params": param_groups["groupA"].values(), "lr": lr},
-        {"params": param_groups["groupB"].values(), "lr": lr * lr_ratio},  # learn the B group faster than A
-        {"params": param_groups["embedding"].values(), "lr": lr_embedding},
-    ]
-    return optimizer_grouped_parameters

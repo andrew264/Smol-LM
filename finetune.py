@@ -6,20 +6,15 @@ import torch
 from lightning import Trainer
 from torch.utils.data import DataLoader
 
-from main import validate_model  # noqa
 from model import ModelConfig, LoRAConfig
 from model import SmolLMLit
 from utils import (DiscordConversations,
                    get_state_dict_from_safetensors, compile_model,
-                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors)  # noqa
+                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
-torch.set_float32_matmul_precision('medium')
-
-
-def move_to_device(batch):
-    return {k: v.to(device) for k, v in batch.items()}
+torch.set_float32_matmul_precision('high')
 
 
 def train(_path: str,
@@ -44,12 +39,12 @@ def train(_path: str,
 
     # Training loop
     torch.cuda.empty_cache()
-    print("Starting training...")
 
     trainer = Trainer(accelerator="gpu",
                       precision="bf16-true",
                       max_epochs=config.epochs,
                       enable_progress_bar=True,
+                      log_every_n_steps=2,
                       gradient_clip_val=1.0,
                       accumulate_grad_batches=config.grad_accumulation_steps)
     trainer.fit(model, training_data, validation_data)
@@ -113,4 +108,3 @@ if __name__ == '__main__':
           lora_config=lora_params,
           use_scheduler=True,
           )
-    # validate_model(None, dataloader, True)

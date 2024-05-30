@@ -10,12 +10,12 @@ from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import get_cosine_schedule_with_warmup
 
-from utils import get_lora_plus_optimizer_group
 from .audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
-from .utils import LINEAR, hf_load_hook, merge_audio_features, get_optimizer_grouped_parameters
+from .utils import (LINEAR, hf_load_hook, merge_audio_features, get_optimizer_grouped_parameters,
+                    get_lora_plus_optimizer_group)
 
 try:
     from flash_attn.losses.cross_entropy import CrossEntropyLoss
@@ -162,13 +162,15 @@ class SmolLMLit(L.LightningModule):
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits = self(input_ids, audio, attention_mask, labels)
-
+        logits = self.forward(input_ids, audio, attention_mask, labels)
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
         self.log("train_loss", loss, on_step=True, on_epoch=True, )
         self.log("train_ppl", torch.exp(loss), on_step=True, on_epoch=True, )
-        self.log("lr", self.trainer.optimizers[0].param_groups[0]["lr"], on_step=True, on_epoch=False, )
+
+        lrs = [param_group['lr'] for param_group in self.trainer.optimizers[0].param_groups]
+        for i, lr in enumerate(lrs):
+            self.log(f"lr_{i}", lr, on_step=True, on_epoch=True, )
 
         return loss
 

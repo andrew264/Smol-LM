@@ -15,5 +15,4 @@ langchain-community
 chromadb
 sentence-transformers
 jupyter
-apex
 lightning[extra]

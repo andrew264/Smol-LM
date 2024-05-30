@@ -1,7 +1,8 @@
+import os
+
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file as safe_save_file
-import os
 
 
 def get_updated_key(k: str) -> str:

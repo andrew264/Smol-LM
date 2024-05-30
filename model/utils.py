@@ -1,4 +1,4 @@
-from typing import Union, Optional
+from typing import Union, Optional, List
 
 import torch
 from torch import nn, Tensor
@@ -63,29 +63,47 @@ def merge_audio_features(input_embeds: Tensor,
     return combined_features, attention_mask, truncated_labels
 
 
-def get_optimizer_grouped_parameters(model: nn.Module, weight_decay) -> list[dict]:  # from nano gpt repo
-    decay_denylist = ["embed_tokens.weight"]
-    # start with all the candidate parameters
-    decay = set()
-    no_decay = set()
-    param_dict = {}
-    for name, param in model.named_parameters():
-        param_dict[name] = param
-        if param.ndimension() == 1 or any(nd in name for nd in decay_denylist):
-            no_decay.add(name)
-        else:
-            decay.add(name)
+def get_optimizer_grouped_parameters(model: nn.Module, weight_decay: float) -> list[dict]:  # from llm.c repo
+    param_dict = {pn: p for pn, p in model.named_parameters()}
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
 
-    inter_params = decay & no_decay
-    union_params = decay | no_decay
-    assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
-    assert len(param_dict.keys() - union_params) == 0, \
-        "parameters %s were not separated into either decay/no_decay set!" \
-        % (str(param_dict.keys() - union_params),)
-
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
     optim_groups = [
-        {'params': [param_dict[pn] for pn in sorted(list(no_decay))], 'weight_decay': 0.0},
-        {'params': [param_dict[pn] for pn in sorted(list(decay))], 'weight_decay': weight_decay},
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': nodecay_params, 'weight_decay': 0.0}
     ]
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+    print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
 
     return optim_groups
+
+
+def get_lora_plus_optimizer_group(model: nn.Module,
+                                  lr: float,
+                                  lr_ratio: int = 4,
+                                  lr_embedding: float = 1e-6,
+                                  ) -> List[dict]:
+    param_groups = {
+        "groupA": {},
+        "groupB": {},
+        "embedding": {},
+    }
+    for param_name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if 'tok_embeddings' in param_name:
+            param_groups["embedding"][param_name] = param
+        elif 'lora_A' in param_name:
+            param_groups["groupA"][param_name] = param
+        elif 'lora_B' in param_name:
+            param_groups["groupB"][param_name] = param
+
+    optimizer_grouped_parameters = [
+        {"params": param_groups["groupA"].values(), "lr": lr},
+        {"params": param_groups["groupB"].values(), "lr": lr * lr_ratio},  # learn the B group faster than A
+        {"params": param_groups["embedding"].values(), "lr": lr_embedding},
+    ]
+    return optimizer_grouped_parameters

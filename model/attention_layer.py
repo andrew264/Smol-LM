@@ -90,7 +90,7 @@ class AttentionBlock(nn.Module):
     def forward(self,
                 hidden_states: Tensor,
                 attention_mask: Optional[Tensor],
-                position_ids: Optional[Tensor] = None,
+                position_ids: Optional[Tensor],
                 cache_position: Optional[Tensor] = None,
                 ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
