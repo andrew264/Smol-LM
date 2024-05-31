@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Optional
 
 import torch.nn as nn
 from torch import Tensor
@@ -22,7 +22,7 @@ class Block(nn.Module):
     def forward(self, hidden_states: Tensor,
                 attention_mask: Optional[Tensor] = None,
                 position_ids: Optional[Tensor] = None,
-                cache_position: Optional[Tensor] = None, ) -> Tuple[Tensor, Optional[Tensor]]:
+                cache_position: Optional[Tensor] = None, ) -> Tensor:
         # Self-attention
         residual = hidden_states
         x = self.input_layernorm(hidden_states)

@@ -29,7 +29,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     main_input_name = "inputs_embeds"
     _supports_cache_class = True
 
-    def __init__(self, config: ModelConfig, enable_audio: bool = False) -> None:
+    def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.config = config
 
@@ -42,7 +42,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.layers = nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers))
         self.norm = get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps)
 
-        if enable_audio:
+        if config.has_audio:
             self.audio_head = AudioHead(config)
 
         if not self.tie_word_embeddings:

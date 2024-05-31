@@ -10,6 +10,36 @@ from .rotary import RotaryEmbedding, apply_rotary_pos_emb
 from .utils import LINEAR
 
 
+def sdpa(query_states: Tensor,
+         key_states: Tensor,
+         value_states: Tensor,
+         attention_mask: Tensor,
+         num_key_value_groups: int,
+         dropout: float = 0.0,
+         is_causal: bool = False) -> Tensor:
+    # transpose q, k, v for F.scaled_dot_product_attention
+    query_states = query_states.transpose(1, 2)
+    key_states = key_states.transpose(1, 2)
+    value_states = value_states.transpose(1, 2)
+
+    if num_key_value_groups > 1:
+        key_states = key_states.repeat_interleave(num_key_value_groups, dim=1)
+        value_states = value_states.repeat_interleave(num_key_value_groups, dim=1)
+
+    if attention_mask is not None:
+        attention_mask = attention_mask[:, :, :, : key_states.shape[2]]
+
+    attn_output = F.scaled_dot_product_attention(
+        query_states,
+        key_states,
+        value_states,
+        attn_mask=attention_mask,
+        dropout_p=dropout,
+        is_causal=is_causal,
+    )
+    return attn_output.transpose(1, 2)
+
+
 class AttentionBlock(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
@@ -22,6 +52,7 @@ class AttentionBlock(nn.Module):
         self.max_position_embeddings = config.max_position_embeddings
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.attention_dropout = config.attention_dropout
+        self.key_value_hidden_size = self.num_key_value_heads * self.head_dim
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -35,7 +66,7 @@ class AttentionBlock(nn.Module):
             )
 
         self.qkv_proj: LINEAR = nn.Linear(self.hidden_size,
-                                          self.hidden_size + 2 * self.num_key_value_heads * self.head_dim,
+                                          self.hidden_size + 2 * self.key_value_hidden_size,
                                           bias=config.attention_qkv_bias)
         self.o_proj: LINEAR = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_out_bias)
 
@@ -99,8 +130,8 @@ class AttentionBlock(nn.Module):
         query_states, key_states, value_states = qkv_states.split(
             [
                 self.hidden_size,
-                self.num_key_value_heads * self.head_dim,
-                self.num_key_value_heads * self.head_dim,
+                self.key_value_hidden_size,
+                self.key_value_hidden_size,
             ],
             dim=2,
         )
@@ -114,34 +145,11 @@ class AttentionBlock(nn.Module):
         if cache_position is not None and not self.training:
             key_states, value_states = self._update_cache(key_states, value_states, cache_position)
 
-        attn_output = self._sdpa(query_states, key_states, value_states,
-                                 attention_mask=attention_mask,
-                                 dropout=self.attention_dropout,
-                                 is_causal=is_causal)
+        attn_output = sdpa(query_states, key_states, value_states,
+                           attention_mask=attention_mask,
+                           num_key_value_groups=self.num_key_value_groups,
+                           dropout=self.attention_dropout if self.training else 0.0,
+                           is_causal=is_causal)
         attn_output = attn_output.contiguous().view(bsz, seqlen, self.hidden_size)
         attn_output = self.o_proj(attn_output)
         return attn_output
-
-    def _sdpa(self, query_states: Tensor, key_states: Tensor, value_states: Tensor,
-              attention_mask: Tensor, dropout: float = 0.0, is_causal: bool = False) -> Tensor:
-        # transpose q, k, v for F.scaled_dot_product_attention
-        query_states = query_states.transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
-        value_states = value_states.transpose(1, 2)
-
-        if self.num_key_value_heads > 1:
-            key_states = key_states.repeat_interleave(self.num_key_value_groups, dim=1)
-            value_states = value_states.repeat_interleave(self.num_key_value_groups, dim=1)
-
-        if attention_mask is not None:
-            attention_mask = attention_mask[:, :, :, : key_states.shape[2]]
-
-        attn_output = F.scaled_dot_product_attention(
-            query_states,
-            key_states,
-            value_states,
-            attn_mask=attention_mask,
-            dropout_p=dropout if self.training else 0.0,
-            is_causal=is_causal,
-        )
-        return attn_output.transpose(1, 2)
