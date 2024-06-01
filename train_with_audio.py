@@ -3,7 +3,6 @@ import os
 from typing import List, Dict
 
 import torch
-import torchaudio.functional as F
 from datasets import load_dataset
 from lightning import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -12,7 +11,7 @@ from torch.utils.data import IterableDataset, DataLoader
 
 from main import NPDataset
 from model import ModelConfig, SmolLMLit
-from utils import save_as_safetensors, CyclingDataLoader
+from utils import save_as_safetensors, CyclingDataLoader, get_state_dict_from_safetensors
 
 model_path = './weights/test/'
 tokenizer = Tokenizer.from_file('weights/tokenizer.json')
@@ -29,7 +28,8 @@ class LibreSpeechDataset(IterableDataset):
             audio = item['audio']['array']
             sentence = tokenizer.encode("<|audio_end|>" + item['text'].lower() + "<|end_of_text|>",
                                         add_special_tokens=False)
-            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio.tolist()}
+            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask,
+                   "audio": audio, "sampling_rate": item['audio']['sampling_rate']}
 
 
 class MFCV13(IterableDataset):
@@ -45,26 +45,13 @@ class MFCV13(IterableDataset):
                                   self._data['other']):
             audio = it['audio']['array']
             sr = it['audio']['sampling_rate']
-            audio = F.resample(torch.tensor(audio), sr, 16000, lowpass_filter_width=8)
             sentence = tokenizer.encode("<|audio_end|>" + it['sentence'] + "<|end_of_text|>",
                                         add_special_tokens=False)
-            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio.tolist()}
+            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask,
+                   "audio": audio, "sampling_rate": sr}
 
 
-config = ModelConfig()
-config.vocab_size = tokenizer.get_vocab_size()
-config.tie_word_embeddings = True
-config.hidden_size = 768
-config.intermediate_size = 3072
-config.num_hidden_layers = 10
-config.num_attention_heads = 12
-config.max_position_embeddings = 2048
-config.num_key_value_heads = 6
-config.max_batch_size = 2
-config.grad_accumulation_steps = 50
-config.gradient_checkpointing_percent = 0.0
-config.has_audio = True
-config.lr = 5e-4
+config = ModelConfig().from_json('./weights/test/config.json')
 
 MAX_LEN = config.max_position_embeddings
 
@@ -85,13 +72,8 @@ def pad_audio_sequence(batch: List[torch.Tensor]) -> torch.Tensor:
 
 
 def collate_pad_audio_batch_fn(batch: List[Dict]) -> Dict:
-    audio_list = []
-    for b in batch:
-        audio_tensor = torch.tensor(b['audio'], dtype=torch.float32)
-        audio_tensor = (audio_tensor - audio_tensor.mean()) / audio_tensor.std()
-        audio_list.append(audio_tensor)
-    audio = pad_audio_sequence(audio_list)
-
+    audio_list = [b['audio'] for b in batch]
+    sampling_rate = [b['sampling_rate'] for b in batch]
     max_len = max(len(b['input_ids']) for b in batch)
     batch_size = len(batch)
     input_ids = torch.zeros((batch_size, max_len), dtype=torch.long)
@@ -108,15 +90,20 @@ def collate_pad_audio_batch_fn(batch: List[Dict]) -> Dict:
         "input_ids": input_ids,
         "attention_mask": attention_mask,
         "labels": labels,
-        "audio": audio
+        "audio": audio_list,
+        "sampling_rate": sampling_rate
     }
 
 
 if __name__ == '__main__':
     model = SmolLMLit(config)
+    model_sd = get_state_dict_from_safetensors(os.path.join(model_path, 'model.safetensors'), torch.device('cuda'))
+    if model_sd is not None:
+        model.load_state_dict(model_sd)
     dataloader = get_dataloader()
     torch.cuda.empty_cache()
 
+    checkpoint_callback = ModelCheckpoint(dirpath=model_path, save_last=True, filename='last', every_n_train_steps=5000)
     trainer = Trainer(accelerator="gpu",
                       precision="bf16-true",
                       max_epochs=config.epochs,
@@ -125,7 +112,7 @@ if __name__ == '__main__':
                       gradient_clip_val=1.0,
                       accumulate_grad_batches=config.grad_accumulation_steps,
                       default_root_dir=model_path,
-                      callbacks=[ModelCheckpoint(dirpath=model_path, save_last=True, filename='last'), ]
+                      callbacks=[checkpoint_callback, ]
                       )
 
     if os.path.exists(model_path + 'last.ckpt'):

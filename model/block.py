@@ -10,9 +10,9 @@ from .norm import get_rmsnorm_class
 
 
 class Block(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, causal: Optional[bool] = None) -> None:
         super().__init__()
-        self.attention_block = AttentionBlock(config)
+        self.attention_block = AttentionBlock(config, causal=causal)
         self.feed_forward = FeedForward(config)
 
         NORM_CLASS = get_rmsnorm_class()

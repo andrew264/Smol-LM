@@ -36,6 +36,7 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
+@torch.cuda.amp.autocast(enabled=False)
 def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
                          unsqueeze_dim: int = 2):
     """Applies Rotary Position Embedding to the query and key tensors.
@@ -56,11 +57,9 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
         `tuple(torch.Tensor)` comprising the query and key tensors rotated using the Rotary Position Embedding.
     """
     dtype = q.dtype
-    device_type = q.device.type
-    q, k = q.to(dtype=torch.float), k.to(dtype=torch.float)
-    with torch.autocast(device_type=device_type, enabled=False):
-        cos = cos.unsqueeze(unsqueeze_dim)
-        sin = sin.unsqueeze(unsqueeze_dim)
-        q_embed = (q * cos) + (rotate_half(q) * sin)
-        k_embed = (k * cos) + (rotate_half(k) * sin)
+    q, k = q.to(dtype=torch.float32), k.to(dtype=torch.float32)
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed.to(dtype=dtype), k_embed.to(dtype=dtype)

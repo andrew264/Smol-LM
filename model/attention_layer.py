@@ -41,9 +41,10 @@ def sdpa(query_states: Tensor,
 
 
 class AttentionBlock(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, causal: Optional[bool] = None) -> None:
         super().__init__()
         self.config = config
+        self.causal = causal
 
         self.hidden_size = config.hidden_size
         self.head_dim = config.hidden_size // config.num_attention_heads
@@ -125,7 +126,10 @@ class AttentionBlock(nn.Module):
                 cache_position: Optional[Tensor] = None,
                 ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
-        is_causal = True if attention_mask is None and seqlen > 1 else False
+        if self.causal is None:
+            is_causal = True if attention_mask is None and seqlen > 1 else False
+        else:
+            is_causal = self.causal
         qkv_states = self.qkv_proj(hidden_states)
         query_states, key_states, value_states = qkv_states.split(
             [

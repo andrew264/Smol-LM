@@ -1,8 +1,9 @@
 from functools import partial
-from typing import Optional
+from typing import Optional, List
 
 import bitsandbytes as bnb
 import lightning as L
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -119,19 +120,20 @@ class SmolLMLit(L.LightningModule):
 
         return causal_mask
 
-    @torch.compile
+    # @torch.compile
     def forward(
             self,
             input_ids: Tensor = None,
-            audio: Optional[Tensor] = None,
+            audio: List[Tensor | np.ndarray] = None,
             attention_mask: Optional[Tensor] = None,
             labels: Optional[torch.LongTensor] = None,
+            sampling_rate: List[int] = None,
     ):
 
         x = self.embed_tokens(input_ids)
 
         if audio is not None:
-            audio_features = self.audio_head(audio)
+            audio_features = self.audio_head({"audio": audio, "sampling_rate": sampling_rate})
             x, attention_mask, labels = merge_audio_features(x, attention_mask, labels, audio_features, self.max_length)
 
         position_ids = torch.arange(x.size(1), device=x.device).unsqueeze(0)
@@ -164,7 +166,8 @@ class SmolLMLit(L.LightningModule):
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits, labels2 = self.forward(input_ids, audio, attention_mask, labels)
+        logits, labels2 = self.forward(input_ids, audio, attention_mask, labels,
+                                       sampling_rate=batch.get("sampling_rate"))
         if labels2 is not None:
             labels = labels2
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
@@ -184,7 +187,8 @@ class SmolLMLit(L.LightningModule):
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits = self(input_ids, audio, attention_mask, labels)
+        logits = self(input_ids, audio, attention_mask, labels,
+                      sampling_rate=batch.get("sampling_rate"))
 
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
