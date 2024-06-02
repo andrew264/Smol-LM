@@ -10,7 +10,7 @@ from tokenizers import Tokenizer
 from torch.utils.data import IterableDataset, DataLoader
 
 from main import NPDataset
-from model import ModelConfig, SmolLMLit
+from model import ModelConfig, SmolLMLit, AudioFeatureExtractor
 from utils import save_as_safetensors, CyclingDataLoader, get_state_dict_from_safetensors
 
 model_path = './weights/test/'
@@ -22,14 +22,15 @@ class LibreSpeechDataset(IterableDataset):
         super().__init__()
         self._data = load_dataset("/home/andrew264/datasets/librispeech_asr", "clean",
                                   split=split, streaming=streaming, trust_remote_code=True)
+        self.feature_extractor = AudioFeatureExtractor()
 
     def __iter__(self):
         for item in self._data:
-            audio = item['audio']['array']
             sentence = tokenizer.encode("<|audio_end|>" + item['text'].lower() + "<|end_of_text|>",
                                         add_special_tokens=False)
-            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask,
-                   "audio": audio, "sampling_rate": item['audio']['sampling_rate']}
+            audio = self.feature_extractor({"audio": item['audio']['array'],
+                                            "sampling_rate": item['audio']['sampling_rate']})
+            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio}
 
 
 class MFCV13(IterableDataset):
@@ -37,18 +38,19 @@ class MFCV13(IterableDataset):
         super().__init__()
         self._data = load_dataset("/home/andrew264/datasets/common_voice_13_0", name=subset, streaming=streaming,
                                   trust_remote_code=True, num_proc=3, token=True)
+        self.feature_extractor = AudioFeatureExtractor()
 
     def __iter__(self):
         for it in itertools.chain(self._data['train'],
                                   self._data['test'],
                                   self._data['validation'],
                                   self._data['other']):
-            audio = it['audio']['array']
-            sr = it['audio']['sampling_rate']
+            audio = self.feature_extractor({"audio": it['audio']['array'],
+                                            "sampling_rate": it['audio']['sampling_rate']})
             sentence = tokenizer.encode("<|audio_end|>" + it['sentence'] + "<|end_of_text|>",
                                         add_special_tokens=False)
             yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask,
-                   "audio": audio, "sampling_rate": sr}
+                   "audio": audio}
 
 
 config = ModelConfig().from_json('./weights/test/config.json')
@@ -67,13 +69,8 @@ def get_dataloader():
     return CyclingDataLoader(audio1_dl, audio2_dl, text_dl)
 
 
-def pad_audio_sequence(batch: List[torch.Tensor]) -> torch.Tensor:
-    return torch.nn.utils.rnn.pad_sequence(batch, batch_first=True)
-
-
 def collate_pad_audio_batch_fn(batch: List[Dict]) -> Dict:
-    audio_list = [b['audio'] for b in batch]
-    sampling_rate = [b['sampling_rate'] for b in batch]
+    audio = torch.stack([b['audio'] for b in batch])
     max_len = max(len(b['input_ids']) for b in batch)
     batch_size = len(batch)
     input_ids = torch.zeros((batch_size, max_len), dtype=torch.long)
@@ -90,8 +87,7 @@ def collate_pad_audio_batch_fn(batch: List[Dict]) -> Dict:
         "input_ids": input_ids,
         "attention_mask": attention_mask,
         "labels": labels,
-        "audio": audio_list,
-        "sampling_rate": sampling_rate
+        "audio": audio,
     }
 
 
