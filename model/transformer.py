@@ -9,7 +9,7 @@ from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
-from .audio_head import AudioHead
+from model.modalities.audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class

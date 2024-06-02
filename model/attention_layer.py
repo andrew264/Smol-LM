@@ -3,41 +3,10 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.nn import functional as F
 
 from .config import ModelConfig
 from .rotary import RotaryEmbedding, apply_rotary_pos_emb
-from .utils import LINEAR
-
-
-def sdpa(query_states: Tensor,
-         key_states: Tensor,
-         value_states: Tensor,
-         attention_mask: Tensor,
-         num_key_value_groups: int,
-         dropout: float = 0.0,
-         is_causal: bool = False) -> Tensor:
-    # transpose q, k, v for F.scaled_dot_product_attention
-    query_states = query_states.transpose(1, 2)
-    key_states = key_states.transpose(1, 2)
-    value_states = value_states.transpose(1, 2)
-
-    if num_key_value_groups > 1:
-        key_states = key_states.repeat_interleave(num_key_value_groups, dim=1)
-        value_states = value_states.repeat_interleave(num_key_value_groups, dim=1)
-
-    if attention_mask is not None:
-        attention_mask = attention_mask[:, :, :, : key_states.shape[2]]
-
-    attn_output = F.scaled_dot_product_attention(
-        query_states,
-        key_states,
-        value_states,
-        attn_mask=attention_mask,
-        dropout_p=dropout,
-        is_causal=is_causal,
-    )
-    return attn_output.transpose(1, 2)
+from .utils import LINEAR, sdpa
 
 
 class AttentionBlock(nn.Module):

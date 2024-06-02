@@ -1,5 +1,6 @@
 torch
 torchaudio
+torchvision
 numpy
 accelerate
 tokenizers
@@ -16,3 +17,4 @@ chromadb
 sentence-transformers
 jupyter
 lightning[extra]
+einops

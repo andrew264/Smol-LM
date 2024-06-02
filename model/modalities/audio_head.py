@@ -1,4 +1,3 @@
-from copy import deepcopy
 from typing import List, Union, Dict
 
 import numpy as np
@@ -7,12 +6,12 @@ import torch.nn as nn
 from torchaudio.functional import resample
 from torchaudio.transforms import MelSpectrogram
 
-from .block import Block
-from .config import ModelConfig
+from model.config import ModelConfig
+from .simple_transformer import SimpleTransformer
 
 
 class ConvNorm(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding=0):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding=1):
         super().__init__()
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               bias=False)
@@ -33,25 +32,15 @@ class AudioHead(torch.nn.Module):
             ConvNorm(80, self.encoder_dim, 3, 1),
             ConvNorm(self.encoder_dim, self.encoder_dim, 3, 2),
         ])
+        self.transformer = SimpleTransformer(self.encoder_dim, 6, 4)
         self.proj = nn.Linear(self.encoder_dim, config.hidden_size)
-        config = deepcopy(config)
-        config.hidden_size = self.encoder_dim
-        config.intermediate_size = self.encoder_dim * 4
-        config.num_hidden_layers = 4
-        config.num_attention_heads = 6
-        config.num_key_value_heads = 6
-        self.attention_blocks = nn.ModuleList([
-            Block(config, causal=False) for _ in range(config.num_hidden_layers)
-        ])
 
     def forward(self, inputs: Dict[str, Union[torch.Tensor, np.ndarray, int]]):
         x = self.audio_preprocessor(inputs)
         for conv in self.conv_layers:
             x = conv(x)
         x = x.permute(0, 2, 1)
-        position_ids = torch.arange(x.size(1), device=x.device).unsqueeze(0)
-        for block in self.attention_blocks:
-            x = block(x, position_ids=position_ids)
+        x = self.transformer(x)
         return self.proj(x)
 
 

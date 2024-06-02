@@ -11,7 +11,7 @@ from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import get_cosine_schedule_with_warmup
 
-from .audio_head import AudioHead
+from model.modalities.audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
