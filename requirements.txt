@@ -18,3 +18,4 @@ sentence-transformers
 jupyter
 lightning[extra]
 einops
+datatrove[io]

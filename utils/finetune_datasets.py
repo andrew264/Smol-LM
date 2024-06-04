@@ -2,7 +2,7 @@ import glob
 import json
 from typing import List, Optional, Tuple
 
-from datasets import load_dataset
+from datatrove.pipeline.readers import ParquetReader
 from tokenizers import Tokenizer
 from torch.utils.data import Dataset
 
@@ -19,103 +19,29 @@ class DS(Dataset):
         self._data = None
         self.assistant_name = "sydney"
 
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def _get_id_label(self, role: Role, content: str) -> Tuple[List[int], List[int]]:
-        match role:
-            case Role.SYSTEM:
-                prefix = Role.SYSTEM.value
-            case Role.USER:
-                prefix = "\n" + Role.USER.value + "\n"
-            case Role.ASSISTANT:
-                prefix = f"\n<|{self.assistant_name}|>\n"
-            case _:
-                raise ValueError(f"Invalid role: {role}")
-
-        c = f"{prefix}{content.strip()}\n{self.EOT}"
-        enc = self._tokenizer.encode(c, add_special_tokens=False)
-        if role in (Role.SYSTEM, Role.USER):
-            labels = [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc.ids)
-        else:
-            labels = enc.ids
-        return enc.ids, labels
-
-
-class HFnoRobotsDataset(DS):
-    def __init__(self, tokenizer: Tokenizer, sys_prompt: str, ):
-        super().__init__(tokenizer, sys_prompt)
-        self._data = load_dataset("HuggingFaceH4/no_robots", split='train_sft')
-        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
-
-    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
-        row = self._data[idx]
-        ids, labels = [], []
-        ids.extend(self._enc_sys_prompt[0])
-        labels.extend(self._enc_sys_prompt[1])
-        for ex in row['messages']:
-            role = Role.USER if ex['role'] == 'user' else Role.ASSISTANT
-            id_, label = self._get_id_label(role, ex['content'])
-            ids.extend(id_)
-            labels.extend(label)
-        return ids, labels
-
-
-class SmallOrca(DS):
-    def __init__(self,
-                 tokenizer: Tokenizer,
-                 sys_prompt: str):
-        super().__init__(tokenizer, sys_prompt)
-        self._data = load_dataset("prince-canuma/SmallOrca", split='train')
-
-    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
-        data = self._data[idx]
-        ids, labels = [], []
-        for ex in data['messages']:
-            if ex['role'] == 'system':
-                role = Role.SYSTEM
-            elif ex['role'] == 'user':
-                role = Role.USER
-            else:
-                role = Role.ASSISTANT
-            id_, label = self._get_id_label(role, ex['content'])
-            ids.extend(id_)
-            labels.extend(label)
-        return ids, labels
-
-
-class WizardVicuna(DS):
-    def __init__(self, tokenizer: Tokenizer,
-                 sys_prompt: str):
-        super().__init__(tokenizer, sys_prompt)
-        self._data = load_dataset("cognitivecomputations/wizard_vicuna_70k_unfiltered", split='train')
-        self._enc_sys_prompt = self._get_id_label(Role.SYSTEM, sys_prompt)
-
-    def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
-        data = self._data[idx]
-        ids, labels = [], []
-        ids.extend(self._enc_sys_prompt[0])
-        labels.extend(self._enc_sys_prompt[1])
-        for ex in data['conversations']:
-            if ex['from'] == 'human':
-                role = Role.USER
-            else:
-                role = Role.ASSISTANT
-            id_, label = self._get_id_label(role, ex['value'])
-            ids.extend(id_)
-            labels.extend(label)
-        return ids, labels
-
 
 class DiscordConversations(Dataset):
     EOT = '</s>'
     CROSS_ENTROPY_IGNORE_IDX = -100
 
-    def __init__(self, path: str, tokenizer: Tokenizer, sys_prompt: str):
+    def __init__(self, path: str,
+                 tokenizer: Tokenizer,
+                 sys_prompt: str,
+                 pt_data_mix: int = 2,  # as this number increases, the ft data will be spread apart
+                 validation: bool = False):
         self._tokenizer = tokenizer
         self._sys_p = sys_prompt
         self.assistant_name = "sydney"
         self._files = glob.glob(f"{path}/**/*.json")
+        if not validation:
+            if pt_data_mix < 2:
+                raise ValueError("pt_data_mix should be at least 2 else there will be consequences")
+            self._pt_data = ParquetReader("/home/andrew264/datasets/fineweb-edu",
+                                          glob_pattern="sample/10BT/*.parquet",
+                                          read_metadata=False,
+                                          shuffle_files=True)()
+            self.pt_data_mix = pt_data_mix
+        self.validation = validation
         enc_sys_prompt = tokenizer.encode(f"{Role.SYSTEM.value}{sys_prompt.strip()}\n{self.EOT}",
                                           add_special_tokens=False)
         self._enc_sys_prompt = (enc_sys_prompt.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc_sys_prompt.ids))
@@ -123,7 +49,7 @@ class DiscordConversations(Dataset):
         self._response_head = (response_head.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(response_head.ids))
 
     def __len__(self) -> int:
-        return len(self._files)
+        return len(self._files) * self.pt_data_mix if not self.validation else len(self._files)
 
     def _get_id_label(self, role: str, content: str) -> Tuple[List[int], List[int]]:
         if role == self.assistant_name:
@@ -138,6 +64,11 @@ class DiscordConversations(Dataset):
             return enc.ids, labels
 
     def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
+        if not self.validation and idx % self.pt_data_mix != 0:
+            tokenized = self._tokenizer.encode(next(self._pt_data).text + f"\n{self.EOT}", add_special_tokens=False)
+            return tokenized.ids, tokenized.ids
+        if not self.validation:
+            idx = idx // self.pt_data_mix
         try:
             data = json.load(open(self._files[idx], 'r'))
         except json.decoder.JSONDecodeError as e:

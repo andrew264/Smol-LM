@@ -35,7 +35,6 @@ def train(_path: str,
 
     # Inject LoRA
     model = inject_lora_adapter(model, lora_config, )
-    compile_model(model)
 
     # Training loop
     torch.cuda.empty_cache()
@@ -57,7 +56,7 @@ def train(_path: str,
 if __name__ == '__main__':
     from tokenizers import Tokenizer
 
-    tokenizer_path = 'weights/tokenizer.json'
+    tokenizer_path = 'ft-weights/tokenizer.json'
     tokenizer = Tokenizer.from_file(path=tokenizer_path)
 
     path = './ft-weights/'
@@ -84,7 +83,7 @@ if __name__ == '__main__':
 
 
     def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) -> dict:
-        MAX_LEN = params.max_position_embeddings
+        MAX_LEN = 4096
         max_len = max([len(x[0]) for x in batch])
         input_ids = torch.stack([torch.tensor(x[0] + [0] * (max_len - len(x[0]))) for x in batch])
         labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (max_len - len(x[1]))) for x in batch])
@@ -95,10 +94,18 @@ if __name__ == '__main__':
                 "attention_mask": attention_mask[:, :MAX_LEN]}
 
 
-    dataset = DiscordConversations(path="data/finetune/conversations", tokenizer=tokenizer, sys_prompt=sys_prompt)
+    dataset = DiscordConversations(path="data/finetune/conversations",
+                                   tokenizer=tokenizer,
+                                   sys_prompt=sys_prompt,
+                                   pt_data_mix=2,
+                                   validation=False)
     dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
                             shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=4)
-    val_data = DataLoader(dataset, batch_size=params.max_batch_size,
+    val = DiscordConversations(path="data/finetune/conversations",
+                               tokenizer=tokenizer,
+                               sys_prompt=sys_prompt,
+                               validation=True)
+    val_data = DataLoader(val, batch_size=params.max_batch_size,
                           shuffle=False, collate_fn=collate_pad_batch_fn, num_workers=4)
 
     train(path,

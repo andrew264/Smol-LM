@@ -31,7 +31,7 @@ def write_datafile(filename: str, toks: np.ndarray):
 
 
 if __name__ == '__main__':
-    ds = '/home/andrew264/datasets/fineweb'
+    ds = '/home/andrew264/datasets/fineweb-edu'
     dataset = load_dataset(path=ds, name='sample-10BT', streaming=True, split='train',
                            trust_remote_code=True)
 

@@ -81,7 +81,7 @@ class SmolLMLit(L.LightningModule):
             )
         if self.use_scheduler:
             scheduler = get_cosine_schedule_with_warmup(optimizer,
-                                                        num_warmup_steps=50,
+                                                        num_warmup_steps=30,
                                                         num_training_steps=self.trainer.estimated_stepping_batches)
 
             lr_scheduler_config = {
@@ -119,7 +119,7 @@ class SmolLMLit(L.LightningModule):
 
         return causal_mask
 
-    @torch.compile
+    # @torch.compile
     def forward(
             self,
             input_ids: Tensor = None,
@@ -184,7 +184,7 @@ class SmolLMLit(L.LightningModule):
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits = self(input_ids, audio, attention_mask, labels)
+        logits, _ = self(input_ids, audio, attention_mask, labels)
 
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
