@@ -98,7 +98,7 @@ def get_generation_config(max_new_length: int) -> GenerationConfig:
     return GenerationConfig(
         max_new_tokens=max_new_length,
         do_sample=True,
-        num_beams=2,
+        num_beams=1,
         use_cache=True,
         pad_token_id=0,
         bos_token_id=1,

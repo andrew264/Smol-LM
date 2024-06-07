@@ -1,5 +1,6 @@
 import glob
 import json
+from random import randint
 from typing import List, Optional, Tuple
 
 from datatrove.pipeline.readers import ParquetReader
@@ -65,6 +66,8 @@ class DiscordConversations(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[List[int], List[int]]:
         if not self.validation and idx % self.pt_data_mix != 0:
+            for _ in range(randint(5, 100)):  # poor man's random access
+                next(self._pt_data)
             tokenized = self._tokenizer.encode(next(self._pt_data).text + f"\n{self.EOT}", add_special_tokens=False)
             return tokenized.ids, tokenized.ids
         if not self.validation:

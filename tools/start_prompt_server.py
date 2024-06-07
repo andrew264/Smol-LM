@@ -17,7 +17,7 @@ path = './ft-weights/'
 
 config = ModelConfig.from_json(os.path.join(path, 'config.json'))
 tokenizer = Tokenizer.from_file(os.path.join(path, 'tokenizer.json'))
-config.max_batch_size = 2
+config.max_batch_size = 1
 
 if os.path.exists(os.path.join(path, 'lora.json')):
     lora_params = LoRAConfig.from_json(os.path.join(path, 'lora.json'))

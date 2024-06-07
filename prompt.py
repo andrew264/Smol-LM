@@ -13,7 +13,7 @@ device = torch.device("cuda:0")
 
 if __name__ == '__main__':
     path = './ft-weights/'
-    num_beams = 2
+    num_beams = 1
 
     config = ModelConfig.from_json(os.path.join(path, 'config.json'))
     config.max_batch_size = num_beams

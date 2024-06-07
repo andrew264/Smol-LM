@@ -9,8 +9,7 @@ from torch.utils.data import DataLoader
 from model import ModelConfig, LoRAConfig
 from model import SmolLMLit
 from utils import (DiscordConversations,
-                   get_state_dict_from_safetensors, compile_model,
-                   inject_lora_adapter, get_lora_state_dict, save_as_safetensors)
+                   get_state_dict_from_safetensors, inject_lora_adapter, get_lora_state_dict, save_as_safetensors)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
@@ -43,7 +42,7 @@ def train(_path: str,
                       precision="bf16-true",
                       max_epochs=config.epochs,
                       enable_progress_bar=True,
-                      log_every_n_steps=2,
+                      log_every_n_steps=5,
                       gradient_clip_val=1.0,
                       accumulate_grad_batches=config.grad_accumulation_steps)
     trainer.fit(model, training_data, validation_data)
@@ -85,13 +84,21 @@ if __name__ == '__main__':
     def collate_pad_batch_fn(batch: List[Tuple[List[int], List[int]]]) -> dict:
         MAX_LEN = 4096
         max_len = max([len(x[0]) for x in batch])
+
         input_ids = torch.stack([torch.tensor(x[0] + [0] * (max_len - len(x[0]))) for x in batch])
         labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (max_len - len(x[1]))) for x in batch])
-        attention_mask = (input_ids != torch.tensor(0)).long()
-        # return input_ids[:, :MAX_LEN], labels[:, :MAX_LEN], attention_mask[:, :MAX_LEN]
-        return {"input_ids": input_ids[:, :MAX_LEN],
-                "labels": labels[:, :MAX_LEN],
-                "attention_mask": attention_mask[:, :MAX_LEN]}
+        attention_mask = (input_ids != 0).long()
+
+        if len(batch) == 1 and attention_mask.sum().item() == attention_mask.numel():
+            attention_mask = None
+
+        out = {
+            "input_ids": input_ids[:, :MAX_LEN],
+            "labels": labels[:, :MAX_LEN],
+        }
+        if attention_mask is not None:
+            out["attention_mask"] = attention_mask[:, :MAX_LEN]
+        return out
 
 
     dataset = DiscordConversations(path="data/finetune/conversations",
