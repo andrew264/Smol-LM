@@ -28,7 +28,6 @@ class AudioFeatureExtractor(nn.Module):
             n_mels=num_mel_bins,
             mel_scale="slaney"
         )
-        self.fix_applied = False
 
     @torch.no_grad()
     def forward(self, inputs: Dict[str, Union[np.ndarray, int]]) -> torch.Tensor:
