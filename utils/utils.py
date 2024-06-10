@@ -53,11 +53,12 @@ def get_state_dict(path: str, device: torch.device) -> Optional[dict]:
         return None
 
 
-def compile_model(model: torch.nn.Module, ) -> None:
+def compile_model(model: torch.nn.Module, ) -> torch.nn.Module:
     start = time.time()
-    torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
+    model.forward = torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     torch.cuda.synchronize()
     print(f"Compiled model in {time.time() - start:.3f}s.")
+    return model
 
 
 class StoppingCriteriaSub(StoppingCriteria):

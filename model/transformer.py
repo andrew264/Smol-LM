@@ -13,7 +13,7 @@ from model.modalities.audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
-from .utils import LINEAR, hf_load_hook, merge_audio_features
+from .utils import LINEAR, merge_audio_features
 
 try:
     from functools import partial
@@ -38,19 +38,21 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.checkpointing_layers = config.checkpointing_layers
         self.max_length = config.max_position_embeddings
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
-        self.layers = nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers))
-        self.norm = get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps)
+        self.model = nn.ModuleDict(dict(
+            embed_tokens=nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id),
+            layers=nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers)),
+            norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
+        ))
 
         if config.has_audio:
             self.audio_head = AudioHead(config)
 
-        if not self.tie_word_embeddings:
-            self.lm_head: LINEAR = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head: Optional[LINEAR] = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if self.tie_word_embeddings:
+            self.model.embed_tokens.weight = self.lm_head.weight
 
         self.loss_fn = CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
-        self._register_load_state_dict_pre_hook(hf_load_hook)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -66,8 +68,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     def resize_embeddings(self, new_num_tokens: int) -> None:
         pad_to_multiple_of = 8
         new_num_tokens = (new_num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of * pad_to_multiple_of
-        device = self.tok_embeddings.weight.device
-        dtype = self.tok_embeddings.weight.dtype
+        device = self.model.embed_tokens.weight.device
+        dtype = self.model.embed_tokens.weight.dtype
 
         new_embeddings = nn.Embedding(new_num_tokens, self.hidden_size, padding_idx=self.config.pad_token_id)
         new_embeddings.to(device=device, dtype=dtype)
@@ -77,7 +79,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         new_embeddings.weight.data[:num_tokens_to_copy, :] = self.tok_embeddings.weight.data[:num_tokens_to_copy, :]
 
         # replace the old embeddings with the new embeddings
-        self.embed_tokens = new_embeddings
+        self.model.embed_tokens = new_embeddings
 
         # resize the output layer
         new_lm_head = nn.Linear(self.hidden_size, new_num_tokens, bias=False).to(device=device, dtype=dtype)
@@ -118,7 +120,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
                     attention_mask = attention_mask[:, -1:]
 
         if input_ids is not None:
-            x = self.embed_tokens(input_ids)
+            x = self.model.embed_tokens(input_ids)
         else:
             x = inputs_embeds
 
@@ -137,18 +139,15 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         causal_mask = self._update_causal_mask(attention_mask, x, cache_position)
 
-        for layer in self.layers:
+        for layer in self.model.layers:
             x = layer(x,
                       attention_mask=causal_mask,
                       position_ids=position_ids,
                       cache_position=cache_position, )
 
-        x = self.norm(x)
+        x = self.model.norm(x)
 
-        if not self.tie_word_embeddings:
-            logits = self.lm_head(x)
-        else:
-            logits = F.linear(x, self.embed_tokens.weight)
+        logits = self.lm_head(x)
 
         loss = None
         if labels is not None:

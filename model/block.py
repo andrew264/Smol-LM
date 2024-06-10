@@ -12,8 +12,8 @@ from .norm import get_rmsnorm_class
 class Block(nn.Module):
     def __init__(self, config: ModelConfig, causal: Optional[bool] = None) -> None:
         super().__init__()
-        self.attention_block = AttentionBlock(config, causal=causal)
-        self.feed_forward = FeedForward(config)
+        self.self_attn = AttentionBlock(config, causal=causal)
+        self.mlp = FeedForward(config)
 
         NORM_CLASS = get_rmsnorm_class()
         self.input_layernorm = NORM_CLASS(config.hidden_size, config.rms_norm_eps)
@@ -26,15 +26,15 @@ class Block(nn.Module):
         # Self-attention
         residual = hidden_states
         x = self.input_layernorm(hidden_states)
-        x = self.attention_block(x,
-                                 attention_mask=attention_mask,
-                                 position_ids=position_ids,
-                                 cache_position=cache_position)
+        x = self.self_attn(x,
+                           attention_mask=attention_mask,
+                           position_ids=position_ids,
+                           cache_position=cache_position)
 
         residual = residual + x
 
         x = self.post_attention_layernorm(residual)
-        x = self.feed_forward(x)
+        x = self.mlp(x)
         x = residual + x
 
         return x

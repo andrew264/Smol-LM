@@ -9,24 +9,6 @@ from .lora import LoRALinear
 LINEAR = Union[nn.Linear, LoRALinear]
 
 
-def hf_load_hook(state_dict: dict, prefix, *args, **kwargs):
-    mappings = {
-        "model.": "",
-        ".self_attn.": ".attention_block.",
-        ".mlp.": ".feed_forward.",
-        ".block_sparse_moe.": ".feed_forward.",
-    }
-
-    def get_updated_key(key: str) -> str:
-        updated_key = str(key)
-        for old, new in mappings.items():
-            updated_key = updated_key.replace(old, new)
-        return updated_key
-
-    for k in list(state_dict.keys()):
-        state_dict[get_updated_key(k)] = state_dict.pop(k)
-
-
 def merge_audio_features(input_embeds: Tensor,
                          attention_mask: Optional[Tensor],
                          labels: Optional[Tensor],
@@ -95,7 +77,7 @@ def get_lora_plus_optimizer_group(model: nn.Module,
     for param_name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        if 'tok_embeddings' in param_name:
+        if 'embed_tokens' in param_name:
             param_groups["embedding"][param_name] = param
         elif 'lora_A' in param_name:
             param_groups["groupA"][param_name] = param

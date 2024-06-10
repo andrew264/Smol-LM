@@ -37,7 +37,7 @@ del adapter_sd
 
 # Prepare model
 model.eval()
-compile_model(model)
+# model = compile_model(model)
 torch.cuda.empty_cache()
 model.bos_token_id = tokenizer.token_to_id("<s>")
 

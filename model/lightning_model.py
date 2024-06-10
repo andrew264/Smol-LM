@@ -5,7 +5,6 @@ import bitsandbytes as bnb
 import lightning as L
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import get_cosine_schedule_with_warmup
@@ -14,7 +13,7 @@ from model.modalities.audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
-from .utils import (LINEAR, hf_load_hook, merge_audio_features, get_optimizer_grouped_parameters,
+from .utils import (LINEAR, merge_audio_features, get_optimizer_grouped_parameters,
                     get_lora_plus_optimizer_group)
 
 try:
@@ -34,21 +33,21 @@ class SmolLMLit(L.LightningModule):
         self.max_length = config.max_position_embeddings
         self.use_lora_opt_grp = use_lora_opt_grp
         self.use_scheduler = use_scheduler
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
-        self.layers = nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers))
-        self.norm = get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps)
-
+        self.model = nn.ModuleDict(dict(
+            embed_tokens=nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id),
+            layers=nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers)),
+            norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
+        ))
         if config.has_audio:
             self.audio_head = AudioHead(config)
 
-        self.lm_head: Optional[LINEAR] = None
-        if not config.tie_word_embeddings:
-            self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head: Optional[LINEAR] = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if self.tie_word_embeddings:
+            self.model.embed_tokens.weight = self.lm_head.weight
 
         self.loss_fn = CrossEntropyLoss(ignore_index=-100)
 
         self.apply(self._init_weights)  # to initialize weights
-        self._register_load_state_dict_pre_hook(hf_load_hook)  # to load from HF models
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -128,7 +127,7 @@ class SmolLMLit(L.LightningModule):
             labels: Optional[torch.LongTensor] = None,
     ):
 
-        x = self.embed_tokens(input_ids)
+        x = self.model.embed_tokens(input_ids)
 
         if audio is not None:
             audio_features = self.audio_head(audio)
@@ -138,7 +137,7 @@ class SmolLMLit(L.LightningModule):
 
         causal_mask = self._generate_causal_mask(attention_mask, x)
 
-        for i, layer in enumerate(self.layers):
+        for i, layer in enumerate(self.model.layers):
             if self.training and i in self.checkpointing_layers:
                 x = checkpoint(layer,
                                x, causal_mask, position_ids,
@@ -149,12 +148,9 @@ class SmolLMLit(L.LightningModule):
                           attention_mask=causal_mask,
                           position_ids=position_ids, )
 
-        x = self.norm(x)
+        x = self.model.norm(x)
 
-        if not self.tie_word_embeddings:
-            logits = self.lm_head(x)
-        else:
-            logits = F.linear(x, self.embed_tokens.weight)
+        logits = self.lm_head(x)
 
         return logits, labels
 

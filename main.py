@@ -83,7 +83,7 @@ def train(model_path: str, datamod: L.LightningDataModule, config: ModelConfig,
     model = SmolLMLit(config,
                       use_scheduler=use_scheduler,
                       ).to(device=device, dtype=torch.bfloat16)
-    compile_model(model)
+    model = compile_model(model)
 
     checkpoint_callback = ModelCheckpoint(dirpath=model_path, save_last=True, filename='last')
     trainer = Trainer(accelerator="gpu",
@@ -105,6 +105,10 @@ def train(model_path: str, datamod: L.LightningDataModule, config: ModelConfig,
         ckpt_path = None
         print("Starting training from scratch.")
     trainer.fit(model, datamodule=datamod, ckpt_path=ckpt_path)
+
+    if config.tie_word_embeddings:
+        # safetensors do not support shared memory, so we need to save the weights separately
+        model.model.embed_tokens.weight = torch.nn.Parameter(model.model.embed_tokens.weight.clone())
 
     save_as_safetensors(model.state_dict(), os.path.join(model_path, 'model.safetensors'))
 
