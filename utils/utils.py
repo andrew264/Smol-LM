@@ -71,12 +71,13 @@ class StoppingCriteriaSub(StoppingCriteria):
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
         stop_count = 0
+        batch_size = input_ids.size(0)
         for batch in input_ids:
             for stop in self.stops:
                 if torch.equal(stop, batch[-len(stop):]):
                     stop_count += 1
 
-        return stop_count >= self.ENCOUNTERS
+        return stop_count >= batch_size * self.ENCOUNTERS
 
 
 def count_parameters(model: torch.nn.Module):

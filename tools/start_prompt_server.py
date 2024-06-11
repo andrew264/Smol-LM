@@ -4,11 +4,10 @@ from typing import Optional, Tuple
 import torch
 from aiohttp import web
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopPLogitsWarper, TemperatureLogitsWarper, \
-    RepetitionPenaltyLogitsProcessor
+from transformers import LogitsProcessorList, TopPLogitsWarper, TemperatureLogitsWarper
 
 from model import ModelConfig, LoRAConfig, InternalCache, SmolLM
-from utils import inject_lora_adapter, get_state_dict_from_safetensors, compile_model, get_stopping_criteria, \
+from utils import inject_lora_adapter, get_state_dict_from_safetensors, get_stopping_criteria, \
     get_generation_config
 
 device = torch.device("cuda:0")
@@ -48,12 +47,9 @@ model.generation_config = generation_config
 max_length = config.max_position_embeddings - 128
 
 
-def get_response(input_text, top_p: Optional[float], penalty: Optional[float], temp: Optional[float]) -> Tuple[
-    str, int]:
+def get_response(input_text, top_p: Optional[float], temp: Optional[float]) -> Tuple[str, int]:
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
-    if penalty is not None and penalty > 0:
-        processor.append(RepetitionPenaltyLogitsProcessor(penalty=penalty))
     if top_p is not None and top_p > 0:
         processor.append(TopPLogitsWarper(top_p=top_p))
     if temp is not None and temp > 0:
@@ -84,10 +80,9 @@ def get_response(input_text, top_p: Optional[float], penalty: Optional[float], t
 async def handle(request):
     data = await request.json()
     input_text = data['input']
-    top_p = data.get('top_p', 0.95)
-    penalty = data.get('penalty', 1.15)
-    temp = data.get('temp', 0.7)
-    output_text, length = get_response(input_text, top_p, penalty, temp)
+    top_p = data.get('top_p', 0.90)
+    temp = data.get('temp', 1.7)
+    output_text, length = get_response(input_text, top_p, temp)
 
     return web.json_response({'response': output_text, 'cur_length': length,
                               'max_length': config.max_position_embeddings, })

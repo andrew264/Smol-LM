@@ -4,16 +4,16 @@ import os
 import torch
 from tokenizers import Tokenizer
 from transformers import (LogitsProcessorList, TemperatureLogitsWarper, TopPLogitsWarper,
-                          RepetitionPenaltyLogitsProcessor, GenerationConfig)
+                          GenerationConfig)
 
 from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings, SmolLM  # noqa
-from utils import Prompt, inject_lora_adapter, get_state_dict_from_safetensors, compile_model, get_stopping_criteria
+from utils import Prompt, inject_lora_adapter, get_state_dict_from_safetensors, get_stopping_criteria
 
 device = torch.device("cuda:0")
 
 if __name__ == '__main__':
     path = './ft-weights/'
-    num_beams = 1
+    num_beams = 2
 
     config = ModelConfig.from_json(os.path.join(path, 'config.json'))
     config.max_batch_size = num_beams
@@ -44,9 +44,8 @@ if __name__ == '__main__':
 
     # Logits processor
     processor: LogitsProcessorList = LogitsProcessorList()
-    processor.append(RepetitionPenaltyLogitsProcessor(1.15))
-    processor.append(TemperatureLogitsWarper(0.5))
-    processor.append(TopPLogitsWarper(top_p=0.95))
+    processor.append(TemperatureLogitsWarper(1.7))
+    processor.append(TopPLogitsWarper(top_p=0.90))
 
     generation_config: GenerationConfig = GenerationConfig(
         max_new_tokens=512,
