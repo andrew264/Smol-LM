@@ -6,8 +6,8 @@ from tokenizers import Tokenizer
 from transformers import (LogitsProcessorList, TemperatureLogitsWarper, TopPLogitsWarper,
                           GenerationConfig)
 
-from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings, SmolLM  # noqa
-from utils import Prompt, inject_lora_adapter, get_state_dict_from_safetensors, get_stopping_criteria
+from model import ModelConfig, InternalCache, LoRAConfig, HFNomicEmbeddings, SmolLM, TemperatureRangeLogitsWarper  # noqa
+from utils import Prompt, inject_lora_adapter, get_state_dict_from_safetensors, get_stopping_criteria, compile_model
 
 device = torch.device("cuda:0")
 
@@ -41,11 +41,6 @@ if __name__ == '__main__':
     # model = compile_model(model)
     torch.cuda.empty_cache()
     model.bos_token_id = tokenizer.token_to_id("<s>")
-
-    # Logits processor
-    processor: LogitsProcessorList = LogitsProcessorList()
-    processor.append(TemperatureLogitsWarper(1.7))
-    processor.append(TopPLogitsWarper(top_p=0.90))
 
     generation_config: GenerationConfig = GenerationConfig(
         max_new_tokens=512,
@@ -87,6 +82,11 @@ if __name__ == '__main__':
     prompt = Prompt(sys_prompt, tokenizer, embeddings_model=embedder, vector_store_path=vec_db)
 
     while True:
+        # Logits processor
+        processor: LogitsProcessorList = LogitsProcessorList()
+        processor.append(TemperatureRangeLogitsWarper(1.7, 0.8, 20))
+        processor.append(TopPLogitsWarper(top_p=0.99))
+
         inp = multiline_input()
         if inp == '':
             break

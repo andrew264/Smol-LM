@@ -4,9 +4,9 @@ from typing import Optional, Tuple
 import torch
 from aiohttp import web
 from tokenizers import Tokenizer
-from transformers import LogitsProcessorList, TopPLogitsWarper, TemperatureLogitsWarper
+from transformers import LogitsProcessorList, TopPLogitsWarper
 
-from model import ModelConfig, LoRAConfig, InternalCache, SmolLM
+from model import ModelConfig, LoRAConfig, InternalCache, SmolLM, TemperatureRangeLogitsWarper
 from utils import inject_lora_adapter, get_state_dict_from_safetensors, get_stopping_criteria, \
     get_generation_config
 
@@ -53,7 +53,7 @@ def get_response(input_text, top_p: Optional[float], temp: Optional[float]) -> T
     if top_p is not None and top_p > 0:
         processor.append(TopPLogitsWarper(top_p=top_p))
     if temp is not None and temp > 0:
-        processor.append(TemperatureLogitsWarper(temperature=temp))
+        processor.append(TemperatureRangeLogitsWarper(temp, 0.8, 20))
 
     encoded = tokenizer.encode(input_text)
     tokens = torch.tensor(encoded.ids[-max_length:]).unsqueeze(0).to(device)
