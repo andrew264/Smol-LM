@@ -13,6 +13,7 @@ from model.modalities.audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
+from .rotary import RotaryEmbedding
 from .utils import (LINEAR, merge_audio_features, get_optimizer_grouped_parameters,
                     get_lora_plus_optimizer_group)
 
@@ -40,6 +41,9 @@ class SmolLMLit(L.LightningModule):
         ))
         if config.has_audio:
             self.audio_head = AudioHead(config)
+
+        self.rotary_emb = RotaryEmbedding(dim=config.hidden_size // config.num_attention_heads,
+                                          base=config.rope_theta, )
 
         self.lm_head: Optional[LINEAR] = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if self.tie_word_embeddings:
@@ -134,17 +138,19 @@ class SmolLMLit(L.LightningModule):
             x, attention_mask, labels = merge_audio_features(x, attention_mask, labels, audio_features, self.max_length)
 
         position_ids = torch.arange(x.size(1), device=x.device).unsqueeze(0)
+        freqs = self.rotary_emb(position_ids)
 
         causal_mask = self._generate_causal_mask(attention_mask, x)
 
         for i, layer in enumerate(self.model.layers):
             if self.training and i in self.checkpointing_layers:
                 x = checkpoint(layer,
-                               x, causal_mask, position_ids,
+                               x, freqs, causal_mask, position_ids,
                                use_reentrant=False, )
 
             else:
                 x = layer(x,
+                          freqs=freqs,
                           attention_mask=causal_mask,
                           position_ids=position_ids, )
 

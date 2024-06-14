@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from .config import ModelConfig
-from .rotary import RotaryEmbedding, apply_rotary_pos_emb
+from .rotary import apply_rotary_pos_emb
 from .utils import LINEAR, sdpa
 
 
@@ -39,9 +39,6 @@ class AttentionBlock(nn.Module):
                                           self.hidden_size + 2 * self.key_value_hidden_size,
                                           bias=config.attention_qkv_bias)
         self.o_proj: LINEAR = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_out_bias)
-
-        self.rotary_emb = RotaryEmbedding(dim=self.head_dim,
-                                          base=self.config.rope_theta, )
 
         self._register_load_state_dict_pre_hook(self.fused_qkv_hook)
 
@@ -90,8 +87,8 @@ class AttentionBlock(nn.Module):
 
     def forward(self,
                 hidden_states: Tensor,
-                attention_mask: Optional[Tensor],
-                position_ids: Optional[Tensor],
+                freqs: Tensor,
+                attention_mask: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None,
                 ) -> Tensor:
         bsz, seqlen, _ = hidden_states.size()
@@ -112,10 +109,9 @@ class AttentionBlock(nn.Module):
         key_states = key_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
         value_states = value_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
 
-        cos, sin = self.rotary_emb(value_states, position_ids)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, *freqs)
 
-        if cache_position is not None and not self.training:
+        if cache_position is not None:
             key_states, value_states = self._update_cache(key_states, value_states, cache_position)
 
         attn_output = sdpa(query_states, key_states, value_states,

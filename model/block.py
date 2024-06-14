@@ -20,15 +20,15 @@ class Block(nn.Module):
         self.post_attention_layernorm = NORM_CLASS(config.hidden_size, config.rms_norm_eps)
 
     def forward(self, hidden_states: Tensor,
+                freqs: Tensor,
                 attention_mask: Optional[Tensor] = None,
-                position_ids: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None, ) -> Tensor:
         # Self-attention
         residual = hidden_states
         x = self.input_layernorm(hidden_states)
         x = self.self_attn(x,
+                           freqs=freqs,
                            attention_mask=attention_mask,
-                           position_ids=position_ids,
                            cache_position=cache_position)
 
         residual = residual + x
