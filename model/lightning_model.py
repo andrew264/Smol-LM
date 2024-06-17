@@ -145,14 +145,13 @@ class SmolLMLit(L.LightningModule):
         for i, layer in enumerate(self.model.layers):
             if self.training and i in self.checkpointing_layers:
                 x = checkpoint(layer,
-                               x, freqs, causal_mask, position_ids,
+                               x, freqs, causal_mask,
                                use_reentrant=False, )
 
             else:
                 x = layer(x,
                           freqs=freqs,
-                          attention_mask=causal_mask,
-                          position_ids=position_ids, )
+                          attention_mask=causal_mask, )
 
         x = self.model.norm(x)
 
