@@ -6,10 +6,10 @@ import torch
 from lightning import Trainer
 from torch.utils.data import DataLoader
 
+from dataset import DiscordConversations, FineWebEdu, CyclingDataLoader
 from model import ModelConfig, LoRAConfig
 from model import SmolLMLit
-from utils import (DiscordConversations,
-                   get_state_dict_from_safetensors, inject_lora_adapter, get_lora_state_dict, save_as_safetensors)
+from utils import (get_state_dict_from_safetensors, inject_lora_adapter, get_lora_state_dict, save_as_safetensors)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 CROSS_ENTROPY_IGNORE_IDX = -100
@@ -87,7 +87,7 @@ if __name__ == '__main__':
 
         input_ids = torch.stack([torch.tensor(x[0] + [0] * (max_len - len(x[0]))) for x in batch])
         labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (max_len - len(x[1]))) for x in batch])
-        attention_mask = (input_ids != 0).long()
+        attention_mask = (input_ids != torch.tensor(0, dtype=input_ids.dtype)).long()
 
         if len(batch) == 1 and attention_mask.sum().item() == attention_mask.numel():
             attention_mask = None
@@ -101,17 +101,19 @@ if __name__ == '__main__':
         return out
 
 
-    dataset = DiscordConversations(path="data/finetune/conversations",
-                                   tokenizer=tokenizer,
-                                   sys_prompt=sys_prompt,
-                                   pt_data_mix=2,
-                                   validation=False)
-    dataloader = DataLoader(dataset, batch_size=params.max_batch_size,
-                            shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=4)
+    ds1 = DiscordConversations(path="data/finetune/conversations",
+                               tokenizer=tokenizer,
+                               sys_prompt=sys_prompt, )
+    dl1 = DataLoader(ds1, batch_size=params.max_batch_size,
+                     shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=4)
+    ds2 = FineWebEdu(tokenizer=tokenizer, num_samples=len(ds1), data_shuffle=True)
+    dl2 = DataLoader(ds2, batch_size=params.max_batch_size,
+                     shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=4)
+    dataloader = CyclingDataLoader(dl1, dl2)
+
     val = DiscordConversations(path="data/finetune/conversations",
                                tokenizer=tokenizer,
-                               sys_prompt=sys_prompt,
-                               validation=True)
+                               sys_prompt=sys_prompt, )
     val_data = DataLoader(val, batch_size=params.max_batch_size,
                           shuffle=False, collate_fn=collate_pad_batch_fn, num_workers=4)
 

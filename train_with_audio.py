@@ -1,57 +1,19 @@
-import itertools
 import os
 from typing import List, Dict
 
 import torch
-from datasets import load_dataset
 from lightning import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
 from tokenizers import Tokenizer
-from torch.utils.data import IterableDataset, DataLoader
+from torch.utils.data import DataLoader
 
-from main import NPDataset
+from dataset import LibreSpeechDataset, MFCV13, NPDataset, CyclingDataLoader
 from model import ModelConfig, SmolLMLit, AudioFeatureExtractor
-from utils import save_as_safetensors, CyclingDataLoader, get_state_dict_from_safetensors
+from utils import save_as_safetensors, get_state_dict_from_safetensors
 
+torch.set_float32_matmul_precision('high')
 model_path = './weights/test/'
 tokenizer = Tokenizer.from_file('weights/tokenizer.json')
-
-
-class LibreSpeechDataset(IterableDataset):
-    def __init__(self, split: str = "train.360", streaming: bool = False):
-        super().__init__()
-        self._data = load_dataset("/home/andrew264/datasets/librispeech_asr", "clean",
-                                  split=split, streaming=streaming, trust_remote_code=True)
-        self.feature_extractor = AudioFeatureExtractor()
-
-    def __iter__(self):
-        for item in self._data:
-            sentence = tokenizer.encode("<|audio_end|>" + item['text'].lower() + "<|end_of_text|>",
-                                        add_special_tokens=False)
-            audio = self.feature_extractor({"audio": item['audio']['array'],
-                                            "sampling_rate": item['audio']['sampling_rate']})
-            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask, "audio": audio}
-
-
-class MFCV13(IterableDataset):
-    def __init__(self, subset: str = "en", streaming: bool = False):
-        super().__init__()
-        self._data = load_dataset("/home/andrew264/datasets/common_voice_13_0", name=subset, streaming=streaming,
-                                  trust_remote_code=True, num_proc=3, token=True)
-        self.feature_extractor = AudioFeatureExtractor()
-
-    def __iter__(self):
-        for it in itertools.chain(self._data['train'],
-                                  self._data['test'],
-                                  self._data['validation'],
-                                  self._data['other']):
-            audio = self.feature_extractor({"audio": it['audio']['array'],
-                                            "sampling_rate": it['audio']['sampling_rate']})
-            sentence = tokenizer.encode("<|audio_end|>" + it['sentence'] + "<|end_of_text|>",
-                                        add_special_tokens=False)
-            yield {"input_ids": sentence.ids, "attention_mask": sentence.attention_mask,
-                   "audio": audio}
-
 
 config = ModelConfig().from_json('./weights/test/config.json')
 
@@ -59,11 +21,12 @@ MAX_LEN = config.max_position_embeddings
 
 
 def get_dataloader():
+    fe = AudioFeatureExtractor()
     text_ds = NPDataset("data/processed/fineweb_train_*.bin", MAX_LEN)
     text_dl = DataLoader(text_ds, batch_size=config.max_batch_size, num_workers=4, pin_memory=True)
-    audio1_dl = DataLoader(LibreSpeechDataset(), batch_size=config.max_batch_size,
+    audio1_dl = DataLoader(LibreSpeechDataset(tokenizer, fe=fe), batch_size=config.max_batch_size,
                            collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
-    audio2_dl = DataLoader(MFCV13(), batch_size=config.max_batch_size,
+    audio2_dl = DataLoader(MFCV13(tokenizer, fe=fe), batch_size=config.max_batch_size,
                            collate_fn=collate_pad_audio_batch_fn, num_workers=4, pin_memory=True)
 
     return CyclingDataLoader(audio1_dl, audio2_dl, text_dl)

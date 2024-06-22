@@ -3,7 +3,7 @@ import os
 
 import numpy as np
 import tokenizers
-from datasets import load_dataset
+from dataset import FineWebEdu
 from tqdm import tqdm
 
 DATA_CACHE_DIR = "../data/processed"
@@ -16,24 +16,22 @@ dtype = np.uint32
 
 
 def tokenize(doc):
-    tokens = tokenizer.encode(doc['text'], add_special_tokens=False).ids
-    return np.array(bot + tokens + eot, dtype=dtype)
+    toks = tokenizer.encode(doc['text'], add_special_tokens=False).ids
+    return np.array(bot + toks + eot, dtype=dtype)
 
 
-def write_datafile(filename: str, toks: np.ndarray):
+def write_datafile(f_name: str, toks: np.ndarray):
     """
     Saves token data as a .bin file
-    # ik its a bad idea to store binary files without versioning; but idc
+    # ik its a bad idea to store binary files without versioning; but idc for now
     """
-    print(f"writing {len(toks):,} tokens to {filename}")
-    with open(filename, "wb") as f:
+    print(f"writing {len(toks):,} tokens to {f_name}")
+    with open(f_name, "wb") as f:
         f.write(toks.tobytes())
 
 
 if __name__ == '__main__':
-    ds = '/home/andrew264/datasets/fineweb-edu'
-    dataset = load_dataset(path=ds, name='sample-10BT', streaming=True, split='train',
-                           trust_remote_code=True)
+    dataset = FineWebEdu()
 
     # from llm.c
     nprocs = max(1, os.cpu_count() - 1)

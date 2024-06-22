@@ -1,10 +1,10 @@
 import os
 import time
 
-import datasets
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, processors
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader
 
+from dataset import FineWebEdu
 from model import ModelConfig
 
 os.environ['TOKENIZERS_PARALLELISM'] = "true"
@@ -31,28 +31,25 @@ if __name__ == '__main__':
     trainer = trainers.BpeTrainer(
         vocab_size=params.vocab_size,
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
-        special_tokens=["<|pad|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>",  # Special tokens
-                        "<|user|>", "<|assistant|>", "<|system|>",  # Prompt tokens
+        special_tokens=["<|begin_of_text|>", "<|end_of_text|>",
+                        *["<|reserved_special_token_{}|>".format(i) for i in range(0, 64)],
                         "```", "##", "###", "**"],  # Markdown tokens
         show_progress=True,
         max_token_length=32,
     )
 
-    cosmopedia = '/mnt/d/Datasets/cosmopedia'
-    dataset: IterableDataset = datasets.load_dataset(path=cosmopedia, split='train', streaming=True).shuffle(
-        seed=42)
+    dataset = FineWebEdu()
     batch_size = 25_000
-    length = 31_064_744
-    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=2, prefetch_factor=2)
+    dataloader = DataLoader(dataset, batch_size=batch_size,)
 
 
     def batch_iterator():
         for batch in dataloader:
-            yield batch['text']
+            yield batch
 
 
     print("Training tokenizer...")
     start = time.time()
-    tokenizer.train_from_iterator(batch_iterator(), trainer=trainer, length=length)
+    tokenizer.train_from_iterator(batch_iterator(), trainer=trainer)
     tokenizer.save('./weights/tokenizer.json')
     print(f"Finished training in {(time.time() - start):.2f} seconds")

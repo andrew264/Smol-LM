@@ -1,7 +1,6 @@
 import os
 import time
-from itertools import cycle
-from typing import Optional, List
+from typing import Optional, List, TypeVar
 
 import torch
 from safetensors import safe_open
@@ -53,7 +52,11 @@ def get_state_dict(path: str, device: torch.device) -> Optional[dict]:
         return None
 
 
-def compile_model(model: torch.nn.Module, ) -> torch.nn.Module:
+# T is any type that inherits from torch.nn.Module
+T = TypeVar('T', bound=torch.nn.Module)
+
+
+def compile_model(model: T) -> T:
     start = time.time()
     model.forward = torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     torch.cuda.synchronize()
@@ -106,31 +109,3 @@ def get_generation_config(max_new_length: int) -> GenerationConfig:
         bos_token_id=1,
         eos_token_id=2,
     )
-
-
-class CyclingDataLoader:
-    """
-    Just a bunch of DataLoaders that cycle through each other.
-    """
-
-    def __init__(self, *iterators):
-        self.iterators = [iter(it) for it in iterators]
-        self.cycle = cycle(self.iterators)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if not self.iterators:
-            raise StopIteration
-
-        while True:
-            current = next(self.cycle)
-            try:
-                return next(current)
-            except StopIteration:
-                print(f"Removing exhausted iterator: {current}")
-                self.iterators.remove(current)
-                if not self.iterators:
-                    raise StopIteration
-                self.cycle = cycle(self.iterators)

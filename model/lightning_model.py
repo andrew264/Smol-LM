@@ -170,8 +170,8 @@ class SmolLMLit(L.LightningModule):
             labels = labels2
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
-        self.log("train_loss", loss, on_step=True, on_epoch=True, )
-        self.log("train_ppl", torch.exp(loss), on_step=True, on_epoch=True, )
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_ppl", torch.exp(loss), on_step=True, on_epoch=True, prog_bar=True)
 
         lrs = [param_group['lr'] for param_group in self.trainer.optimizers[0].param_groups]
         for i, lr in enumerate(lrs):

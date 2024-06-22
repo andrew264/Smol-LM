@@ -1,81 +1,17 @@
-import glob
 import os
 
 import lightning as L
-import numpy as np
 import torch
 from lightning import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
-from torch.utils.data import DataLoader, Dataset
 
+from dataset import NPDataModule
 from model import ModelConfig
 from model.lightning_model import SmolLMLit
 from utils import (compile_model, save_as_safetensors)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.set_float32_matmul_precision('high')
-
-
-class NPDataset(Dataset):
-    def __init__(self, _path, seq_length=1024, train: bool = True, dtype=np.uint32):
-        file_paths = glob.glob(_path)
-        if train:
-            file_paths = file_paths[:-1]
-        else:
-            file_paths = [file_paths[-1]]
-
-        self.seq_length = seq_length
-        self.dtype = dtype
-        self.memmaps = []
-        self.sizes = []
-        self.cumulative_sizes = []
-
-        total_size = 0
-
-        for file_path in file_paths:
-            memmap = np.memmap(file_path, dtype=dtype, mode='r')
-            num_samples = len(memmap) // seq_length
-            memmap = memmap[:num_samples * seq_length].reshape(num_samples, seq_length)
-
-            self.sizes.append(num_samples)
-            self.cumulative_sizes.append(total_size)
-            total_size += num_samples
-            self.memmaps.append(memmap)
-
-        self.total_size = total_size
-        self.cumulative_sizes.append(total_size)
-
-    def __len__(self) -> int:
-        return self.total_size
-
-    def __getitem__(self, index) -> dict:
-        if index < 0:
-            index += self.total_size
-        if index >= self.total_size or index < 0:
-            raise IndexError("Index out of range")
-
-        file_index = np.searchsorted(self.cumulative_sizes, index, side='right') - 1
-        internal_index = index - self.cumulative_sizes[file_index]
-
-        item = torch.from_numpy(np.int32(self.memmaps[file_index][internal_index]))
-        return {"input_ids": item, "labels": item}
-
-
-class NPDataModule(L.LightningDataModule):
-    def __init__(self, data_dir: str, seq_length: int, batch_size: int):
-        super().__init__()
-        self.data_dir = data_dir
-        self.seq_length = seq_length
-        self.batch_size = batch_size
-
-        self.train_ds = NPDataset(self.data_dir, self.seq_length, True)
-        self.val_ds = NPDataset(self.data_dir, self.seq_length, False)
-
-    def train_dataloader(self):
-        return DataLoader(self.train_ds, batch_size=self.batch_size, num_workers=4)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_ds, batch_size=self.batch_size, num_workers=4)
 
 
 def train(model_path: str, datamod: L.LightningDataModule, config: ModelConfig,
@@ -128,10 +64,10 @@ if __name__ == '__main__':
         params.to_json(path + 'config.json')
 
     # training
-    datamod = NPDataModule("data/processed/fineweb_train_*.bin",
-                           seq_length=params.max_position_embeddings,
-                           batch_size=params.max_batch_size)
+    datamodule = NPDataModule("data/processed/fineweb_train_*.bin",
+                              seq_length=params.max_position_embeddings,
+                              batch_size=params.max_batch_size)
     train(path,
-          datamod=datamod,
+          datamod=datamodule,
           config=params,
           )

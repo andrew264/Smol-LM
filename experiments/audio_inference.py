@@ -1,7 +1,7 @@
 import os
 
 import torch
-from datasets import load_dataset
+from dataset import load_dataset
 from tokenizers import Tokenizer
 from transformers import (LogitsProcessorList, TopKLogitsWarper,
                           GenerationConfig)

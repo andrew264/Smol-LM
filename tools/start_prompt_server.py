@@ -53,7 +53,7 @@ def get_response(input_text, top_p: Optional[float], temp: Optional[float]) -> T
     if top_p is not None and top_p > 0:
         processor.append(TopPLogitsWarper(top_p=top_p))
     if temp is not None and temp > 0:
-        processor.append(TemperatureRangeLogitsWarper(temp, 0.8, 20))
+        processor.append(TemperatureRangeLogitsWarper(temp, 0.8, 12))
 
     encoded = tokenizer.encode(input_text)
     tokens = torch.tensor(encoded.ids[-max_length:]).unsqueeze(0).to(device)
@@ -66,7 +66,8 @@ def get_response(input_text, top_p: Optional[float], temp: Optional[float]) -> T
         past_key_values=InternalCache(model, dtype=dtype),
         logits_processor=processor,
         generation_config=generation_config,
-        stopping_criteria=stopping_criteria)
+        stopping_criteria=stopping_criteria
+    )
 
     # output
     out_tokens = out[0].tolist()
