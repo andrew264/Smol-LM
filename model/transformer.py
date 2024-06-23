@@ -2,7 +2,6 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from torch import Tensor
 from transformers import GenerationMixin, Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -13,7 +12,7 @@ from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
 from .rotary import RotaryEmbedding
-from .utils import LINEAR, merge_audio_features
+from .utils import LINEAR
 
 try:
     from functools import partial
@@ -40,7 +39,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.model = nn.ModuleDict(dict(
             embed_tokens=nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id),
-            layers=nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers)),
+            layers=nn.ModuleList(Block(config, i) for i in range(config.num_hidden_layers)),
             norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
         ))
 
@@ -91,10 +90,24 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.config.vocab_size = new_num_tokens
 
+    def _forward(self, x, freqs, past_key_values, mask, cache_positions):
+        for layer in self.model.layers:
+            x = layer(x,
+                      freqs=freqs,
+                      past_key_values=past_key_values,
+                      attention_mask=mask,
+                      cache_position=cache_positions, )
+
+        x = self.model.norm(x)
+
+        logits = self.lm_head(x)
+        return logits
+
     def forward(
             self,
             input_ids: torch.LongTensor = None,
-            audio: Optional[Tensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
+            cache_position: Optional[torch.LongTensor] = None,
             attention_mask: Optional[torch.Tensor] = None,
             past_key_values: Optional[Cache] = None,
             labels: Optional[torch.LongTensor] = None,
@@ -102,25 +115,10 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
     ) -> CausalLMOutputWithPast:
         x = self.model.embed_tokens(input_ids)
 
-        if audio is not None:
-            audio_features = self.audio_head(audio)
-            x, attention_mask, labels = merge_audio_features(x, attention_mask, labels, audio_features, self.max_length)
+        causal_mask = self._update_causal_mask(attention_mask, x, cache_position, past_key_values)
+        freqs = self.rotary_emb(position_ids)
 
-        past_length = past_key_values.get_seq_length() if past_key_values is not None else 0
-        cache_position = torch.arange(past_length, past_length + x.shape[1], device=x.device)
-
-        # causal_mask = self._update_causal_mask(attention_mask, x, cache_position)
-        freqs = self.rotary_emb(cache_position.unsqueeze(0))
-
-        for layer in self.model.layers:
-            x = layer(x,
-                      freqs=freqs,
-                      attention_mask=None,
-                      cache_position=cache_position, )
-
-        x = self.model.norm(x)
-
-        logits = self.lm_head(x)
+        logits = self._forward(x, freqs, past_key_values, causal_mask, cache_position)
 
         loss = None
         if labels is not None:
@@ -130,47 +128,74 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
                                       past_key_values=past_key_values, )
 
     def prepare_inputs_for_generation(
-            self, input_ids: Tensor, audio: Optional[Tensor] = None, past_key_values: Optional[Cache] = None,
-            attention_mask: Optional[Tensor] = None, cache_position=None, position_ids=None,
-            **kwargs
+            self,
+            input_ids,
+            past_key_values: Optional[Cache] = None,
+            attention_mask=None,
+            inputs_embeds=None,
+            cache_position=None,
+            use_cache=True,
+            **kwargs,
     ):
-
+        past_length = 0
         if past_key_values is not None:
-            past_length = past_key_values.get_seq_length()
-            cache_position = None
-            position_ids = None
-            audio = None
+            # Past key values are always initialized with a `Cache` object -> no need for if-else anymore
+            past_length = cache_position[0] if cache_position is not None else past_key_values.get_seq_length()
+            max_cache_length = (
+                torch.tensor(past_key_values.get_max_length(), device=input_ids.device)
+                if past_key_values.get_max_length() is not None
+                else None
+            )
+            cache_length = past_length if max_cache_length is None else torch.min(max_cache_length, past_length)
 
-            if input_ids.shape[1] > past_length:
+            if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
+                input_ids = input_ids[:, -(attention_mask.shape[1] - past_length):]
+            elif past_length < input_ids.shape[1]:
                 input_ids = input_ids[:, past_length:]
-                if attention_mask is not None:
-                    attention_mask = attention_mask[:, past_length:]
-            else:
-                input_ids = input_ids[:, -1:]
-                if attention_mask is not None:
-                    attention_mask = attention_mask[:, -1:]
+            if (
+                    max_cache_length is not None
+                    and attention_mask is not None
+                    and cache_length + input_ids.shape[1] > max_cache_length
+            ):
+                attention_mask = attention_mask[:, -max_cache_length:]
 
-        model_inputs = {
-            "input_ids": input_ids.contiguous(),
-            "cache_position": cache_position,
-            "position_ids": position_ids,
-            "past_key_values": past_key_values,
-            "attention_mask": attention_mask,
-            "audio": audio
-        }
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                position_ids = position_ids[:, -input_ids.shape[1]:]
 
+        model_inputs = {"input_ids": input_ids.contiguous()}
+
+        input_length = position_ids.shape[-1] if position_ids is not None else input_ids.shape[-1]
+        if cache_position is None:
+            cache_position = torch.arange(past_length, past_length + input_length, device=input_ids.device)
+        elif use_cache:
+            cache_position = cache_position[-input_length:]
+
+        model_inputs.update(
+            {
+                "position_ids": position_ids,
+                "cache_position": cache_position,
+                "past_key_values": past_key_values,
+                "use_cache": use_cache,
+                "attention_mask": attention_mask,
+            }
+        )
         return model_inputs
 
     # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     @staticmethod
-    def _update_causal_mask(attention_mask, input_tensor, cache_position):
+    def _update_causal_mask(attention_mask, input_tensor, cache_position, past_key_values):
         if attention_mask is None:
             return None
 
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         dtype, device = input_tensor.dtype, input_tensor.device
         min_dtype = torch.finfo(dtype).min
         sequence_length = input_tensor.shape[1]
-        target_length = cache_position[-1] + 1
+        target_length = past_key_values.get_max_length()
 
         causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
         if sequence_length != 1:

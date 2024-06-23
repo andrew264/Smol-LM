@@ -4,15 +4,16 @@ import torch.nn as nn
 from torch import Tensor
 
 from .attention_layer import AttentionBlock
+from .cache import StaticCache
 from .config import ModelConfig
 from .feed_forward import FeedForward
 from .norm import get_rmsnorm_class
 
 
 class Block(nn.Module):
-    def __init__(self, config: ModelConfig, causal: Optional[bool] = None) -> None:
+    def __init__(self, config: ModelConfig, layer_idx: int) -> None:
         super().__init__()
-        self.self_attn = AttentionBlock(config, causal=causal)
+        self.self_attn = AttentionBlock(config, layer_idx=layer_idx)
         self.mlp = FeedForward(config)
 
         NORM_CLASS = get_rmsnorm_class()
@@ -21,6 +22,7 @@ class Block(nn.Module):
 
     def forward(self, hidden_states: Tensor,
                 freqs: Tensor,
+                past_key_values: Optional[StaticCache] = None,
                 attention_mask: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None, ) -> Tensor:
         # Self-attention
@@ -28,6 +30,7 @@ class Block(nn.Module):
         x = self.input_layernorm(hidden_states)
         x = self.self_attn(x,
                            freqs=freqs,
+                           past_key_values=past_key_values,
                            attention_mask=attention_mask,
                            cache_position=cache_position)
 

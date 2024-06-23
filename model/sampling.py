@@ -6,6 +6,7 @@ class TemperatureRangeLogitsWarper(LogitsWarper):
     """
     A logits warper that adjusts the temperature of the logits over a specified number of steps.
     """
+
     def __init__(self, start: float, end: float, num_steps: int):
         """
         Initializes the TemperatureRangeLogitsWarper with the specified start and end temperatures and the number of steps.

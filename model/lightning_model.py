@@ -36,7 +36,7 @@ class SmolLMLit(L.LightningModule):
         self.use_scheduler = use_scheduler
         self.model = nn.ModuleDict(dict(
             embed_tokens=nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id),
-            layers=nn.ModuleList(Block(config) for _ in range(config.num_hidden_layers)),
+            layers=nn.ModuleList(Block(config, idx) for idx in range(config.num_hidden_layers)),
             norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
         ))
         if config.has_audio:

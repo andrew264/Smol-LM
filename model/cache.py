@@ -1,30 +1,64 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any, Tuple
 
 import torch
+from torch import Tensor
 from transformers import Cache
 
-from .transformer import SmolLM
+from .config import ModelConfig
 
 
-class InternalCache(Cache):
+class StaticCache(Cache):
     """
-    Caching method that I cooked up for my own purposes.
-    It's my way to work around huggingface's cache system.
+    same as transformers's StaticCache but with different cache_shape
     """
 
-    def __init__(self, model: SmolLM, dtype: torch.dtype = torch.bfloat16) -> None:
-        super().__init__()
-        self.model = model
+    def __init__(self, config: ModelConfig,
+                 dtype: torch.dtype = torch.bfloat16,
+                 device: Optional[torch.device] = None) -> None:
+        self.config = config
         self.dtype = dtype
-        self.reset_cache()
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.key_cache: List[Tensor] = []
+        self.value_cache: List[Tensor] = []
+        cache_shape = (
+            config.max_batch_size,
+            config.max_position_embeddings,
+            config.num_key_value_heads,
+            config.hidden_size // config.num_attention_heads
+        )
+        for _ in range(config.num_hidden_layers):
+            # Note: `mark_static_address` is used to tag the cache as an fixed data pointer, preventing cuda graph
+            # breaks when updating the cache.
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=self.dtype, device=device)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=self.dtype, device=device)
+            torch._dynamo.mark_static_address(new_layer_key_cache)
+            torch._dynamo.mark_static_address(new_layer_value_cache)
+            self.key_cache.append(new_layer_key_cache)
+            self.value_cache.append(new_layer_value_cache)
 
     def get_seq_length(self, layer_idx: Optional[int] = -1) -> int | torch.Tensor:
-        return self.model.model.layers[layer_idx].self_attn.get_cache_length()
+        return (self.key_cache[layer_idx][0, :, 0].any(dim=-1)).sum()
 
-    def reset_cache(self):
-        for layer in self.model.model.layers:
-            layer.self_attn.setup_cache(dtype=self.dtype, device=self.model.device)
+    def get_max_length(self) -> Optional[int]:
+        return self.config.max_position_embeddings
 
-    def reorder_cache(self, beam_idx: torch.LongTensor):
-        for layer in self.model.model.layers:
-            layer.self_attn.reorder_cache(beam_idx)
+    def update(
+            self,
+            key_states: torch.Tensor,
+            value_states: torch.Tensor,
+            layer_idx: int,
+            cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        cache_position = cache_kwargs.get("cache_position")
+        k_out = self.key_cache[layer_idx]
+        v_out = self.value_cache[layer_idx]
+
+        k_out[:, cache_position, :] = key_states
+        v_out[:, cache_position, :] = value_states
+
+        return k_out, v_out
+
+    def reset(self):
+        for layer_idx in range(len(self.key_cache)):
+            self.key_cache[layer_idx].zero_()
+            self.value_cache[layer_idx].zero_()

@@ -5,7 +5,7 @@ from typing import Optional, List, TypeVar
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file as safe_save_file
-from transformers import StoppingCriteria, StoppingCriteriaList, GenerationConfig
+from transformers import StoppingCriteria
 
 
 def get_state_dict_from_safetensors(path: str | List[str], device: torch.device) -> Optional[dict]:
@@ -90,22 +90,3 @@ def count_parameters(model: torch.nn.Module):
     if total_params != total_trainable_params:
         print(f'{total_trainable_params:,} trainable parameters.')
         print(f'Percentage of trainable parameters: {total_trainable_params / total_params * 100:.2f}%')
-
-
-def get_stopping_criteria(device: torch.device) -> StoppingCriteriaList:
-    stopping_tokens: List[torch.Tensor] = [torch.tensor([i], device=device) for i in range(3)]
-    stopping_tokens.append(torch.tensor([523, 28766], device=device))
-    stopping_tokens.append(torch.tensor([28789, 28766], device=device))
-    return StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
-
-
-def get_generation_config(max_new_length: int) -> GenerationConfig:
-    return GenerationConfig(
-        max_new_tokens=max_new_length,
-        do_sample=True,
-        num_beams=1,
-        use_cache=True,
-        pad_token_id=0,
-        bos_token_id=1,
-        eos_token_id=2,
-    )
