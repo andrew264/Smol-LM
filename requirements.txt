@@ -2,7 +2,6 @@ torch
 torchaudio
 torchvision
 numpy
-accelerate
 tokenizers
 bitsandbytes
 pandas
@@ -16,6 +15,6 @@ langchain-community
 chromadb
 sentence-transformers
 jupyter
-lightning[extra]
+lightning
 einops
 datatrove[io]

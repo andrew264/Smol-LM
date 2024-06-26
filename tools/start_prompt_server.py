@@ -13,7 +13,7 @@ model_handler = ModelGenerationHandler(path, device, 2)
 
 
 def get_response(input_text, top_p: Optional[float], temp: Optional[float]) -> Tuple[str, int]:
-    model_handler.setup_processor(top_p, temp)
+    model_handler.set_processor(top_p, temp)
     decoded, _, total_toks, _ = model_handler.generate(input_text, max_new_tokens=1024)
     return decoded, total_toks
 

@@ -1,12 +1,18 @@
 from typing import List
 
 import torch.nn.functional as F
-from langchain_core.embeddings import Embeddings
-from sentence_transformers import SentenceTransformer
+try:
+    from langchain_core.embeddings import Embeddings
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    Embeddings = object
+    SentenceTransformer = None
 
 
 class HFNomicEmbeddings(Embeddings):
     def __init__(self, size: int = 768, path: str = "nomic-ai/nomic-embed-text-v1.5", device: str = "cpu"):
+        if SentenceTransformer is None:
+            raise ImportError("Please install sentence-transformers")
         self.model = SentenceTransformer(path, device=device, trust_remote_code=True)
         self.size = size
 
