@@ -21,10 +21,11 @@ class ModelGenerationHandler:
         self.tokenizer: Optional[Tokenizer] = None
         self.model: Optional[SmolLM] = None
         self.cache: Optional[StaticCache] = None
-        self.stopping_criteria = None
+        self.stopping_criteria = self._get_stop_criteria()
         self.processor: Optional[LogitsProcessorList] = None
+        self.set_processor()
 
-    def load_model(self):
+    def load_model(self, compiled: bool = False):
         self.config = ModelConfig.from_json(os.path.join(self.path, 'config.json'))
         self.config.max_batch_size = self.num_beams
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
@@ -32,16 +33,25 @@ class ModelGenerationHandler:
         model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'), self.device)
         self.model = SmolLM(self.config).to(device=self.device, dtype=torch.bfloat16)
         self.model.load_state_dict(model_sd)
+        del model_sd
 
         if os.path.exists(os.path.join(self.path, 'lora.json')):
             lora_params = LoRAConfig.from_json(os.path.join(self.path, 'lora.json'))
 
             adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'), self.device)
             self.model = inject_lora_adapter(self.model, lora_params, adapter_sd)
+            del adapter_sd
 
-        self.model.eval()
-        torch.cuda.empty_cache()
         self.model.bos_token_id = self.tokenizer.token_to_id("<s>")
+        self.model.eval()
+        gc.collect()
+
+        self.cache = StaticCache(self.config, compiled_mode=compiled, device=self.device)
+        if compiled:
+            self._compile_model()
+
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize(device=self.device)
 
     def get_gen_config(self, max_new_tokens: int = 512):
         return GenerationConfig(
@@ -54,21 +64,19 @@ class ModelGenerationHandler:
             eos_token_id=2,
         )
 
-    def setup_generation(self, ):
-        self.cache = StaticCache(self.config, dtype=torch.bfloat16, device=self.device)
-
+    def _get_stop_criteria(self, ):
         stopping_tokens: List[torch.Tensor] = [torch.tensor([i], device=self.device) for i in range(3)]
         stopping_tokens.append(torch.tensor([523, 28766], device=self.device))
         stopping_tokens.append(torch.tensor([28789, 28766], device=self.device))
-        self.stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
+        return StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
-    def setup_processor(self, top_p: float = 0.99, temperature: float = 1.7):
+    def set_processor(self, top_p: float = 0.99, temperature: float = 1.7):
         self.processor = LogitsProcessorList([
             TemperatureRangeLogitsWarper(temperature, 0.8, 12),
             TopPLogitsWarper(top_p=top_p)
         ])
 
-    def compile_model(self):
+    def _compile_model(self):
         print('Compiling...')
         start = time.time()
         self.model.forward = torch.compile(self.model.forward, fullgraph=True, mode="reduce-overhead")

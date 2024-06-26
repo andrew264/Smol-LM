@@ -13,9 +13,11 @@ class StaticCache(Cache):
     """
 
     def __init__(self, config: ModelConfig,
+                 compiled_mode: bool = False,
                  dtype: torch.dtype = torch.bfloat16,
                  device: Optional[torch.device] = None) -> None:
         self.config = config
+        self.is_compiled = compiled_mode
         self.dtype = dtype
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.key_cache: List[Tensor] = []
@@ -26,13 +28,16 @@ class StaticCache(Cache):
             config.num_key_value_heads,
             config.hidden_size // config.num_attention_heads
         )
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize(device=self.device)
         for _ in range(config.num_hidden_layers):
             # Note: `mark_static_address` is used to tag the cache as an fixed data pointer, preventing cuda graph
             # breaks when updating the cache.
             new_layer_key_cache = torch.zeros(cache_shape, dtype=self.dtype, device=device)
             new_layer_value_cache = torch.zeros(cache_shape, dtype=self.dtype, device=device)
-            torch._dynamo.mark_static_address(new_layer_key_cache)
-            torch._dynamo.mark_static_address(new_layer_value_cache)
+            if self.is_compiled:
+                torch._dynamo.mark_static_address(new_layer_key_cache)
+                torch._dynamo.mark_static_address(new_layer_value_cache)
             self.key_cache.append(new_layer_key_cache)
             self.value_cache.append(new_layer_value_cache)
 
@@ -57,7 +62,11 @@ class StaticCache(Cache):
         k_out[:bsz, cache_position, :] = key_states
         v_out[:bsz, cache_position, :] = value_states
 
-        return k_out, v_out
+        if self.is_compiled:
+            return k_out, v_out
+        else:
+            last_position = cache_position[-1] + 1
+            return k_out[:bsz, :last_position], v_out[:bsz, :last_position]
 
     def reset(self):
         for layer_idx in range(len(self.key_cache)):

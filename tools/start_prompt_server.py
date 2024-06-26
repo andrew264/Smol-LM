@@ -30,10 +30,8 @@ async def handle(request):
 
 
 def run_server(port=6969):
-    model_handler.load_model()
-    model_handler.setup_generation()
-    model_handler.setup_processor()
-    # model_handler.compile_model()
+    model_handler.load_model(compiled=False)
+
     app = web.Application()
     app.add_routes([web.post('/', handle)])
     web.run_app(app, port=port)

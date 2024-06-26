@@ -28,10 +28,7 @@ def main():
     num_beams = 2
 
     model_handler = ModelGenerationHandler(path, DEVICE, num_beams)
-    model_handler.load_model()
-    model_handler.setup_generation()
-    model_handler.setup_processor()
-    model_handler.compile_model()
+    model_handler.load_model(compiled=False)
 
     dt = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     with open('data/finetune/sysprompt.txt', 'r') as f:

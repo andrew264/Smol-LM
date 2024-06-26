@@ -9,10 +9,7 @@ path = './weights'
 
 if __name__ == '__main__':
     model_handler = ModelGenerationHandler(path, DEVICE, 1)
-    model_handler.load_model()
-    model_handler.setup_generation()
-    model_handler.setup_processor()
-    model_handler.compile_model()
+    model_handler.load_model(compiled=False)
 
     while True:
         prompt = input("Enter a prompt: ")
