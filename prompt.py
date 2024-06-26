@@ -52,7 +52,7 @@ def main():
         prompt.add_assistant_message(decoded)
 
         print(f"Assistant: {decoded}")
-        print(f"Generated {num_tokens} tokens in {generation_time:.3f}s")
+        print(f"Generated {num_tokens} tokens in {generation_time:.3f}s ({num_tokens / generation_time:.3f} tokens/s)")
 
 
 if __name__ == '__main__':

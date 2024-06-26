@@ -49,12 +49,13 @@ class StaticCache(Cache):
             layer_idx: int,
             cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        bsz = key_states.shape[0]
         cache_position = cache_kwargs.get("cache_position")
         k_out = self.key_cache[layer_idx]
         v_out = self.value_cache[layer_idx]
 
-        k_out[:, cache_position, :] = key_states
-        v_out[:, cache_position, :] = value_states
+        k_out[:bsz, cache_position, :] = key_states
+        v_out[:bsz, cache_position, :] = value_states
 
         return k_out, v_out
 

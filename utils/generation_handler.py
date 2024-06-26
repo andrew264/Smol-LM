@@ -1,3 +1,4 @@
+import gc
 import os
 import time
 from typing import Optional, List, Tuple
@@ -7,8 +8,8 @@ from tokenizers import Tokenizer
 from transformers import GenerationConfig, LogitsProcessorList, TopPLogitsWarper, StoppingCriteriaList
 
 from model import ModelConfig, SmolLM, StaticCache, LoRAConfig, TemperatureRangeLogitsWarper
-from .utils import get_state_dict_from_safetensors, StoppingCriteriaSub
 from .lora_utils import inject_lora_adapter
+from .utils import get_state_dict_from_safetensors, StoppingCriteriaSub
 
 
 class ModelGenerationHandler:
@@ -19,7 +20,6 @@ class ModelGenerationHandler:
         self.config: Optional[ModelConfig] = None
         self.tokenizer: Optional[Tokenizer] = None
         self.model: Optional[SmolLM] = None
-        self.generation_config: Optional[GenerationConfig] = None
         self.cache: Optional[StaticCache] = None
         self.stopping_criteria = None
         self.processor: Optional[LogitsProcessorList] = None
@@ -43,8 +43,8 @@ class ModelGenerationHandler:
         torch.cuda.empty_cache()
         self.model.bos_token_id = self.tokenizer.token_to_id("<s>")
 
-    def setup_generation(self, max_new_tokens: int = 512):
-        self.generation_config = GenerationConfig(
+    def get_gen_config(self, max_new_tokens: int = 512):
+        return GenerationConfig(
             max_new_tokens=max_new_tokens,
             do_sample=True,
             num_beams=self.num_beams,
@@ -53,6 +53,8 @@ class ModelGenerationHandler:
             bos_token_id=1,
             eos_token_id=2,
         )
+
+    def setup_generation(self, ):
         self.cache = StaticCache(self.config, dtype=torch.bfloat16, device=self.device)
 
         stopping_tokens: List[torch.Tensor] = [torch.tensor([i], device=self.device) for i in range(3)]
@@ -69,28 +71,27 @@ class ModelGenerationHandler:
     def compile_model(self):
         print('Compiling...')
         start = time.time()
-        self.model._forward = torch.compile(self.model._forward, mode="reduce-overhead")
+        self.model.forward = torch.compile(self.model.forward, fullgraph=True, mode="reduce-overhead")
 
         # Dummy run for compilation
         inp = "Love is a beautiful and"
-        encoded = self.tokenizer.encode(inp, add_special_tokens=False)
-        tokens = torch.tensor([encoded.ids]).to(self.device)
-        attention_mask = torch.tensor([encoded.attention_mask]).to(self.device)
-        self.model.generate(input_ids=tokens,
-                            attention_mask=attention_mask,
-                            past_key_values=self.cache,
-                            generation_config=self.generation_config)
+        for _ in range(2):  # Run twice cuz idl why; but this works? somehow?
+            self.generate(inp, max_new_tokens=10)
 
         print(f'Compiled in {time.time() - start:.3f}s')
 
-    def generate(self, prompt: str) -> Tuple[str, int, int, float]:
+    def generate(self, prompt: str, max_new_tokens: int = 512) -> Tuple[str, int, int, float]:
         """
         Generate a completion for a given prompt
         :param prompt: The prompt to generate a completion for
+        :param max_new_tokens: The maximum number of tokens to generate
         :return: The generated completion, number of tokens generated, total tokens including prompt, generation time
 
         """
         self.cache.reset()
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
         encoded = self.tokenizer.encode(prompt, add_special_tokens=False)
         tokens = torch.tensor([encoded.ids]).to(self.device)
         attention_mask = torch.tensor([encoded.attention_mask]).to(self.device)
@@ -100,7 +101,7 @@ class ModelGenerationHandler:
                                   attention_mask=attention_mask,
                                   logits_processor=self.processor,
                                   past_key_values=self.cache,
-                                  generation_config=self.generation_config,
+                                  generation_config=self.get_gen_config(max_new_tokens=max_new_tokens),
                                   stopping_criteria=self.stopping_criteria)[0].tolist()
 
         total_tokens = len(out)

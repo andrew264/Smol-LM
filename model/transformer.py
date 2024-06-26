@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from torch.nn import CrossEntropyLoss
 from transformers import GenerationMixin, Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -13,15 +14,6 @@ from .config import ModelConfig
 from .norm import get_rmsnorm_class
 from .rotary import RotaryEmbedding
 from .utils import LINEAR
-
-try:
-    from functools import partial
-    from flash_attn.losses.cross_entropy import CrossEntropyLoss
-
-    CrossEntropyLoss = partial(CrossEntropyLoss, inplace_backward=True)
-    print("Using CrossEntropyLoss from flash_attn.")
-except ImportError:
-    from torch.nn import CrossEntropyLoss
 
 
 class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
@@ -90,19 +82,6 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
 
         self.config.vocab_size = new_num_tokens
 
-    def _forward(self, x, freqs, past_key_values, mask, cache_positions):
-        for layer in self.model.layers:
-            x = layer(x,
-                      freqs=freqs,
-                      past_key_values=past_key_values,
-                      attention_mask=mask,
-                      cache_position=cache_positions, )
-
-        x = self.model.norm(x)
-
-        logits = self.lm_head(x)
-        return logits
-
     def forward(
             self,
             input_ids: torch.LongTensor = None,
@@ -118,7 +97,16 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         causal_mask = self._update_causal_mask(attention_mask, x, cache_position, past_key_values)
         freqs = self.rotary_emb(position_ids)
 
-        logits = self._forward(x, freqs, past_key_values, causal_mask, cache_position)
+        for layer in self.model.layers:
+            x = layer(x,
+                      freqs=freqs,
+                      past_key_values=past_key_values,
+                      attention_mask=causal_mask,
+                      cache_position=cache_position, )
+
+        x = self.model.norm(x)
+
+        logits = self.lm_head(x)
 
         loss = None
         if labels is not None:
