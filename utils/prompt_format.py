@@ -1,11 +1,15 @@
 from enum import Enum
 from typing import TypedDict, List, Optional, Union
 
-from langchain_community.vectorstores import Chroma
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
 
 from model import HFNomicEmbeddings
+
+try:
+    from langchain_community.vectorstores.chroma import Chroma
+except ImportError:
+    Chroma = None
 
 
 class Role(Enum):
@@ -36,8 +40,11 @@ class Prompt:
         self.tokenizer = tokenizer
         self.embeddings_model = embeddings_model
         self.sys_prompt = sys_prompt
-        self.retriever = Chroma(persist_directory=vector_store_path,
-                                embedding_function=embeddings_model) if vector_store_path and embeddings_model else None
+        if vector_store_path and embeddings_model and Chroma is not None:
+            self.retriever = Chroma(persist_directory=vector_store_path,
+                                    embedding_function=embeddings_model)
+        else:
+            self.retriever = None
         if sys_prompt is not None:
             self.add_system_message(sys_prompt or DEFAULT_SYSTEM_PROMPT)
 
