@@ -1,40 +1,34 @@
+from abc import ABC
 from itertools import cycle
 
-from torch.utils.data import DataLoader
+from torch.utils.data import IterableDataset, Dataset
 
 
-class CyclingDataLoader(object):
+class InterleaveDataset(IterableDataset, ABC):
     """
-    Just a bunch of DataLoaders that cycle through each other.
+    Just a bunch of Datasets that are interleaved.
     """
 
-    def __init__(self, *iterators):
-        self.iterators = [iter(it) for it in iterators]
-        self.cycle = cycle(self.iterators)
-
-    def __iter__(self):
-        return self
+    def __init__(self, *datasets: IterableDataset | Dataset):
+        self.datasets = datasets
+        self.cycle = cycle([iter(it) for it in datasets])
 
     def __len__(self):
         total = 0
-        for it in self.iterators:
+        for it in self.datasets:
             if hasattr(it, '__len__'):
-                total += len(it)
+                total += it.__len__()
             else:
                 return None
         return total
 
     def __next__(self):
-        if not self.iterators:
-            raise StopIteration
-
         while True:
             current = next(self.cycle)
             try:
                 return next(current)
             except StopIteration:
-                print(f"Removing exhausted iterator: {current}")
-                self.iterators.remove(current)
-                if not self.iterators:
-                    raise StopIteration
-                self.cycle = cycle(self.iterators)
+                pass
+
+    def __iter__(self):
+        return self

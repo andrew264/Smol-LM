@@ -17,4 +17,4 @@ sentence-transformers
 jupyter
 lightning
 einops
-datatrove[io]
+pyarrow

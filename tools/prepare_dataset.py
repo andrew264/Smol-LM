@@ -3,8 +3,9 @@ import os
 
 import numpy as np
 import tokenizers
-from dataset import FineWebEdu
 from tqdm import tqdm
+
+from dataset import ParquetDataset
 
 DATA_CACHE_DIR = "../data/processed"
 SHARD_SIZE = 2 ** 29
@@ -31,7 +32,7 @@ def write_datafile(f_name: str, toks: np.ndarray):
 
 
 if __name__ == '__main__':
-    dataset = FineWebEdu()
+    dataset = ParquetDataset("/home/andrew264/datasets/fineweb-edu/sample/10BT")
 
     # from llm.c
     nprocs = max(1, os.cpu_count() - 1)

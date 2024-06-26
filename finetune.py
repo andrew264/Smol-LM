@@ -6,7 +6,7 @@ import torch
 from lightning import Trainer
 from torch.utils.data import DataLoader
 
-from dataset import DiscordConversations, FineWebEdu, CyclingDataLoader
+from dataset import DiscordConversations, ParquetDatasetIter, InterleaveDataset
 from model import ModelConfig, LoRAConfig
 from model import SmolLMLit
 from utils import (get_state_dict_from_safetensors, inject_lora_adapter, get_lora_state_dict, save_as_safetensors)
@@ -39,7 +39,7 @@ def train(_path: str,
     torch.cuda.empty_cache()
 
     trainer = Trainer(accelerator="gpu",
-                      precision="bf16-true",
+                      precision="bf16-mixed",
                       max_epochs=config.epochs,
                       enable_progress_bar=True,
                       log_every_n_steps=5,
@@ -104,12 +104,11 @@ if __name__ == '__main__':
     ds1 = DiscordConversations(path="data/finetune/conversations",
                                tokenizer=tokenizer,
                                sys_prompt=sys_prompt, )
-    dl1 = DataLoader(ds1, batch_size=params.max_batch_size,
-                     shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=4)
-    ds2 = FineWebEdu(tokenizer=tokenizer, num_samples=len(ds1), data_shuffle=True)
-    dl2 = DataLoader(ds2, batch_size=params.max_batch_size,
-                     shuffle=True, collate_fn=collate_pad_batch_fn, num_workers=4)
-    dataloader = CyclingDataLoader(dl1, dl2)
+    ds2 = ParquetDatasetIter(directory="/home/andrew264/datasets/fineweb-edu/sample/10BT",
+                             tokenizer=tokenizer, max_items=len(ds1))
+    _train = InterleaveDataset(ds1, ds2)
+    train_data = DataLoader(_train, batch_size=params.max_batch_size,
+                            collate_fn=collate_pad_batch_fn, num_workers=4)
 
     val = DiscordConversations(path="data/finetune/conversations",
                                tokenizer=tokenizer,
@@ -118,7 +117,7 @@ if __name__ == '__main__':
                           shuffle=False, collate_fn=collate_pad_batch_fn, num_workers=4)
 
     train(path,
-          training_data=dataloader,
+          training_data=train_data,
           validation_data=val_data,
           config=params,
           lora_config=lora_params,

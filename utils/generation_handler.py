@@ -70,9 +70,9 @@ class ModelGenerationHandler:
         stopping_tokens.append(torch.tensor([28789, 28766], device=self.device))
         return StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
-    def set_processor(self, top_p: float = 0.99, temperature: float = 1.7):
+    def set_processor(self, top_p: float = 0.95, temperature: float = 1.7):
         self.processor = LogitsProcessorList([
-            TemperatureRangeLogitsWarper(temperature, 0.8, 100),
+            TemperatureRangeLogitsWarper(temperature, 0.9, 24),
             TopPLogitsWarper(top_p=top_p)
         ])
 

@@ -4,7 +4,7 @@ import time
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, processors
 from torch.utils.data import DataLoader
 
-from dataset import FineWebEdu
+from dataset import ParquetDataset
 from model import ModelConfig
 
 os.environ['TOKENIZERS_PARALLELISM'] = "true"
@@ -38,9 +38,9 @@ if __name__ == '__main__':
         max_token_length=32,
     )
 
-    dataset = FineWebEdu()
+    dataset = ParquetDataset("/home/andrew264/datasets/fineweb-edu/sample/10BT")
     batch_size = 25_000
-    dataloader = DataLoader(dataset, batch_size=batch_size,)
+    dataloader = DataLoader(dataset, batch_size=batch_size, )
 
 
     def batch_iterator():

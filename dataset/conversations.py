@@ -1,5 +1,6 @@
 import glob
 import json
+from random import shuffle
 from typing import List, Tuple
 
 from tokenizers import Tokenizer
@@ -13,11 +14,16 @@ class DiscordConversations(Dataset):
 
     def __init__(self, path: str,
                  tokenizer: Tokenizer,
-                 sys_prompt: str, ):
+                 sys_prompt: str,
+                 shuffle_files: bool = True,
+                 ) -> None:
+        super().__init__()
         self._tokenizer = tokenizer
         self._sys_p = sys_prompt
         self.assistant_name = "sydney"
         self._files = glob.glob(f"{path}/**/*.json")
+        if shuffle_files:
+            shuffle(self._files)
         enc_sys_prompt = tokenizer.encode(f"{self.SYSTEM}{sys_prompt.strip()}\n{self.EOT}",
                                           add_special_tokens=False)
         self._enc_sys_prompt = (enc_sys_prompt.ids, [self.CROSS_ENTROPY_IGNORE_IDX] * len(enc_sys_prompt.ids))

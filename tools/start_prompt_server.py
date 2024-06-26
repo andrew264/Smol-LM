@@ -21,7 +21,7 @@ def get_response(input_text, top_p: Optional[float], temp: Optional[float]) -> T
 async def handle(request):
     data = await request.json()
     input_text = data['input']
-    top_p = data.get('top_p', 0.90)
+    top_p = data.get('top_p', 0.99)
     temp = data.get('temp', 1.7)
     output_text, length = get_response(input_text, top_p, temp)
 
