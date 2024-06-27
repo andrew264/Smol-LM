@@ -39,7 +39,7 @@ class ModelGenerationHandler:
             lora_params = LoRAConfig.from_json(os.path.join(self.path, 'lora.json'))
 
             adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'), self.device)
-            self.model = inject_lora_adapter(self.model, lora_params, adapter_sd)
+            self.model = inject_lora_adapter(self.model, lora_params, adapter_sd, merge_lora=True)
             del adapter_sd
 
         self.model.bos_token_id = self.tokenizer.token_to_id("<s>")

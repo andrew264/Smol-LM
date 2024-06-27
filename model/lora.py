@@ -25,15 +25,26 @@ class LoRALinear(nn.Module):
                                 bias=False, device=device, dtype=dtype)
 
         self.initialize_parameters()
+        self._merged = False
 
     def initialize_parameters(self):
         nn.init.kaiming_uniform_(self.lora_A.weight, a=5 ** 0.5)
         nn.init.zeros_(self.lora_B.weight)
 
+    def merge_weights(self):
+        self.linear.weight = nn.Parameter(
+            (self.lora_B.weight @ self.lora_A.weight) * self.scaling + self.linear.weight
+        )
+        self.lora_A = None
+        self.lora_B = None
+        self._merged = True
+
     def lora_forward(self, x):
         return self.scaling * self.lora_B(self.lora_A(self.lora_dropout(x)))
 
     def forward(self, x):
+        if self._merged:
+            return self.linear(x)
         return self.linear(x) + self.lora_forward(x)
 
 
@@ -53,14 +64,25 @@ class LoRAEmbedding(nn.Module):
         self.lora_A = nn.Parameter(torch.zeros((embedding.num_embeddings, self.rank), dtype=dtype, device=device))
         self.lora_B = nn.Parameter(torch.zeros((self.rank, embedding.embedding_dim), dtype=dtype, device=device))
         self.initialize_parameters()
+        self._merged = False
 
     def initialize_parameters(self):
         nn.init.kaiming_uniform_(self.lora_A, a=5 ** 0.5)
         nn.init.zeros_(self.lora_B)
+
+    def merge_weights(self):
+        self.embedding.weight = nn.Parameter(
+            (self.lora_A @ self.lora_B) * self.scaling + self.embedding.weight
+        )
+        self.lora_A = None
+        self.lora_B = None
+        self._merged = True
 
     def lora_forward(self, x):
         return (self.scaling *
                 F.embedding(x, self.lora_A, padding_idx=self.padding_idx, sparse=self.sparse) @ self.lora_B)
 
     def forward(self, x):
+        if self._merged:
+            return self.embedding(x)
         return self.embedding(x) + self.lora_forward(x)

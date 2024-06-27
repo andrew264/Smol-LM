@@ -10,7 +10,10 @@ from model.lora import LoRALinear, LoRAEmbedding
 T = TypeVar('T', bound=nn.Module)
 
 
-def inject_lora_adapter(model: T, lora_config: LoRAConfig, adapter_state_dict: Optional[dict] = None) -> T:
+def inject_lora_adapter(model: T,
+                        lora_config: LoRAConfig,
+                        adapter_state_dict: Optional[dict] = None,
+                        merge_lora: bool = False) -> T:
     start = time.time()
     for param in model.parameters():
         param.requires_grad = False
@@ -37,6 +40,21 @@ def inject_lora_adapter(model: T, lora_config: LoRAConfig, adapter_state_dict: O
     if adapter_state_dict is not None:
         start = time.time()
         model.load_state_dict(adapter_state_dict, strict=False)
+        if merge_lora:
+            for layer in model.model.layers:
+                block = layer.self_attn
+                if 'qkv_proj' in lora_config.layers and hasattr(block.qkv_proj, 'merge_weights'):
+                    block.qkv_proj.merge_weights()
+                if 'o_proj' in lora_config.layers and hasattr(block.o_proj, 'merge_weights'):
+                    block.o_proj.merge_weights()
+                if 'mlp' in lora_config.layers and hasattr(layer.mlp.gate_proj, 'merge_weights'):
+                    layer.mlp.gate_proj.merge_weights()
+                    layer.mlp.up_proj.merge_weights()
+                    layer.mlp.down_proj.merge_weights()
+            if 'lm_head' in lora_config.layers and hasattr(model.lm_head, 'merge_weights'):
+                model.lm_head.merge_weights()
+            if 'embedding' in lora_config.layers and hasattr(model.model.embed_tokens, 'merge_weights'):
+                model.model.embed_tokens.merge_weights()
         torch.cuda.synchronize()
         print(f"Adapter state dict loading took {time.time() - start:.3f}s")
     return model
