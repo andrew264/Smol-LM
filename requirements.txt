@@ -7,7 +7,6 @@ bitsandbytes
 pandas
 tqdm
 transformers
-aiohttp
 datasets
 safetensors
 langchain
@@ -18,3 +17,4 @@ jupyter
 lightning
 einops
 pyarrow
+litserve
