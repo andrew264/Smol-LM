@@ -31,9 +31,12 @@ class LoRALinear(nn.Module):
         nn.init.kaiming_uniform_(self.lora_A.weight, a=5 ** 0.5)
         nn.init.zeros_(self.lora_B.weight)
 
+    def get_merged_weights(self):
+        return (self.lora_B.weight @ self.lora_A.weight) * self.scaling + self.linear.weight
+
     def merge_weights(self):
         self.linear.weight = nn.Parameter(
-            (self.lora_B.weight @ self.lora_A.weight) * self.scaling + self.linear.weight
+            self.get_merged_weights()
         )
         self.lora_A = None
         self.lora_B = None
@@ -70,9 +73,12 @@ class LoRAEmbedding(nn.Module):
         nn.init.kaiming_uniform_(self.lora_A, a=5 ** 0.5)
         nn.init.zeros_(self.lora_B)
 
+    def get_merged_weights(self):
+        return (self.lora_A @ self.lora_B) * self.scaling + self.embedding.weight
+
     def merge_weights(self):
         self.embedding.weight = nn.Parameter(
-            (self.lora_A @ self.lora_B) * self.scaling + self.embedding.weight
+            self.get_merged_weights()
         )
         self.lora_A = None
         self.lora_B = None
