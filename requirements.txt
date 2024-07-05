@@ -18,3 +18,4 @@ lightning
 einops
 pyarrow
 litserve
+git+https://github.com/EleutherAI/lm-evaluation-harness

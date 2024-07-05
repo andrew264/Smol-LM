@@ -53,7 +53,9 @@ class ModelGenerationHandler:
         torch.cuda.empty_cache()
         torch.cuda.synchronize(device=self.device)
 
-    def get_gen_config(self, max_new_tokens: int = 512):
+        self.model.generation_config = self.get_gen_config(None)
+
+    def get_gen_config(self, max_new_tokens: Optional[int] = 512):
         return GenerationConfig(
             max_new_tokens=max_new_tokens,
             do_sample=True,

@@ -81,7 +81,7 @@ class AttentionBlock(nn.Module):
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, *freqs)
 
-        if cache_position is not None:
+        if cache_position is not None and past_key_values is not None:
             key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx,
                                                               dict(cache_position=cache_position))
 

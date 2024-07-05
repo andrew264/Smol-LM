@@ -95,6 +95,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         x = self.model.embed_tokens(input_ids)
 
         causal_mask = self._update_causal_mask(attention_mask, x, cache_position, past_key_values)
+        if position_ids is None:
+            position_ids = torch.arange(x.shape[1], device=x.device).unsqueeze(0)
         freqs = self.rotary_emb(position_ids)
 
         for layer in self.model.layers:
@@ -183,7 +185,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         dtype, device = input_tensor.dtype, input_tensor.device
         min_dtype = torch.finfo(dtype).min
         sequence_length = input_tensor.shape[1]
-        target_length = past_key_values.get_max_length()
+        target_length = past_key_values.get_max_length() if past_key_values is not None else sequence_length
 
         causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
         if sequence_length != 1:
