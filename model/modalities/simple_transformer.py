@@ -1,8 +1,13 @@
 import torch
 from einops import rearrange
-from flash_attn import flash_attn_qkvpacked_func
-from flash_attn.layers.rotary import RotaryEmbedding
 from torch import nn, Tensor
+
+try:
+    from flash_attn import flash_attn_qkvpacked_func
+    from flash_attn.layers.rotary import RotaryEmbedding
+except ImportError:
+    flash_attn_qkvpacked_func = None
+    RotaryEmbedding = None
 
 from model.norm import get_rmsnorm_class
 
