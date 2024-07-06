@@ -10,11 +10,11 @@
 
     - Flash Attention - 2 (from F.scaled_dot_product_attention)
     - Weight Decay Denylist for Norm, Bias and Embedding
-    - LoRA/LoRA+ fine-tuning
+    - finetuning with LoRA, LoRA+, DoRA
     - RAG for text generation
 
 ### Supports loading the following pretrained weights:
-    - LLaMa-2, LLaMa3
+    - Llama-2, Llama-3
     - Mistral
 
 ### Usage

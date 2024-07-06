@@ -43,5 +43,5 @@ class ModelAPI(ls.LitAPI):
 
 if __name__ == "__main__":
     api = ModelAPI()
-    server = ls.LitServer(api, accelerator="auto")
-    server.run(port=6969)
+    server = ls.LitServer(api)
+    server.run(port=6969, generate_client_file=False)

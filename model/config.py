@@ -81,6 +81,7 @@ class ModelConfig:
 
 @dataclass
 class LoRAConfig:
+    type: str = 'lora'  # 'lora', 'dora'
     rank = 8
     alpha = 16
     dropout = 0.05

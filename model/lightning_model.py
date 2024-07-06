@@ -84,7 +84,7 @@ class SmolLMLit(L.LightningModule):
             )
         if self.use_scheduler:
             scheduler = get_cosine_schedule_with_warmup(optimizer,
-                                                        num_warmup_steps=30,
+                                                        num_warmup_steps=5,
                                                         num_training_steps=self.trainer.estimated_stepping_batches)
 
             lr_scheduler_config = {
@@ -122,7 +122,6 @@ class SmolLMLit(L.LightningModule):
 
         return causal_mask
 
-    # @torch.compile
     def forward(
             self,
             input_ids: Tensor = None,
@@ -189,7 +188,7 @@ class SmolLMLit(L.LightningModule):
 
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
-        self.log("val_loss", loss, on_step=True, on_epoch=True, )
-        self.log("val_ppl", torch.exp(loss), on_step=True, on_epoch=True, )
+        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val_ppl", torch.exp(loss), on_step=True, on_epoch=True, prog_bar=True)
 
         return loss

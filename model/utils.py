@@ -3,9 +3,9 @@ from typing import Union, Optional, List
 import torch
 from torch import nn, Tensor
 
-from .lora import LoRALinear
+from model.finetuning import LoRALinear, DoRALinear
 
-LINEAR = Union[nn.Linear, LoRALinear]
+LINEAR = Union[nn.Linear, LoRALinear, DoRALinear]
 
 
 def merge_audio_features(input_embeds: Tensor,

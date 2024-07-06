@@ -1,4 +1,4 @@
-from typing import Union, Self
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -8,10 +8,8 @@ from model.config import LoRAConfig
 
 
 class LoRALinear(nn.Module):
-    def __init__(self, linear: Union[nn.Linear, Self], lora_config: LoRAConfig):
+    def __init__(self, linear: nn.Linear, lora_config: LoRAConfig):
         super().__init__()
-        if isinstance(linear, LoRALinear):
-            linear = linear.linear
         self.linear = linear
         dtype = linear.weight.dtype
         device = linear.weight.device
@@ -31,12 +29,18 @@ class LoRALinear(nn.Module):
         nn.init.kaiming_uniform_(self.lora_A.weight, a=5 ** 0.5)
         nn.init.zeros_(self.lora_B.weight)
 
-    def get_merged_weights(self):
-        return (self.lora_B.weight @ self.lora_A.weight) * self.scaling + self.linear.weight
+    def get_merged_weights(self) -> Tuple[nn.Parameter, Optional[nn.Parameter]]:
+        return (
+            nn.Parameter(
+                (self.lora_B.weight @ self.lora_A.weight) * self.scaling + self.linear.weight,
+                requires_grad=False
+            ),
+            nn.Parameter(self.linear.bias, requires_grad=False) if self.linear.bias is not None else None
+        )
 
     def merge_weights(self):
         self.linear.weight = nn.Parameter(
-            self.get_merged_weights()
+            self.get_merged_weights()[0]
         )
         self.lora_A = None
         self.lora_B = None
@@ -52,10 +56,8 @@ class LoRALinear(nn.Module):
 
 
 class LoRAEmbedding(nn.Module):
-    def __init__(self, embedding: Union[nn.Embedding, Self], lora_config: LoRAConfig):
+    def __init__(self, embedding: nn.Embedding, lora_config: LoRAConfig):
         super().__init__()
-        if isinstance(embedding, LoRAEmbedding):
-            embedding = embedding.embedding
         self.embedding = embedding
         dtype = embedding.weight.dtype
         device = embedding.weight.device
