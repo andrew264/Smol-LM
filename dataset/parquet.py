@@ -83,16 +83,17 @@ class ParquetDatasetIter(IterableDataset):
             if self.shuffle_rows:
                 shuffle(row_groups)
             for row_group_index in row_groups:
-                row_group = parquet_file.read_row_group(row_group_index)
-                for row in row_group.to_pandas().itertuples():
+                row_group = parquet_file.read_row_group(row_group_index).to_pandas()
+                for row in row_group.itertuples():
                     if self.max_items is not None and items_yielded >= self.max_items:
                         return
 
-                    text = row.text
-                    if self.tokenizer is not None:
-                        tokenized = self.tokenizer.encode(text + "\n</s>", add_special_tokens=False)
-                        yield tokenized.ids, tokenized.ids
-                    else:
-                        yield text
+                    if hasattr(row, 'text'):
+                        text = row.text
+                        if self.tokenizer is not None:
+                            tokenized = self.tokenizer.encode(text + "\n</s>", add_special_tokens=False)
+                            yield tokenized.ids, tokenized.ids
+                        else:
+                            yield text
 
-                    items_yielded += 1
+                        items_yielded += 1

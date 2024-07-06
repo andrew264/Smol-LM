@@ -33,7 +33,7 @@ def train(_path: str,
     del model_sd
 
     # Inject LoRA
-    model = inject_lora_adapter(model, lora_config, )
+    model = inject_lora_adapter(model, lora_config, merge_lora=False)
 
     # Training loop
     torch.cuda.empty_cache()
@@ -41,8 +41,9 @@ def train(_path: str,
     trainer = Trainer(accelerator="gpu",
                       precision="bf16-mixed",
                       max_epochs=config.epochs,
+                      enable_checkpointing=False,
                       enable_progress_bar=True,
-                      log_every_n_steps=5,
+                      log_every_n_steps=config.grad_accumulation_steps,
                       gradient_clip_val=1.0,
                       accumulate_grad_batches=config.grad_accumulation_steps)
     trainer.fit(model, training_data, validation_data)
@@ -108,7 +109,7 @@ if __name__ == '__main__':
                              tokenizer=tokenizer, max_items=len(ds1))
     _train = InterleaveDataset(ds1, ds2)
     train_data = DataLoader(_train, batch_size=params.max_batch_size,
-                            collate_fn=collate_pad_batch_fn, num_workers=4)
+                            collate_fn=collate_pad_batch_fn,)
 
     val = DiscordConversations(path="data/finetune/conversations",
                                tokenizer=tokenizer,
