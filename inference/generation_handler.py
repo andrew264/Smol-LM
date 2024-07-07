@@ -7,9 +7,12 @@ import torch
 from tokenizers import Tokenizer
 from transformers import GenerationConfig, LogitsProcessorList, TopPLogitsWarper, StoppingCriteriaList
 
-from model import ModelConfig, SmolLM, StaticCache, LoRAConfig, TemperatureRangeLogitsWarper
-from .lora_utils import inject_lora_adapter
-from .utils import get_state_dict_from_safetensors, StoppingCriteriaSub
+from model import SmolLM
+from model.config import ModelConfig, LoRAConfig
+from model.peft.utilities import inject_lora_adapter
+from utils.utils import get_state_dict_from_safetensors
+from .cache import StaticCache
+from .sampling import TemperatureRangeLogitsWarper, StoppingCriteriaSub
 
 
 class ModelGenerationHandler:
@@ -30,20 +33,22 @@ class ModelGenerationHandler:
         self.config.max_batch_size = self.num_beams
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
 
-        model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'), self.device)
-        self.model = SmolLM(self.config).to(device=self.device, dtype=torch.bfloat16)
+        model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'), torch.device('cpu'))
+        self.model = SmolLM(self.config).bfloat16()
         self.model.load_state_dict(model_sd)
         del model_sd
 
         if os.path.exists(os.path.join(self.path, 'lora.json')):
             lora_params = LoRAConfig.from_json(os.path.join(self.path, 'lora.json'))
 
-            adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'), self.device)
-            self.model = inject_lora_adapter(self.model, lora_params, adapter_sd, merge_lora=True)
+            adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'),
+                                                         torch.device('cpu'))
+            inject_lora_adapter(self.model, lora_params, adapter_sd, merge_lora=True)
             del adapter_sd
 
         self.model.bos_token_id = self.tokenizer.token_to_id("<s>")
         self.model.eval()
+        self.model = self.model.to(device=self.device)
         gc.collect()
 
         self.cache = StaticCache(self.config, compiled_mode=compiled, device=self.device)

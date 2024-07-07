@@ -2,7 +2,8 @@ import datetime
 
 import torch
 
-from utils import Prompt, ModelGenerationHandler
+from inference import ModelGenerationHandler
+from utils import Prompt
 
 DEVICE = torch.device("cuda:0")
 torch.set_float32_matmul_precision('high')
@@ -24,7 +25,7 @@ def multiline_input():
 
 
 def main():
-    path = './ft-weights/'
+    path = 'ft-weights/'
     num_beams = 2
 
     model_handler = ModelGenerationHandler(path, DEVICE, num_beams)

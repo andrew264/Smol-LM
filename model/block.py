@@ -2,9 +2,9 @@ from typing import Optional
 
 import torch.nn as nn
 from torch import Tensor
+from transformers import Cache
 
 from .attention_layer import AttentionBlock
-from .cache import StaticCache
 from .config import ModelConfig
 from .feed_forward import FeedForward
 from .norm import get_rmsnorm_class
@@ -22,7 +22,7 @@ class Block(nn.Module):
 
     def forward(self, hidden_states: Tensor,
                 freqs: Tensor,
-                past_key_values: Optional[StaticCache] = None,
+                past_key_values: Optional[Cache] = None,
                 attention_mask: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None, ) -> Tensor:
         # Self-attention

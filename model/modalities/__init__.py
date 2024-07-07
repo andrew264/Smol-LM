@@ -1,1 +1,0 @@
-from model.modalities.simple_transformer import SimpleTransformer

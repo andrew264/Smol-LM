@@ -1,11 +1,11 @@
 import torch
 
-from utils import ModelGenerationHandler
+from inference import ModelGenerationHandler
 
 DEVICE = torch.device("cuda:0")
 torch.set_float32_matmul_precision('high')
 
-path = './weights'
+path = 'weights'
 
 if __name__ == '__main__':
     model_handler = ModelGenerationHandler(path, DEVICE, 1)

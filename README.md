@@ -3,15 +3,18 @@
 ## A small language model for text generation in PyTorch
 
 ## Multimodality
+### Experiments
+[ImageExpts](https://github.com/andrew264/ImageExpts)</br>
+[AudioExpts](https://github.com/andrew264/AudioExpts)
 
-    - Initial multimodal support (text & audio) for text generation (WIP) [will add image support soon]
 
 ### Changes made
 
     - Flash Attention - 2 (from F.scaled_dot_product_attention)
     - Weight Decay Denylist for Norm, Bias and Embedding
-    - finetuning with LoRA, LoRA+, DoRA
+    - PEFT with LoRA, LoRA+, DoRA
     - RAG for text generation
+    - PyTorch Lightning Trainer
 
 ### Supports loading the following pretrained weights:
     - Llama-2, Llama-3

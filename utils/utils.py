@@ -5,10 +5,10 @@ from typing import Optional, List, TypeVar
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file as safe_save_file
-from transformers import StoppingCriteria
 
 
-def get_state_dict_from_safetensors(path: str | List[str], device: torch.device) -> Optional[dict]:
+def get_state_dict_from_safetensors(path: str | List[str],
+                                    device: torch.device = torch.device('cpu')) -> Optional[dict]:
     state_dict = {}
     if isinstance(path, str):
         path = [path]
@@ -56,31 +56,11 @@ def get_state_dict(path: str, device: torch.device) -> Optional[dict]:
 T = TypeVar('T', bound=torch.nn.Module)
 
 
-def compile_model(model: T) -> T:
+def compile_model(model: T) -> None:
     start = time.time()
     model.forward = torch.compile(model=model.forward, fullgraph=True, mode='max-autotune')
     torch.cuda.synchronize()
     print(f"Compiled model in {time.time() - start:.3f}s.")
-    return model
-
-
-class StoppingCriteriaSub(StoppingCriteria):
-    def __init__(self, stops: Optional[List[torch.Tensor]] = None, encounters=1):
-        super().__init__()
-        if stops is None:
-            stops = []
-        self.stops = stops
-        self.ENCOUNTERS = encounters
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
-        stop_count = 0
-        batch_size = input_ids.size(0)
-        for batch in input_ids:
-            for stop in self.stops:
-                if torch.equal(stop, batch[-len(stop):]):
-                    stop_count += 1
-
-        return stop_count >= batch_size * self.ENCOUNTERS
 
 
 def count_parameters(model: torch.nn.Module):

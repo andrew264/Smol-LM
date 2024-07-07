@@ -1,6 +1,7 @@
 from typing import List
 
 import torch.nn.functional as F
+
 try:
     from langchain_core.embeddings import Embeddings
     from sentence_transformers import SentenceTransformer

@@ -4,12 +4,13 @@ from typing import TypedDict, List, Optional, Union
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
 
-from model import HFNomicEmbeddings
-
 try:
     from langchain_community.vectorstores.chroma import Chroma
+
+    from model.embedding_model import HFNomicEmbeddings
 except ImportError:
     Chroma = None
+    HFNomicEmbeddings = None
 
 
 class Role(Enum):

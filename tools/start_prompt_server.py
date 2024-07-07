@@ -3,7 +3,7 @@ from typing import Tuple
 import litserve as ls
 import torch
 
-from utils import ModelGenerationHandler
+from inference.generation_handler import ModelGenerationHandler
 
 
 class ModelAPI(ls.LitAPI):

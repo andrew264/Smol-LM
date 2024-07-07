@@ -3,11 +3,10 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from torch import Tensor
+from transformers import Cache
 
-from .cache import StaticCache
 from .config import ModelConfig
 from .rotary import apply_rotary_pos_emb
-from .utils import LINEAR
 
 
 class AttentionBlock(nn.Module):
@@ -36,10 +35,10 @@ class AttentionBlock(nn.Module):
                 f"{self.num_key_value_heads} and `num_heads`: {self.num_heads})."
             )
 
-        self.qkv_proj: LINEAR = nn.Linear(self.hidden_size,
-                                          self.hidden_size + 2 * self.key_value_hidden_size,
-                                          bias=config.attention_qkv_bias)
-        self.o_proj: LINEAR = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_out_bias)
+        self.qkv_proj = nn.Linear(self.hidden_size,
+                                  self.hidden_size + 2 * self.key_value_hidden_size,
+                                  bias=config.attention_qkv_bias)
+        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_out_bias)
 
         self._register_load_state_dict_pre_hook(self.fused_qkv_hook)
 
@@ -59,7 +58,7 @@ class AttentionBlock(nn.Module):
     def forward(self,
                 hidden_states: Tensor,
                 freqs: Tensor,
-                past_key_values: Optional[StaticCache] = None,
+                past_key_values: Optional[Cache] = None,
                 attention_mask: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None,
                 ) -> Tensor:

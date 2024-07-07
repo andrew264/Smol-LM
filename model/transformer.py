@@ -2,18 +2,15 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss
 from transformers import GenerationMixin, Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
-from model.modalities.audio_head import AudioHead
 from .block import Block
 from .config import ModelConfig
 from .norm import get_rmsnorm_class
 from .rotary import RotaryEmbedding
-from .utils import LINEAR
 
 
 class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
@@ -35,17 +32,14 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
         ))
 
-        if config.has_audio:
-            self.audio_head = AudioHead(config)
-
         self.rotary_emb = RotaryEmbedding(dim=config.hidden_size // config.num_attention_heads,
                                           base=config.rope_theta, )
 
-        self.lm_head: Optional[LINEAR] = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if self.tie_word_embeddings:
             self.model.embed_tokens.weight = self.lm_head.weight
 
-        self.loss_fn = CrossEntropyLoss(ignore_index=-100)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
 
     def _init_weights(self, module):

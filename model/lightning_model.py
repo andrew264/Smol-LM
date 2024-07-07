@@ -1,5 +1,6 @@
+import os
 from functools import partial
-from typing import Optional
+from typing import Optional, List
 
 import bitsandbytes as bnb
 import lightning as L
@@ -9,13 +10,12 @@ from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from transformers import get_cosine_schedule_with_warmup
 
-from model.modalities.audio_head import AudioHead
+from utils.utils import get_state_dict_from_safetensors
 from .block import Block
-from .config import ModelConfig
+from .config import ModelConfig, LoRAConfig
 from .norm import get_rmsnorm_class
+from .peft.utilities import inject_lora_adapter
 from .rotary import RotaryEmbedding
-from .utils import (LINEAR, merge_audio_features, get_optimizer_grouped_parameters,
-                    get_lora_plus_optimizer_group)
 
 try:
     from flash_attn.losses.cross_entropy import CrossEntropyLoss
@@ -25,33 +25,104 @@ except ImportError:
     from torch.nn import CrossEntropyLoss
 
 
+def get_optimizer_grouped_parameters(model: nn.Module, weight_decay: float) -> list[dict]:  # from llm.c repo
+    param_dict = {pn: p for pn, p in model.named_parameters()}
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': nodecay_params, 'weight_decay': 0.0}
+    ]
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+    print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+
+    return optim_groups
+
+
+def get_lora_plus_optimizer_group(model: nn.Module,
+                                  lr: float,
+                                  lr_ratio: int = 4,
+                                  lr_embedding: float = 1e-6,
+                                  ) -> List[dict]:
+    param_groups = {
+        "groupA": {},
+        "groupB": {},
+        "embedding": {},
+    }
+    for param_name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if 'embed_tokens' in param_name:
+            param_groups["embedding"][param_name] = param
+        elif 'lora_A' in param_name:
+            param_groups["groupA"][param_name] = param
+        elif 'lora_B' in param_name:
+            param_groups["groupB"][param_name] = param
+
+    optimizer_grouped_parameters = [
+        {"params": param_groups["groupA"].values(), "lr": lr},
+        {"params": param_groups["groupB"].values(), "lr": lr * lr_ratio},  # learn the B group faster than A
+        {"params": param_groups["embedding"].values(), "lr": lr_embedding},
+    ]
+    return optimizer_grouped_parameters
+
+
 class SmolLMLit(L.LightningModule):
-    def __init__(self, config: ModelConfig, use_lora_opt_grp: bool = False, use_scheduler: bool = False):
+    def __init__(self,
+                 model_path: str,
+                 use_lora_opt_grp: bool = False,
+                 use_scheduler: bool = False):
         super().__init__()
+        if os.path.exists(model_path + 'config.json'):
+            config = ModelConfig.from_json(model_path + 'config.json')
+        else:
+            raise FileNotFoundError(f"Config file not found at {model_path + 'config.json'}")
+        self.lora_config = None
+        if os.path.exists(model_path + 'lora.json'):
+            self.lora_config = LoRAConfig.from_json(model_path + 'lora.json')
+        self.model_path = model_path
         self.config = config
         self.tie_word_embeddings = config.tie_word_embeddings
         self.checkpointing_layers = config.checkpointing_layers
         self.max_length = config.max_position_embeddings
         self.use_lora_opt_grp = use_lora_opt_grp
         self.use_scheduler = use_scheduler
+        self.model = None
+        self.rotary_emb = None
+        self.lm_head = None
+        self.loss_fn = None
+
+    def configure_model(self):
+        config = self.config
         self.model = nn.ModuleDict(dict(
             embed_tokens=nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id),
             layers=nn.ModuleList(Block(config, idx) for idx in range(config.num_hidden_layers)),
             norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
         ))
-        if config.has_audio:
-            self.audio_head = AudioHead(config)
 
         self.rotary_emb = RotaryEmbedding(dim=config.hidden_size // config.num_attention_heads,
                                           base=config.rope_theta, )
 
-        self.lm_head: Optional[LINEAR] = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if self.tie_word_embeddings:
             self.model.embed_tokens.weight = self.lm_head.weight
 
         self.loss_fn = CrossEntropyLoss(ignore_index=-100)
 
         self.apply(self._init_weights)  # to initialize weights
+
+        model_sd = get_state_dict_from_safetensors(os.path.join(self.model_path, 'model.safetensors'))
+        if model_sd is not None:
+            self.load_state_dict(model_sd)
+            del model_sd
+
+        if self.lora_config is not None:
+            inject_lora_adapter(self, self.lora_config, merge_lora=False)
+        self.to(self.device)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -125,16 +196,10 @@ class SmolLMLit(L.LightningModule):
     def forward(
             self,
             input_ids: Tensor = None,
-            audio: Optional[Tensor] = None,
             attention_mask: Optional[Tensor] = None,
-            labels: Optional[torch.LongTensor] = None,
     ):
 
         x = self.model.embed_tokens(input_ids)
-
-        if audio is not None:
-            audio_features = self.audio_head(audio)
-            x, attention_mask, labels = merge_audio_features(x, attention_mask, labels, audio_features, self.max_length)
 
         position_ids = torch.arange(x.size(1), device=x.device).unsqueeze(0)
         freqs = self.rotary_emb(position_ids)
@@ -154,19 +219,15 @@ class SmolLMLit(L.LightningModule):
 
         x = self.model.norm(x)
 
-        logits = self.lm_head(x)
-
-        return logits, labels
+        return self.lm_head(x)
 
     def training_step(self, batch: dict, batch_idx):
         input_ids = batch.get("input_ids")
-        audio = batch.get("audio")
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits, labels2 = self.forward(input_ids, audio, attention_mask, labels)
-        if labels2 is not None:
-            labels = labels2
+        logits = self.forward(input_ids, attention_mask)
+
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -184,7 +245,7 @@ class SmolLMLit(L.LightningModule):
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits, _ = self(input_ids, audio, attention_mask, labels)
+        logits = self(input_ids, attention_mask)
 
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 

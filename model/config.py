@@ -53,9 +53,6 @@ class ModelConfig:
     # Other Parameters
     pad_token_id: int = 0
 
-    # multi-modality
-    has_audio: bool = False
-
     @classmethod
     def from_json(cls, path: str) -> "ModelConfig":
         """

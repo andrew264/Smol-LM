@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from transformers import Cache
 
-from .config import ModelConfig
+from model.config import ModelConfig
 
 
 class StaticCache(Cache):

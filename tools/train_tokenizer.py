@@ -5,7 +5,7 @@ from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers, pr
 from torch.utils.data import DataLoader
 
 from dataset import ParquetDataset
-from model import ModelConfig
+from model.config import ModelConfig
 
 os.environ['TOKENIZERS_PARALLELISM'] = "true"
 

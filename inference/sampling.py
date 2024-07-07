@@ -1,5 +1,8 @@
+from typing import List, Optional
+
+import torch
 from torch import Tensor
-from transformers import LogitsWarper
+from transformers import LogitsWarper, StoppingCriteria
 
 
 class TemperatureRangeLogitsWarper(LogitsWarper):
@@ -38,3 +41,22 @@ class TemperatureRangeLogitsWarper(LogitsWarper):
         temperature = self._get_temperature()
         scores_processed = scores / temperature
         return scores_processed
+
+
+class StoppingCriteriaSub(StoppingCriteria):
+    def __init__(self, stops: Optional[List[Tensor]] = None, encounters=1):
+        super().__init__()
+        if stops is None:
+            stops = []
+        self.stops = stops
+        self.ENCOUNTERS = encounters
+
+    def __call__(self, input_ids: Tensor, scores: Tensor, **kwargs):
+        stop_count = 0
+        batch_size = input_ids.size(0)
+        for batch in input_ids:
+            for stop in self.stops:
+                if torch.equal(stop, batch[-len(stop):]):
+                    stop_count += 1
+
+        return stop_count >= batch_size * self.ENCOUNTERS

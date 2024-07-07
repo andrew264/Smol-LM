@@ -2,12 +2,18 @@ import os
 from random import shuffle
 from typing import Optional
 
+import numpy as np
 import pyarrow.parquet as pq
 from tokenizers import Tokenizer
 from torch.utils.data import Dataset, IterableDataset
 
 
 class ParquetDataset(Dataset):
+    """
+    A PyTorch Dataset for reading Parquet files. Each row in the dataset is a text string.
+    and its very slow
+    """
+
     def __init__(self, directory, tokenizer: Optional[Tokenizer] = None):
         super().__init__()
         self.tokenizer = tokenizer
@@ -23,10 +29,21 @@ class ParquetDataset(Dataset):
             self.total_rows += file_row_count
             self.cumulative_rows.append(self.total_rows)
 
+        self.shuffled_indices = np.arange(self.total_rows)
+        self.is_shuffled = False
+
     def __len__(self):
         return self.total_rows
 
+    def shuffle(self, seed: Optional[int] = None):
+        rng = np.random.default_rng(seed)
+        rng.shuffle(self.shuffled_indices)
+        self.is_shuffled = True
+
     def __getitem__(self, index):
+        if self.is_shuffled:
+            index = self.shuffled_indices[index]
+
         if index < 0:
             index = self.total_rows + index
 
