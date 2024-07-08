@@ -6,16 +6,24 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 
 from dataset import NPDataModule
 from model import SmolLMLit
-from utils import save_as_safetensors
+from utils import save_as_safetensors, get_state_dict_from_safetensors
 
 torch.set_float32_matmul_precision('high')
 
 
 def train(model_path: str, use_scheduler: bool = False, ):
     model = SmolLMLit(model_path,
-                      use_scheduler=use_scheduler, )
+                      use_scheduler=use_scheduler, ).bfloat16()
 
     config = model.config
+
+    model_sd = get_state_dict_from_safetensors(
+        os.path.join(model_path, 'model.safetensors'),
+        device=torch.device('cpu')
+    )
+    if model_sd is not None:
+        model.load_state_dict(model_sd)
+        del model_sd
 
     datamodule = NPDataModule("data/processed/fineweb_train_*.bin",
                               seq_length=config.max_position_embeddings,

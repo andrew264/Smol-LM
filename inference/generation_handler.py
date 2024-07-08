@@ -28,14 +28,14 @@ class ModelGenerationHandler:
         self.processor: Optional[LogitsProcessorList] = None
         self.set_processor()
 
-    def load_model(self, compiled: bool = False):
+    def load_model(self, compiled: bool = False, load_in_8bit: bool = False):
         self.config = ModelConfig.from_json(os.path.join(self.path, 'config.json'))
         self.config.max_batch_size = self.num_beams
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
 
         model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'), torch.device('cpu'))
-        self.model = SmolLM(self.config).bfloat16()
-        self.model.load_state_dict(model_sd)
+        model = SmolLM(self.config).bfloat16()
+        model.load_state_dict(model_sd)
         del model_sd
 
         if os.path.exists(os.path.join(self.path, 'lora.json')):
@@ -43,12 +43,15 @@ class ModelGenerationHandler:
 
             adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'),
                                                          torch.device('cpu'))
-            inject_lora_adapter(self.model, lora_params, adapter_sd, merge_lora=True)
+            inject_lora_adapter(model, lora_params, adapter_sd, merge_lora=True)
             del adapter_sd
 
-        self.model.bos_token_id = self.tokenizer.token_to_id("<s>")
-        self.model.eval()
-        self.model = self.model.to(device=self.device)
+        if load_in_8bit:
+            model.to_8bit()
+
+        model.bos_token_id = self.tokenizer.token_to_id("<s>")
+        model.eval()
+        self.model = model.to(device=self.device)
         gc.collect()
 
         self.cache = StaticCache(self.config, compiled_mode=compiled, device=self.device)

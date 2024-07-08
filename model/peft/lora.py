@@ -17,22 +17,20 @@ class LoRALinear(nn.Module):
         self.alpha = lora_config.alpha
         self.scaling = self.alpha / self.rank
         self.lora_dropout = nn.Dropout(lora_config.dropout) if lora_config.dropout > 0 else nn.Identity()
-        self.lora_A = nn.Linear(in_features=linear.in_features, out_features=self.rank,
-                                bias=False, device=device, dtype=dtype)
-        self.lora_B = nn.Linear(in_features=self.rank, out_features=linear.out_features,
-                                bias=False, device=device, dtype=dtype)
+        self.lora_A = nn.Parameter(torch.zeros((linear.in_features, self.rank), dtype=dtype, device=device))
+        self.lora_B = nn.Parameter(torch.zeros((self.rank, linear.out_features), dtype=dtype, device=device))
 
         self.initialize_parameters()
         self._merged = False
 
     def initialize_parameters(self):
-        nn.init.kaiming_uniform_(self.lora_A.weight, a=5 ** 0.5)
-        nn.init.zeros_(self.lora_B.weight)
+        nn.init.kaiming_uniform_(self.lora_A, a=5 ** 0.5)
+        nn.init.zeros_(self.lora_B)
 
     def get_merged_weights(self) -> Tuple[nn.Parameter, Optional[nn.Parameter]]:
         return (
             nn.Parameter(
-                (self.lora_B.weight @ self.lora_A.weight) * self.scaling + self.linear.weight,
+                (self.lora_A @ self.lora_B).T * self.scaling + self.linear.weight,
                 requires_grad=False
             ),
             nn.Parameter(self.linear.bias, requires_grad=False) if self.linear.bias is not None else None
@@ -47,7 +45,10 @@ class LoRALinear(nn.Module):
         self._merged = True
 
     def lora_forward(self, x):
-        return self.scaling * self.lora_B(self.lora_A(self.lora_dropout(x)))
+        dtype = x.dtype
+        x = x.to(dtype=self.lora_A.dtype)
+        x = self.scaling * (self.lora_dropout(x) @ self.lora_A @ self.lora_B)
+        return x.to(dtype=dtype)
 
     def forward(self, x):
         if self._merged:

@@ -3,14 +3,12 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from transformers import GenerationMixin, Cache
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import ModuleUtilsMixin
 
-from .block import Block
+from .block import TransformerBlocks
 from .config import ModelConfig
-from .norm import get_rmsnorm_class
-from .rotary import RotaryEmbedding
+from .quantization import replace_linear_with_linear8bitlt
 
 
 class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
@@ -26,16 +24,9 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         self.checkpointing_layers = config.checkpointing_layers
         self.max_length = config.max_position_embeddings
 
-        self.model = nn.ModuleDict(dict(
-            embed_tokens=nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id),
-            layers=nn.ModuleList(Block(config, i) for i in range(config.num_hidden_layers)),
-            norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
-        ))
-
-        self.rotary_emb = RotaryEmbedding(dim=config.hidden_size // config.num_attention_heads,
-                                          base=config.rope_theta, )
-
+        self.model = TransformerBlocks(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
         if self.tie_word_embeddings:
             self.model.embed_tokens.weight = self.lm_head.weight
 
@@ -53,28 +44,13 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def resize_embeddings(self, new_num_tokens: int) -> None:
-        pad_to_multiple_of = 8
-        new_num_tokens = (new_num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of * pad_to_multiple_of
-        device = self.model.embed_tokens.weight.device
-        dtype = self.model.embed_tokens.weight.dtype
-
-        new_embeddings = nn.Embedding(new_num_tokens, self.hidden_size, padding_idx=self.config.pad_token_id)
-        new_embeddings.to(device=device, dtype=dtype)
-
-        # copy token embeddings
-        num_tokens_to_copy = min(self.vocab_size, new_num_tokens)
-        new_embeddings.weight.data[:num_tokens_to_copy, :] = self.tok_embeddings.weight.data[:num_tokens_to_copy, :]
-
-        # replace the old embeddings with the new embeddings
-        self.model.embed_tokens = new_embeddings
-
-        # resize the output layer
-        new_lm_head = nn.Linear(self.hidden_size, new_num_tokens, bias=False).to(device=device, dtype=dtype)
-        new_lm_head.weight.data[:num_tokens_to_copy, :] = self.lm_head.weight.data[:num_tokens_to_copy, :]
-        self.lm_head = new_lm_head
-
-        self.config.vocab_size = new_num_tokens
+    def to_8bit(self) -> None:
+        """
+        Convert the model to 8-bit quantized model (inplace)
+        """
+        state_dict = self.model.state_dict()
+        replace_linear_with_linear8bitlt(self.model)
+        self.model.load_state_dict(state_dict)
 
     def forward(
             self,
@@ -86,22 +62,8 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             labels: Optional[torch.LongTensor] = None,
             **kwargs,
     ) -> CausalLMOutputWithPast:
-        x = self.model.embed_tokens(input_ids)
 
-        causal_mask = self._update_causal_mask(attention_mask, x, cache_position, past_key_values)
-        if position_ids is None:
-            position_ids = torch.arange(x.shape[1], device=x.device).unsqueeze(0)
-        freqs = self.rotary_emb(position_ids)
-
-        for layer in self.model.layers:
-            x = layer(x,
-                      freqs=freqs,
-                      past_key_values=past_key_values,
-                      attention_mask=causal_mask,
-                      cache_position=cache_position, )
-
-        x = self.model.norm(x)
-
+        x = self.model(input_ids, position_ids, cache_position, attention_mask, past_key_values)
         logits = self.lm_head(x)
 
         loss = None
@@ -168,40 +130,6 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             }
         )
         return model_inputs
-
-    # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
-    @staticmethod
-    def _update_causal_mask(attention_mask, input_tensor, cache_position, past_key_values):
-        if attention_mask is None:
-            return None
-
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        dtype, device = input_tensor.dtype, input_tensor.device
-        min_dtype = torch.finfo(dtype).min
-        sequence_length = input_tensor.shape[1]
-        target_length = past_key_values.get_max_length() if past_key_values is not None else sequence_length
-
-        causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
-        if sequence_length != 1:
-            causal_mask = torch.triu(causal_mask, diagonal=1)
-        causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
-        causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
-        if attention_mask is not None:
-            causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
-            mask_length = attention_mask.shape[-1]
-            padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
-            padding_mask = padding_mask == 0
-            causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-                padding_mask, min_dtype
-            )
-
-        if attention_mask is not None and attention_mask.device.type == "cuda":
-            # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
-            # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
-            # Details: https://github.com/pytorch/pytorch/issues/110213
-            causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
-
-        return causal_mask
 
     @classmethod
     def can_generate(cls) -> bool:

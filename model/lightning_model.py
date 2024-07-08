@@ -7,15 +7,11 @@ import lightning as L
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.utils.checkpoint import checkpoint
 from transformers import get_cosine_schedule_with_warmup
 
-from utils.utils import get_state_dict_from_safetensors
-from .block import Block
+from .block import TransformerBlocks
 from .config import ModelConfig, LoRAConfig
-from .norm import get_rmsnorm_class
-from .peft.utilities import inject_lora_adapter
-from .rotary import RotaryEmbedding
+from .quantization import replace_linear_with_linear8bitlt
 
 try:
     from flash_attn.losses.cross_entropy import CrossEntropyLoss
@@ -75,7 +71,8 @@ class SmolLMLit(L.LightningModule):
     def __init__(self,
                  model_path: str,
                  use_lora_opt_grp: bool = False,
-                 use_scheduler: bool = False):
+                 use_scheduler: bool = False,
+                 ):
         super().__init__()
         if os.path.exists(model_path + 'config.json'):
             config = ModelConfig.from_json(model_path + 'config.json')
@@ -91,38 +88,15 @@ class SmolLMLit(L.LightningModule):
         self.max_length = config.max_position_embeddings
         self.use_lora_opt_grp = use_lora_opt_grp
         self.use_scheduler = use_scheduler
-        self.model = None
-        self.rotary_emb = None
-        self.lm_head = None
-        self.loss_fn = None
-
-    def configure_model(self):
-        config = self.config
-        self.model = nn.ModuleDict(dict(
-            embed_tokens=nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id),
-            layers=nn.ModuleList(Block(config, idx) for idx in range(config.num_hidden_layers)),
-            norm=get_rmsnorm_class()(config.hidden_size, eps=config.rms_norm_eps),
-        ))
-
-        self.rotary_emb = RotaryEmbedding(dim=config.hidden_size // config.num_attention_heads,
-                                          base=config.rope_theta, )
-
+        self.model = TransformerBlocks(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
         if self.tie_word_embeddings:
             self.model.embed_tokens.weight = self.lm_head.weight
 
         self.loss_fn = CrossEntropyLoss(ignore_index=-100)
 
-        self.apply(self._init_weights)  # to initialize weights
-
-        model_sd = get_state_dict_from_safetensors(os.path.join(self.model_path, 'model.safetensors'))
-        if model_sd is not None:
-            self.load_state_dict(model_sd)
-            del model_sd
-
-        if self.lora_config is not None:
-            inject_lora_adapter(self, self.lora_config, merge_lora=False)
-        self.to(self.device)
+        self.apply(self._init_weights)
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -169,56 +143,20 @@ class SmolLMLit(L.LightningModule):
             }
         return optimizer
 
-    @staticmethod
-    def _generate_causal_mask(attention_mask, input_tensor):
-        if attention_mask is None:
-            return None
-
-        dtype, device = input_tensor.dtype, input_tensor.device
-        min_dtype = torch.finfo(dtype).min
-        sequence_length = input_tensor.shape[1]
-
-        causal_mask = torch.full((sequence_length, sequence_length),
-                                 fill_value=min_dtype, dtype=dtype, device=device)
-        causal_mask = torch.triu(causal_mask, diagonal=1)
-        causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
-
-        causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
-        mask_length = attention_mask.shape[-1]
-        padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
-        padding_mask = padding_mask == 0
-        causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-            padding_mask, min_dtype
-        )
-
-        return causal_mask
+    def to_8bit(self):
+        """
+        Convert the model to 8-bit quantized model (inplace)
+        """
+        state_dict = self.model.state_dict()
+        replace_linear_with_linear8bitlt(self.model, fp16_weights=True)
+        self.model.load_state_dict(state_dict)
 
     def forward(
             self,
             input_ids: Tensor = None,
             attention_mask: Optional[Tensor] = None,
     ):
-
-        x = self.model.embed_tokens(input_ids)
-
-        position_ids = torch.arange(x.size(1), device=x.device).unsqueeze(0)
-        freqs = self.rotary_emb(position_ids)
-
-        causal_mask = self._generate_causal_mask(attention_mask, x)
-
-        for i, layer in enumerate(self.model.layers):
-            if self.training and i in self.checkpointing_layers:
-                x = checkpoint(layer,
-                               x, freqs, causal_mask,
-                               use_reentrant=False, )
-
-            else:
-                x = layer(x,
-                          freqs=freqs,
-                          attention_mask=causal_mask, )
-
-        x = self.model.norm(x)
-
+        x = self.model(input_ids=input_ids, attention_mask=attention_mask)
         return self.lm_head(x)
 
     def training_step(self, batch: dict, batch_idx):
@@ -226,7 +164,7 @@ class SmolLMLit(L.LightningModule):
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 
-        logits = self.forward(input_ids, attention_mask)
+        logits = self(input_ids, attention_mask)
 
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
@@ -241,7 +179,6 @@ class SmolLMLit(L.LightningModule):
 
     def validation_step(self, batch: dict, batch_idx):
         input_ids = batch.get("input_ids")
-        audio = batch.get("audio")
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
 

@@ -15,6 +15,7 @@
     - PEFT with LoRA, LoRA+, DoRA
     - RAG for text generation
     - PyTorch Lightning Trainer
+    - int8 quantization with bitsandbytes
 
 ### Supports loading the following pretrained weights:
     - Llama-2, Llama-3

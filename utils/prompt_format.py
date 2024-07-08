@@ -7,7 +7,7 @@ from transformers import PreTrainedTokenizerFast
 try:
     from langchain_community.vectorstores.chroma import Chroma
 
-    from model.embedding_model import HFNomicEmbeddings
+    from model.rag.embedding_model import HFNomicEmbeddings
 except ImportError:
     Chroma = None
     HFNomicEmbeddings = None
