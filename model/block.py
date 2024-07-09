@@ -67,9 +67,9 @@ class TransformerBlocks(nn.Module):
                 ) -> Tensor:
 
         x = self.embed_tokens(input_ids)
-        causal_mask = self._update_causal_mask(attention_mask, x, cache_position, past_key_values)
         if position_ids is None:
             position_ids = torch.arange(x.shape[1], device=x.device).unsqueeze(0)
+        causal_mask = self._update_causal_mask(attention_mask, x, cache_position, past_key_values)
         freqs = self.rotary_emb(position_ids)
 
         for i, layer in enumerate(self.layers):
@@ -93,7 +93,7 @@ class TransformerBlocks(nn.Module):
     @staticmethod
     def _update_causal_mask(attention_mask: Optional[Tensor],
                             input_tensor: Tensor,
-                            cache_position: Tensor,
+                            cache_position: Optional[Tensor] = None,
                             past_key_values: Optional[Cache] = None):
         if attention_mask is None:
             return None
@@ -106,6 +106,8 @@ class TransformerBlocks(nn.Module):
         causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
         if sequence_length != 1:
             causal_mask = torch.triu(causal_mask, diagonal=1)
+        if cache_position is None:
+            cache_position = torch.arange(sequence_length, device=device)
         causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
         causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
         if attention_mask is not None:

@@ -40,7 +40,8 @@ def train(_path: str,
                                   conv_path=conv_path,
                                   parquet_path=parquet_path,
                                   sys_prompt_path=sys_prompt_path,
-                                  mix_ratio=1)
+                                  mix_ratio=1,
+                                  max_pad=False)
 
     trainer = L.Trainer(accelerator="gpu",
                         precision="bf16-mixed",

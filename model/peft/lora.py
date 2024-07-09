@@ -11,28 +11,23 @@ class LoRALinear(nn.Module):
     def __init__(self, linear: nn.Linear, lora_config: LoRAConfig):
         super().__init__()
         self.linear = linear
-        dtype = linear.weight.dtype
-        device = linear.weight.device
-        self.rank = lora_config.rank
-        self.alpha = lora_config.alpha
+        dtype, device = linear.weight.dtype, linear.weight.device
+        self.rank, self.alpha = lora_config.rank, lora_config.alpha
         self.scaling = self.alpha / self.rank
         self.lora_dropout = nn.Dropout(lora_config.dropout) if lora_config.dropout > 0 else nn.Identity()
         self.lora_A = nn.Parameter(torch.zeros((linear.in_features, self.rank), dtype=dtype, device=device))
         self.lora_B = nn.Parameter(torch.zeros((self.rank, linear.out_features), dtype=dtype, device=device))
+        self._merged = False
 
         self.initialize_parameters()
-        self._merged = False
 
     def initialize_parameters(self):
         nn.init.kaiming_uniform_(self.lora_A, a=5 ** 0.5)
         nn.init.zeros_(self.lora_B)
 
     def get_merged_weights(self) -> Tuple[nn.Parameter, Optional[nn.Parameter]]:
-        return (
-            nn.Parameter(
-                (self.lora_A @ self.lora_B).T * self.scaling + self.linear.weight,
-                requires_grad=False
-            ),
+        merged_weight = (self.lora_A @ self.lora_B).T * self.scaling + self.linear.weight
+        return nn.Parameter(merged_weight, requires_grad=False), (
             nn.Parameter(self.linear.bias, requires_grad=False) if self.linear.bias is not None else None
         )
 
@@ -45,10 +40,9 @@ class LoRALinear(nn.Module):
         self._merged = True
 
     def lora_forward(self, x):
-        dtype = x.dtype
-        x = x.to(dtype=self.lora_A.dtype)
-        x = self.scaling * (self.lora_dropout(x) @ self.lora_A @ self.lora_B)
-        return x.to(dtype=dtype)
+        x = self.lora_dropout(x)
+        x = self.scaling * F.linear(x, self.lora_A.T) @ self.lora_B
+        return x
 
     def forward(self, x):
         if self._merged:

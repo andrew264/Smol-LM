@@ -64,7 +64,8 @@ class CustomFTDataModule(L.LightningDataModule):
                  conv_path: str,
                  parquet_path: str,
                  sys_prompt_path: str,
-                 mix_ratio: int = 1):
+                 mix_ratio: int = 1,
+                 max_pad: bool = False):
         """
         Custom DataModule for fine-tuning.
         Mixes DiscordConversations and ParquetDataset and interleave them.
@@ -75,6 +76,9 @@ class CustomFTDataModule(L.LightningDataModule):
         :param parquet_path: Path to the ParquetDataset.
         :param sys_prompt_path: Path to the system prompt file.
         :param mix_ratio: Ratio of ParquetDataset to DiscordConversations. Defaults to 1.
+        :param max_pad: If True,
+        the collate function will pad all sequences to the maximum length supported by the model.
+        else, it will pad to the maximum length of the batch.
         """
         super().__init__()
         self.batch_size = batch_size
@@ -84,6 +88,7 @@ class CustomFTDataModule(L.LightningDataModule):
         self.parquet_path = parquet_path
         self.sys_prompt_path = sys_prompt_path
         self.mix_ratio = mix_ratio
+        self.max_pad = max_pad
         self.train_ds = None
         self.valid_ds = None
 
@@ -117,12 +122,37 @@ class CustomFTDataModule(L.LightningDataModule):
             out["attention_mask"] = attention_mask[:, :MAX_LEN]
         return out
 
+    @staticmethod
+    def collate_max_pad_fn(max_len: int, batch: List[Tuple[List[int], List[int]]]) -> dict:
+        MAX_LEN = max_len
+
+        input_ids = torch.stack([torch.tensor(x[0] + [0] * (MAX_LEN - len(x[0]))) for x in batch])
+        labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (MAX_LEN - len(x[1]))) for x in batch])
+        attention_mask = (input_ids != torch.tensor(0, dtype=input_ids.dtype)).long()
+
+        if len(batch) == 1 and attention_mask.sum().item() == attention_mask.numel():
+            attention_mask = None
+
+        out = {
+            "input_ids": input_ids,
+            "labels": labels,
+        }
+        if attention_mask is not None:
+            out["attention_mask"] = attention_mask
+        return out
+
     def train_dataloader(self):
-        collate_fn = partial(self.collate_pad_batch_fn, self.max_seq_length)
+        if self.max_pad:
+            collate_fn = partial(self.collate_max_pad_fn, self.max_seq_length)
+        else:
+            collate_fn = partial(self.collate_pad_batch_fn, self.max_seq_length)
         return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True,
                           collate_fn=collate_fn, num_workers=4)
 
     def val_dataloader(self):
-        collate_fn = partial(self.collate_pad_batch_fn, self.max_seq_length)
+        if self.max_pad:
+            collate_fn = partial(self.collate_max_pad_fn, self.max_seq_length)
+        else:
+            collate_fn = partial(self.collate_pad_batch_fn, self.max_seq_length)
         return DataLoader(self.valid_ds, batch_size=self.batch_size, shuffle=False,
                           collate_fn=collate_fn, num_workers=4)
