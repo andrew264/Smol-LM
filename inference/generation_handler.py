@@ -5,7 +5,7 @@ from typing import Optional, List, Tuple
 
 import torch
 from tokenizers import Tokenizer
-from transformers import GenerationConfig, LogitsProcessorList, TopPLogitsWarper, StoppingCriteriaList
+from transformers import GenerationConfig, LogitsProcessorList, TopPLogitsWarper, StoppingCriteriaList, InfNanRemoveLogitsProcessor
 
 from model import SmolLM
 from model.config import ModelConfig, LoRAConfig
@@ -28,7 +28,7 @@ class ModelGenerationHandler:
         self.processor: Optional[LogitsProcessorList] = None
         self.set_processor()
 
-    def load_model(self, compiled: bool = False, load_in_8bit: bool = False):
+    def load_model(self, compiled: bool = False, merge_lora: bool = True, load_in_8bit: bool = False):
         self.config = ModelConfig.from_json(os.path.join(self.path, 'config.json'))
         self.config.max_batch_size = self.num_beams
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
@@ -43,7 +43,7 @@ class ModelGenerationHandler:
 
             adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'),
                                                          torch.device('cpu'))
-            inject_lora_adapter(model, lora_params, adapter_sd, merge_lora=True)
+            inject_lora_adapter(model, lora_params, adapter_sd, merge_lora=merge_lora)
             del adapter_sd
 
         if load_in_8bit:
@@ -83,7 +83,8 @@ class ModelGenerationHandler:
     def set_processor(self, top_p: float = 0.95, temperature: float = 1.7):
         self.processor = LogitsProcessorList([
             TemperatureRangeLogitsWarper(temperature, 0.9, 24),
-            TopPLogitsWarper(top_p=top_p)
+            TopPLogitsWarper(top_p=top_p),
+            InfNanRemoveLogitsProcessor(),
         ])
 
     def _compile_model(self):

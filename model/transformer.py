@@ -30,7 +30,6 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if self.tie_word_embeddings:
             self.model.embed_tokens.weight = self.lm_head.weight
 
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -66,11 +65,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         x = self.model(input_ids, position_ids, cache_position, attention_mask, past_key_values)
         logits = self.lm_head(x)
 
-        loss = None
-        if labels is not None:
-            loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
-
-        return CausalLMOutputWithPast(loss=loss, logits=logits,
+        return CausalLMOutputWithPast(loss=None, logits=logits,
                                       past_key_values=past_key_values, )
 
     def prepare_inputs_for_generation(
