@@ -2,6 +2,7 @@ import os
 
 import lightning as L
 import torch
+from lightning.pytorch.strategies import DeepSpeedStrategy
 
 from dataset import CustomFTDataModule
 from model import SmolLMLit
@@ -45,6 +46,10 @@ def train(_path: str,
 
     trainer = L.Trainer(accelerator="gpu",
                         precision="bf16-mixed",
+                        strategy=DeepSpeedStrategy(
+                            stage=3,
+                            offload_optimizer=True,
+                        ),
                         max_epochs=config.epochs,
                         enable_checkpointing=False,
                         enable_progress_bar=True,
@@ -55,8 +60,11 @@ def train(_path: str,
     trainer.fit(model, datamodule=data_mod)
 
     # Save adapter weights
-    adapter_sd = get_lora_state_dict(model)
-    save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
+    if model.lora_config is not None:
+        adapter_sd = get_lora_state_dict(model)
+        save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
+    else:
+        save_as_safetensors(model.state_dict(), os.path.join(_path, 'finetuned-model.safetensors'))
 
 
 if __name__ == '__main__':

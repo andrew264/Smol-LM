@@ -28,14 +28,18 @@ class ModelGenerationHandler:
         self.processor: Optional[LogitsProcessorList] = None
         self.set_processor()
 
-    def load_model(self, compiled: bool = False, merge_lora: bool = True, load_in_8bit: bool = False):
+    def load_model(self, compiled: bool = False, merge_lora: bool = True,
+                   load_in_8bit: bool = False, load_in_4bit: bool = False):
+        if load_in_4bit and load_in_8bit:
+            print("Can't load in both 4bit and 8bit. Loading model in 4bits")
+            load_in_8bit = False
         self.config = ModelConfig.from_json(os.path.join(self.path, 'config.json'))
         self.config.max_batch_size = self.num_beams
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
 
         model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'), torch.device('cpu'))
         model = SmolLM(self.config).bfloat16()
-        model.load_state_dict(model_sd)
+        model.load_state_dict(model_sd, assign=True)
         del model_sd
 
         if os.path.exists(os.path.join(self.path, 'lora.json')):
@@ -46,13 +50,15 @@ class ModelGenerationHandler:
             inject_lora_adapter(model, lora_params, adapter_sd, merge_lora=merge_lora)
             del adapter_sd
 
-        if load_in_8bit:
-            model.to_8bit()
-
         model.bos_token_id = self.tokenizer.token_to_id("<s>")
         model.eval()
         self.model = model.to(device=self.device)
         gc.collect()
+
+        if load_in_8bit:
+            model.to_8bit()
+        elif load_in_4bit:
+            model.to_4bit()
 
         self.cache = StaticCache(self.config, compiled_mode=compiled, device=self.device)
         if compiled:

@@ -8,7 +8,6 @@ from transformers.modeling_utils import ModuleUtilsMixin
 
 from .block import TransformerBlocks
 from .config import ModelConfig
-from .quantization import replace_linear_with_linear8bitlt
 
 
 class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
@@ -43,13 +42,27 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def to_8bit(self) -> None:
+    def to_8bit(self):
         """
         Convert the model to 8-bit quantized model (inplace)
         """
-        state_dict = self.model.state_dict()
-        replace_linear_with_linear8bitlt(self.model)
-        self.model.load_state_dict(state_dict)
+        try:
+            from torchao.quantization import int8_weight_only, quantize
+
+            quantize(self.model, int8_weight_only())
+        except ImportError:
+            raise ImportError("Please install torchao to use 8-bit quantization")
+
+    def to_4bit(self):
+        """
+        Convert the model to 4-bit quantized model (inplace)
+        """
+        try:
+            from torchao.quantization import int4_weight_only, quantize
+
+            quantize(self.model, int4_weight_only())
+        except ImportError:
+            raise ImportError("Please install torchao to use 4-bit quantization")
 
     def forward(
             self,

@@ -12,10 +12,11 @@
 
     - Flash Attention - 2 (from F.scaled_dot_product_attention)
     - Weight Decay Denylist for Norm, Bias and Embedding
-    - PEFT with LoRA, LoRA+, DoRA
+    - PEFT with LoRA, LoRA+
     - RAG for text generation
     - PyTorch Lightning Trainer
-    - int8 quantization with bitsandbytes
+    - int8 and int4 quantization with torchao
+    - DeepSpeedCPUAdam for offloading optimizer to CPU
 
 ### Supports loading the following pretrained weights:
     - Llama-2, Llama-3

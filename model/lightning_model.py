@@ -2,16 +2,15 @@ import os
 from functools import partial
 from typing import Optional, List
 
-import bitsandbytes as bnb
 import lightning as L
 import torch
 import torch.nn as nn
+from deepspeed.ops.adam import DeepSpeedCPUAdam
 from torch import Tensor
 from transformers import get_cosine_schedule_with_warmup
 
 from .block import TransformerBlocks
 from .config import ModelConfig, LoRAConfig
-from .quantization import replace_linear_with_linear8bitlt
 
 try:
     from flash_attn.losses.cross_entropy import CrossEntropyLoss
@@ -116,16 +115,18 @@ class SmolLMLit(L.LightningModule):
     def configure_optimizers(self):
         lr = self.config.lr
         if self.use_lora_opt_grp:
-            optimizer = bnb.optim.AdamW8bit(
-                params=get_lora_plus_optimizer_group(self, lr=lr),
+            optimizer = DeepSpeedCPUAdam(
+                model_params=get_lora_plus_optimizer_group(self, lr=lr),
                 betas=(0.9, 0.999),
                 weight_decay=0.0,
+                fp32_optimizer_states=False,
             )
         else:
-            optimizer = bnb.optim.AdamW8bit(
-                params=get_optimizer_grouped_parameters(self, weight_decay=0.1),
+            optimizer = DeepSpeedCPUAdam(
+                model_params=get_optimizer_grouped_parameters(self, weight_decay=0.1),
                 lr=lr,
                 betas=(0.9, 0.95),
+                fp32_optimizer_states=False,
             )
         if self.use_scheduler:
             scheduler = get_cosine_schedule_with_warmup(optimizer,
@@ -147,9 +148,17 @@ class SmolLMLit(L.LightningModule):
         """
         Convert the model to 8-bit quantized model (inplace)
         """
-        state_dict = self.model.state_dict()
-        replace_linear_with_linear8bitlt(self.model, fp16_weights=True)
-        self.model.load_state_dict(state_dict)
+        from torchao.quantization import int8_weight_only, quantize
+
+        quantize(self.model, int8_weight_only())
+
+    def to_4bit(self):
+        """
+        Convert the model to 4-bit quantized model (inplace)
+        """
+        from torchao.quantization import int4_weight_only, quantize
+
+        quantize(self.model, int4_weight_only())
 
     def forward(
             self,
@@ -168,8 +177,8 @@ class SmolLMLit(L.LightningModule):
 
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
-        self.log("train_loss", loss, on_step=True, prog_bar=True)
-        self.log("train_ppl", torch.exp(loss), on_step=True, prog_bar=True)
+        self.log("train_loss", loss, on_step=True, prog_bar=True, sync_dist=True)
+        self.log("train_ppl", torch.exp(loss), on_step=True, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch: dict, batch_idx):
@@ -181,7 +190,7 @@ class SmolLMLit(L.LightningModule):
 
         loss = self.loss_fn(logits[..., :-1, :].flatten(0, 1), labels[..., 1:].flatten(), )
 
-        self.log("val_loss", loss, on_epoch=True, prog_bar=True)
-        self.log("val_ppl", torch.exp(loss), on_epoch=True, prog_bar=True)
+        self.log("val_loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val_ppl", torch.exp(loss), on_epoch=True, prog_bar=True, sync_dist=True)
 
         return loss

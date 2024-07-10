@@ -1,25 +1,13 @@
 import time
-from typing import Optional, TypeVar, Type, Union
+from typing import Optional, TypeVar
 
 import torch
 from torch import nn
 
 from model.config import LoRAConfig
-from model.peft import LoRALinear, LoRAEmbedding, DoRALinear, DoRAEmbedding
+from model.peft import LoRALinear, LoRAEmbedding
 
 T = TypeVar('T', bound=nn.Module)
-
-
-def get_lora_linear_class(_type: Optional[str] = None) -> Union[Type[LoRALinear], Type[DoRALinear]]:
-    if _type == 'dora':
-        return DoRALinear
-    return LoRALinear
-
-
-def get_lora_embedding_class(_type: Optional[str] = None) -> Union[Type[LoRAEmbedding], Type[DoRAEmbedding]]:
-    if _type == 'dora':
-        return DoRAEmbedding
-    return LoRAEmbedding
 
 
 def inject_lora_adapter(model: T,
@@ -35,8 +23,8 @@ def inject_lora_adapter(model: T,
     start = time.time()
     model.requires_grad_(False)
 
-    LINEAR_CLS = get_lora_linear_class(lora_config.type)
-    EMBEDDING_CLS = get_lora_embedding_class(lora_config.type)
+    LINEAR_CLS = LoRALinear
+    EMBEDDING_CLS = LoRAEmbedding
     DEVICE = next(model.parameters()).device
 
     def inject_layer(target, attr_name, cls, config):
@@ -87,7 +75,7 @@ def inject_lora_adapter(model: T,
 
     if adapter_state_dict is not None:
         start = time.time()
-        model.load_state_dict(adapter_state_dict, strict=False)
+        model.load_state_dict(adapter_state_dict, strict=False, assign=True)
         if merge_lora:
             for name, module in model.named_modules():
                 if isinstance(module, LINEAR_CLS):

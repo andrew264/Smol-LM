@@ -1,6 +1,7 @@
 torch
 torchaudio
 torchvision
+torchao
 numpy
 tokenizers
 bitsandbytes
