@@ -40,6 +40,11 @@ class AttentionBlock(nn.Module):
                                   bias=config.attention_qkv_bias)
         self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.attention_out_bias)
 
+        self.qk_layernorm = config.qk_layernorm
+        if self.qk_layernorm:
+            self.q_norm = nn.LayerNorm(self.head_dim)
+            self.k_norm = nn.LayerNorm(self.head_dim)
+
         self._register_load_state_dict_pre_hook(self.fused_qkv_hook)
 
     @staticmethod
@@ -74,6 +79,11 @@ class AttentionBlock(nn.Module):
             ],
             dim=2,
         )
+
+        if self.qk_layernorm:
+            query_states = self.q_norm(query_states.view(-1, self.num_heads, self.head_dim))
+            key_states = self.k_norm(key_states.view(-1, self.num_key_value_heads, self.head_dim))
+
         query_states = query_states.view(bsz, seqlen, self.num_heads, self.head_dim)
         key_states = key_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)
         value_states = value_states.view(bsz, seqlen, self.num_key_value_heads, self.head_dim)

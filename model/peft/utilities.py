@@ -77,6 +77,7 @@ def inject_lora_adapter(model: T,
         start = time.time()
         model.load_state_dict(adapter_state_dict, strict=False, assign=True)
         if merge_lora:
+            model.cuda()
             for name, module in model.named_modules():
                 if isinstance(module, LINEAR_CLS):
                     setattr(*get_parent_and_module(name), linear_with_weight(*module.get_merged_weights()))
@@ -88,9 +89,9 @@ def inject_lora_adapter(model: T,
         print(f"Adapter state dict loading took {time.time() - start:.3f}s")
 
 
-def get_lora_state_dict(model: nn.Module) -> dict:
+def get_lora_state_dict(sd: dict, dtype: torch.device = torch.bfloat16) -> dict:
     state_dict = {}
-    for param_name, param in model.named_parameters():
+    for param_name, param in sd.items():
         if 'lora' in param_name:
-            state_dict[param_name] = param
+            state_dict[param_name] = param.to(dtype=dtype)
     return state_dict

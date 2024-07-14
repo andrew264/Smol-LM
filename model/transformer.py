@@ -50,6 +50,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             from torchao.quantization import int8_weight_only, quantize
 
             quantize(self.model, int8_weight_only())
+            print("Model quantized to 8-bit")
         except ImportError:
             raise ImportError("Please install torchao to use 8-bit quantization")
 
@@ -61,6 +62,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             from torchao.quantization import int4_weight_only, quantize
 
             quantize(self.model, int4_weight_only())
+            print("Model quantized to 4-bit")
         except ImportError:
             raise ImportError("Please install torchao to use 4-bit quantization")
 

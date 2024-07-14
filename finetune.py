@@ -3,6 +3,7 @@ import os
 import lightning as L
 import torch
 from lightning.pytorch.strategies import DeepSpeedStrategy
+from lightning.pytorch.utilities.deepspeed import convert_zero_checkpoint_to_fp32_state_dict
 
 from dataset import CustomFTDataModule
 from model import SmolLMLit
@@ -20,6 +21,7 @@ def train(_path: str,
                       use_scheduler=use_scheduler, ).bfloat16()
 
     config = model.config
+    has_lora: bool = model.lora_config is not None
 
     model_sd = get_state_dict_from_safetensors(
         os.path.join(_path, 'model.safetensors'),
@@ -29,18 +31,22 @@ def train(_path: str,
         model.load_state_dict(model_sd)
         del model_sd
 
-    if model.lora_config is not None:
+    if has_lora:
         inject_lora_adapter(model, model.lora_config, merge_lora=False)
 
     if load_in_8bit:
         model.to_8bit()
 
+    tokenizer_path = 'ft-weights/tokenizer.json'
+    sys_prompt_path = 'data/finetune/sysprompt.txt'
+    conv_path = 'data/finetune/conversations'
+    parquet_path = '/home/andrew264/datasets/fineweb-edu/sample/10BT'
     data_mod = CustomFTDataModule(batch_size=config.max_batch_size,
                                   max_seq_length=config.max_position_embeddings,
                                   tokenizer_path=tokenizer_path,
                                   conv_path=conv_path,
-                                  parquet_path=parquet_path,
                                   sys_prompt_path=sys_prompt_path,
+                                  parquet_path=parquet_path,
                                   mix_ratio=1,
                                   max_pad=False)
 
@@ -49,6 +55,8 @@ def train(_path: str,
                         strategy=DeepSpeedStrategy(
                             stage=3,
                             offload_optimizer=True,
+                            cpu_checkpointing=True,
+                            partition_activations=True,
                         ),
                         max_epochs=config.epochs,
                         enable_checkpointing=False,
@@ -59,19 +67,21 @@ def train(_path: str,
 
     trainer.fit(model, datamodule=data_mod)
 
-    # Save adapter weights
-    if model.lora_config is not None:
-        adapter_sd = get_lora_state_dict(model)
-        save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
-    else:
-        save_as_safetensors(model.state_dict(), os.path.join(_path, 'finetuned-model.safetensors'))
+    if trainer.is_global_zero:
+        ckpt_path = os.path.join(_path, 'checkpoint/')
+        trainer.save_checkpoint(ckpt_path)
+        single_ckpt_path = os.path.join(_path, 'model.pt')
+        convert_zero_checkpoint_to_fp32_state_dict(ckpt_path, single_ckpt_path)
+        del trainer, model, data_mod
+        torch.cuda.empty_cache()
+        if has_lora is not None:
+            adapter_sd = get_lora_state_dict(
+                torch.load(single_ckpt_path, map_location="cpu")['state_dict']
+            )
+            save_as_safetensors(adapter_sd, os.path.join(_path, 'adapter.safetensors'))
 
 
 if __name__ == '__main__':
-    tokenizer_path = 'ft-weights/tokenizer.json'
-    sys_prompt_path = 'data/finetune/sysprompt.txt'
-    conv_path = 'data/finetune/conversations'
-    parquet_path = '/home/andrew264/datasets/fineweb-edu/sample/10BT'
     model_path = './ft-weights/'
 
     train(model_path, use_scheduler=True, )

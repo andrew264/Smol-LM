@@ -26,6 +26,8 @@ class ModelConfig:
     # Attention
     num_attention_heads: int = 8
     num_key_value_heads: int = 1
+    qk_layernorm: bool = False
+    swin_norm: bool = False
 
     # Feed Forward
     hidden_act: str = "silu"

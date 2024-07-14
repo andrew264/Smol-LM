@@ -5,7 +5,6 @@ from typing import Optional, List
 import lightning as L
 import torch
 import torch.nn as nn
-from deepspeed.ops.adam import DeepSpeedCPUAdam
 from torch import Tensor
 from transformers import get_cosine_schedule_with_warmup
 
@@ -73,6 +72,7 @@ class SmolLMLit(L.LightningModule):
                  use_scheduler: bool = False,
                  ):
         super().__init__()
+        self.save_hyperparameters()
         if os.path.exists(model_path + 'config.json'):
             config = ModelConfig.from_json(model_path + 'config.json')
         else:
@@ -114,6 +114,12 @@ class SmolLMLit(L.LightningModule):
 
     def configure_optimizers(self):
         lr = self.config.lr
+
+        try:
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
+        except ImportError:
+            raise ImportError("Please install deepspeed to use this model for training.")
+
         if self.use_lora_opt_grp:
             optimizer = DeepSpeedCPUAdam(
                 model_params=get_lora_plus_optimizer_group(self, lr=lr),

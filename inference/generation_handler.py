@@ -5,11 +5,12 @@ from typing import Optional, List, Tuple
 
 import torch
 from tokenizers import Tokenizer
-from transformers import GenerationConfig, LogitsProcessorList, TopPLogitsWarper, StoppingCriteriaList, InfNanRemoveLogitsProcessor
+from transformers import GenerationConfig, LogitsProcessorList, TopPLogitsWarper, StoppingCriteriaList, \
+    InfNanRemoveLogitsProcessor
 
-from model import SmolLM
 from model.config import ModelConfig, LoRAConfig
 from model.peft.utilities import inject_lora_adapter
+from model.transformer import SmolLM
 from utils.utils import get_state_dict_from_safetensors
 from .cache import StaticCache
 from .sampling import TemperatureRangeLogitsWarper, StoppingCriteriaSub
@@ -36,8 +37,13 @@ class ModelGenerationHandler:
         self.config = ModelConfig.from_json(os.path.join(self.path, 'config.json'))
         self.config.max_batch_size = self.num_beams
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
-
-        model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'), torch.device('cpu'))
+        if os.path.exists(os.path.join(self.path, 'model.safetensors')):
+            model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'),
+                                                       torch.device('cpu'))
+        elif os.path.exists(os.path.join(self.path, 'model.pt')):
+            model_sd = torch.load(os.path.join(self.path, 'model.pt'), map_location='cpu')['state_dict']
+        else:
+            raise FileNotFoundError("Model file not found.")
         model = SmolLM(self.config).bfloat16()
         model.load_state_dict(model_sd, assign=True)
         del model_sd

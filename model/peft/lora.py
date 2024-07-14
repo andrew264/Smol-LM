@@ -27,8 +27,10 @@ class LoRALinear(nn.Module):
 
     def get_merged_weights(self) -> Tuple[nn.Parameter, Optional[nn.Parameter]]:
         merged_weight = (self.lora_A @ self.lora_B).T * self.scaling + self.linear.weight
+        del self.lora_A, self.lora_B, self.linear.weight
+        bias = self.linear.bias
         return nn.Parameter(merged_weight, requires_grad=False), (
-            nn.Parameter(self.linear.bias, requires_grad=False) if self.linear.bias is not None else None
+            nn.Parameter(bias, requires_grad=False) if bias is not None else None
         )
 
     def merge_weights(self):
@@ -71,7 +73,9 @@ class LoRAEmbedding(nn.Module):
         nn.init.zeros_(self.lora_B)
 
     def get_merged_weights(self):
-        return (self.lora_A @ self.lora_B) * self.scaling + self.embedding.weight
+        merged_weight = (self.lora_A @ self.lora_B) * self.scaling + self.embedding.weight
+        del self.lora_A, self.lora_B, self.embedding
+        return nn.Parameter(merged_weight, requires_grad=False)
 
     def merge_weights(self):
         self.embedding.weight = nn.Parameter(

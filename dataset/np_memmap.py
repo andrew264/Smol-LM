@@ -1,4 +1,5 @@
 import glob
+from typing import Dict, Any
 
 import lightning as L
 import numpy as np
@@ -67,3 +68,15 @@ class NPDataModule(L.LightningDataModule):
 
     def val_dataloader(self):
         return DataLoader(self.val_ds, batch_size=self.batch_size, num_workers=self.num_workers)
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {"data_dir": self.data_dir, "seq_length": self.seq_length,
+                "batch_size": self.batch_size, "num_workers": self.num_workers}
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        self.data_dir = state_dict["data_dir"]
+        self.seq_length = state_dict["seq_length"]
+        self.batch_size = state_dict["batch_size"]
+        self.num_workers = state_dict["num_workers"]
+        self.train_ds = NPDataset(self.data_dir, self.seq_length, True)
+        self.val_ds = NPDataset(self.data_dir, self.seq_length, False)

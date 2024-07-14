@@ -1,6 +1,6 @@
 from datetime import datetime
 from functools import partial
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import lightning as L
 import torch
@@ -32,15 +32,19 @@ class _CustomFTDataset(Dataset):
     def __init__(self,
                  tokenizer_path: str,
                  conv_path: str,
-                 parquet_path: str,
                  sys_prompt_path: str,
-                 mix_ratio: int = 1):
+                 parquet_path: Optional[str] = None,
+                 mix_ratio: int = 0):
         super(_CustomFTDataset, self).__init__()
         self.tokenizer = Tokenizer.from_file(path=tokenizer_path)
         self.ds1 = DiscordConversations(path=conv_path,
                                         tokenizer=self.tokenizer,
                                         sys_prompt=_get_sys_prompt(sys_prompt_path))
-        self.ds2 = ParquetDataset(directory=parquet_path, tokenizer=self.tokenizer)
+        if parquet_path is not None:
+            self.ds2 = ParquetDataset(directory=parquet_path, tokenizer=self.tokenizer)
+        else:
+            self.ds2 = []
+            mix_ratio = 0
         self.mix_ratio = mix_ratio
 
     def __len__(self) -> int:
@@ -62,9 +66,9 @@ class CustomFTDataModule(L.LightningDataModule):
                  max_seq_length: int,
                  tokenizer_path: str,
                  conv_path: str,
-                 parquet_path: str,
                  sys_prompt_path: str,
-                 mix_ratio: int = 1,
+                 parquet_path: Optional[str] = None,
+                 mix_ratio: int = 0,
                  max_pad: bool = False):
         """
         Custom DataModule for fine-tuning.

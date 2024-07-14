@@ -3,7 +3,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.utils.checkpoint import checkpoint
 from transformers import Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 
@@ -12,6 +11,11 @@ from .config import ModelConfig
 from .feed_forward import FeedForward
 from .norm import get_rmsnorm_class
 from .rotary import RotaryEmbedding
+
+try:
+    from deepspeed.runtime.activation_checkpointing.checkpointing import checkpoint
+except ImportError:
+    from torch.utils.checkpoint import checkpoint
 
 
 class Block(nn.Module):
@@ -24,27 +28,26 @@ class Block(nn.Module):
         self.input_layernorm = NORM_CLASS(config.hidden_size, config.rms_norm_eps)
         self.post_attention_layernorm = NORM_CLASS(config.hidden_size, config.rms_norm_eps)
 
-    def forward(self, hidden_states: Tensor,
+        self.swin_norm = config.swin_norm
+
+    def forward(self, x: Tensor,
                 freqs: Tensor,
                 past_key_values: Optional[Cache] = None,
                 attention_mask: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None, ) -> Tensor:
-        # Self-attention
-        residual = hidden_states
-        x = self.input_layernorm(hidden_states)
-        x = self.self_attn(x,
-                           freqs=freqs,
-                           past_key_values=past_key_values,
-                           attention_mask=attention_mask,
-                           cache_position=cache_position)
+        if self.swin_norm:
+            h = x + self.input_layernorm(
+                self.self_attn(x, freqs=freqs, past_key_values=past_key_values, attention_mask=attention_mask, )
+            )
+            return h + self.post_attention_layernorm(self.mlp(h))
+        else:
+            h = x + self.self_attn(self.input_layernorm(x),
+                                   freqs=freqs,
+                                   past_key_values=past_key_values,
+                                   attention_mask=attention_mask,
+                                   cache_position=cache_position)
 
-        residual = residual + x
-
-        x = self.post_attention_layernorm(residual)
-        x = self.mlp(x)
-        x = residual + x
-
-        return x
+            return h + self.mlp(self.post_attention_layernorm(h))
 
 
 class TransformerBlocks(nn.Module):
@@ -75,8 +78,7 @@ class TransformerBlocks(nn.Module):
         for i, layer in enumerate(self.layers):
             if self.training and i in self.config.checkpointing_layers:
                 x = checkpoint(layer,
-                               x, freqs, causal_mask,
-                               use_reentrant=False, )
+                               x, freqs, causal_mask, )
 
             else:
                 x = layer(x,
