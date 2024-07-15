@@ -16,7 +16,7 @@
     - RAG for text generation
     - PyTorch Lightning Trainer
     - int8 and int4 quantization with torchao
-    - DeepSpeedCPUAdam for offloading optimizer to CPU
+    - 8-bit optimizers form bitsandbytes
 
 ### Supports loading the following pretrained weights:
     - Llama-2, Llama-3

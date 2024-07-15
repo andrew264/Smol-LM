@@ -134,15 +134,11 @@ class CustomFTDataModule(L.LightningDataModule):
         labels = torch.stack([torch.tensor(x[1] + [CROSS_ENTROPY_IGNORE_IDX] * (MAX_LEN - len(x[1]))) for x in batch])
         attention_mask = (input_ids != torch.tensor(0, dtype=input_ids.dtype)).long()
 
-        if len(batch) == 1 and attention_mask.sum().item() == attention_mask.numel():
-            attention_mask = None
-
         out = {
             "input_ids": input_ids,
             "labels": labels,
+            "attention_mask": attention_mask,
         }
-        if attention_mask is not None:
-            out["attention_mask"] = attention_mask
         return out
 
     def train_dataloader(self):

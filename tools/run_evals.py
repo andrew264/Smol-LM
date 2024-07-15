@@ -7,7 +7,7 @@ from lm_eval import simple_evaluate
 from lm_eval.models.huggingface import HFLM
 from transformers import PreTrainedTokenizerFast
 
-from utils import ModelGenerationHandler
+from inference import ModelGenerationHandler
 
 
 def main(path: str, tasks: list[str]):

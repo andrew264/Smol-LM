@@ -11,16 +11,15 @@ class RotaryEmbedding(nn.Module):
         self.scaling_factor = scaling_factor
         self.dim = dim
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float64) / self.dim))
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.bfloat16) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
     def forward(self, position_ids: torch.LongTensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # x: [bs, num_attention_heads, seq_len, head_size]
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
-        position_ids_expanded = position_ids[:, None, :].float()
-        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+        inv_freq_expanded = self.inv_freq[None, :, None].expand(position_ids.shape[0], -1, 1)
+        position_ids_expanded = position_ids[:, None, :].to(dtype=self.inv_freq.dtype)
+        freqs = (inv_freq_expanded @ position_ids_expanded).transpose(1, 2)
         emb = torch.cat((freqs, freqs), dim=-1)
         return emb.cos(), emb.sin()
 
@@ -33,7 +32,6 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-@torch.cuda.amp.autocast(enabled=False)
 def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
                          unsqueeze_dim: int = 2):
     """Applies Rotary Position Embedding to the query and key tensors.
@@ -53,10 +51,8 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
     Returns:
         `tuple(torch.Tensor)` comprising the query and key tensors rotated using the Rotary Position Embedding.
     """
-    dtype = q.dtype
-    q, k = q.to(dtype=torch.float32), k.to(dtype=torch.float32)
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed.to(dtype=dtype), k_embed.to(dtype=dtype)
+    return q_embed, k_embed

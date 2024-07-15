@@ -37,13 +37,13 @@ class ModelGenerationHandler:
         self.config = ModelConfig.from_json(os.path.join(self.path, 'config.json'))
         self.config.max_batch_size = self.num_beams
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
+
         if os.path.exists(os.path.join(self.path, 'model.safetensors')):
             model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'),
                                                        torch.device('cpu'))
-        elif os.path.exists(os.path.join(self.path, 'model.pt')):
-            model_sd = torch.load(os.path.join(self.path, 'model.pt'), map_location='cpu')['state_dict']
         else:
             raise FileNotFoundError("Model file not found.")
+
         model = SmolLM(self.config).bfloat16()
         model.load_state_dict(model_sd, assign=True)
         del model_sd
@@ -58,13 +58,15 @@ class ModelGenerationHandler:
 
         model.bos_token_id = self.tokenizer.token_to_id("<s>")
         model.eval()
-        self.model = model.to(device=self.device)
+        model.to(device=self.device)
         gc.collect()
 
         if load_in_8bit:
             model.to_8bit()
         elif load_in_4bit:
             model.to_4bit()
+
+        self.model = model
 
         self.cache = StaticCache(self.config, compiled_mode=compiled, device=self.device)
         if compiled:

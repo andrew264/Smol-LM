@@ -121,7 +121,7 @@ def sdpa(query_states: Tensor,
         value_states = value_states.repeat_interleave(num_key_value_groups, dim=1)
 
     if attention_mask is not None:
-        attention_mask = attention_mask[:, :, :, :key_states.shape[2]]
+        attention_mask = attention_mask[..., :key_states.shape[-2]]
 
     attn_output = nn.functional.scaled_dot_product_attention(
         query_states,

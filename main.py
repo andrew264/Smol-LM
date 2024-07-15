@@ -3,11 +3,10 @@ import os
 import lightning as L
 import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.strategies import DeepSpeedStrategy
-from lightning.pytorch.utilities.deepspeed import convert_zero_checkpoint_to_fp32_state_dict
 
 from dataset import NPDataModule
 from model import SmolLMLit
+from utils import save_as_safetensors
 
 torch.set_float32_matmul_precision('high')
 
@@ -22,12 +21,6 @@ def train(model_path: str, use_scheduler: bool = False, ):
 
     trainer = L.Trainer(accelerator="gpu",
                         precision="bf16-mixed",
-                        strategy=DeepSpeedStrategy(
-                            stage=3,
-                            offload_optimizer=True,
-                            cpu_checkpointing=True,
-                            partition_activations=True,
-                        ),
                         max_epochs=config.epochs,
                         enable_progress_bar=True,
                         val_check_interval=5000,
@@ -48,8 +41,11 @@ def train(model_path: str, use_scheduler: bool = False, ):
 
     if trainer.is_global_zero:
         trainer.save_checkpoint(model_path + checkpoint_path)
-        single_ckpt_path = "model.pt"
-        convert_zero_checkpoint_to_fp32_state_dict(model_path + checkpoint_path, model_path + single_ckpt_path)
+        if config.tie_word_embeddings:
+            # safetensors do not support shared weights, so we need to clone the weights
+            model.model.embed_tokens.weight = torch.nn.Parameter(model.model.embed_tokens.weight.clone())
+        save_as_safetensors(model.state_dict(),
+                            os.path.join(model_path, 'model.safetensors'))
         print("Training complete.")
 
 

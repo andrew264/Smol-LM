@@ -87,6 +87,7 @@ class SmolLMLit(L.LightningModule):
         self.max_length = config.max_position_embeddings
         self.use_lora_opt_grp = use_lora_opt_grp
         self.use_scheduler = use_scheduler
+
         self.model = TransformerBlocks(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -116,23 +117,21 @@ class SmolLMLit(L.LightningModule):
         lr = self.config.lr
 
         try:
-            from deepspeed.ops.adam import DeepSpeedCPUAdam
+            from bitsandbytes.optim import PagedAdamW8bit
         except ImportError:
-            raise ImportError("Please install deepspeed to use this model for training.")
+            raise ImportError("Please install bitsandbytes to use this model for training.")
 
         if self.use_lora_opt_grp:
-            optimizer = DeepSpeedCPUAdam(
-                model_params=get_lora_plus_optimizer_group(self, lr=lr),
+            optimizer = PagedAdamW8bit(
+                params=get_lora_plus_optimizer_group(self, lr=lr),
                 betas=(0.9, 0.999),
                 weight_decay=0.0,
-                fp32_optimizer_states=False,
             )
         else:
-            optimizer = DeepSpeedCPUAdam(
-                model_params=get_optimizer_grouped_parameters(self, weight_decay=0.1),
+            optimizer = PagedAdamW8bit(
+                params=get_optimizer_grouped_parameters(self, weight_decay=0.1),
                 lr=lr,
                 betas=(0.9, 0.95),
-                fp32_optimizer_states=False,
             )
         if self.use_scheduler:
             scheduler = get_cosine_schedule_with_warmup(optimizer,

@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint
 from transformers import Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 
@@ -11,11 +12,6 @@ from .config import ModelConfig
 from .feed_forward import FeedForward
 from .norm import get_rmsnorm_class
 from .rotary import RotaryEmbedding
-
-try:
-    from deepspeed.runtime.activation_checkpointing.checkpointing import checkpoint
-except ImportError:
-    from torch.utils.checkpoint import checkpoint
 
 
 class Block(nn.Module):
@@ -78,10 +74,15 @@ class TransformerBlocks(nn.Module):
         for i, layer in enumerate(self.layers):
             if self.training and i in self.config.checkpointing_layers:
                 x = checkpoint(layer,
-                               x, freqs, causal_mask, )
+                               use_reentrant=False,
+                               x=x,
+                               freqs=freqs,
+                               past_key_values=past_key_values,
+                               attention_mask=causal_mask,
+                               cache_position=cache_position, )
 
             else:
-                x = layer(x,
+                x = layer(x=x,
                           freqs=freqs,
                           past_key_values=past_key_values,
                           attention_mask=causal_mask,
