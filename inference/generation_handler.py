@@ -72,8 +72,9 @@ class ModelGenerationHandler:
         if compiled:
             self._compile_model()
 
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize(device=self.device)
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize(device=self.device)
 
         self.model.generation_config = self.get_gen_config(None)
 
@@ -123,8 +124,9 @@ class ModelGenerationHandler:
         """
         self.cache.reset()
         gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
         encoded = self.tokenizer.encode(prompt, add_special_tokens=False)
         tokens = torch.tensor([encoded.ids]).to(self.device)
         attention_mask = torch.tensor([encoded.attention_mask]).to(self.device)

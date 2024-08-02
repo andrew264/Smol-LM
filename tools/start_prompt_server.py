@@ -15,10 +15,19 @@ class ModelAPI(ls.LitAPI):
 
     def setup(self, device):
         torch.set_float32_matmul_precision('high')
-        self.device = torch.device("cuda:0")
+        self.device = device
         self.path = './ft-weights/'
-        self.model_handler = ModelGenerationHandler(self.path, self.device, 2)
-        self.model_handler.load_model(compiled=False)
+        if device.type == 'cuda':
+            num_beams = 2
+            load_in_4bit = False
+            merge_lora = True
+        else:
+            num_beams = 1
+            load_in_4bit = True
+            merge_lora = False
+        self.model_handler = ModelGenerationHandler(self.path, self.device, num_beams)
+        self.model_handler.load_model(compiled=False, merge_lora=merge_lora, load_in_4bit=load_in_4bit)
+
 
     def decode_request(self, request, **kwargs):
         input_text = request['input']

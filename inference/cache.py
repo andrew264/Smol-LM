@@ -28,8 +28,9 @@ class StaticCache(Cache):
             config.num_key_value_heads,
             config.hidden_size // config.num_attention_heads
         )
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize(device=self.device)
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize(device=self.device)
         for _ in range(config.num_hidden_layers):
             # Note: `mark_static_address` is used to tag the cache as an fixed data pointer, preventing cuda graph
             # breaks when updating the cache.

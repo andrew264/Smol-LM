@@ -24,4 +24,8 @@ def get_rmsnorm_class() -> Type[nn.Module]:
         from flash_attn.ops.rms_norm import RMSNorm as FlashRMSNorm
         return FlashRMSNorm
     except ImportError:
-        return RMSNorm
+        try:
+            from torch.nn import RMSNorm as TorchRMSNorm
+            return TorchRMSNorm
+        except ImportError:
+            return RMSNorm

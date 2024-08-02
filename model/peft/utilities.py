@@ -52,7 +52,6 @@ def inject_lora_adapter(model: T,
                 inject_layer(ffn, proj, LINEAR_CLS, lora_config)
 
     model.to(DEVICE)
-    torch.cuda.synchronize()
     print(f"LoRA injection took {time.time() - start:.3f}s")
 
     def linear_with_weight(weights: nn.Parameter, biases: Optional[nn.Parameter] = None):
@@ -77,7 +76,6 @@ def inject_lora_adapter(model: T,
         start = time.time()
         model.load_state_dict(adapter_state_dict, strict=False, assign=True)
         if merge_lora:
-            model.cuda()
             for name, module in model.named_modules():
                 if isinstance(module, LINEAR_CLS):
                     setattr(*get_parent_and_module(name), linear_with_weight(*module.get_merged_weights()))
@@ -85,7 +83,6 @@ def inject_lora_adapter(model: T,
                     setattr(*get_parent_and_module(name), nn.Embedding.from_pretrained(module.get_merged_weights(),
                                                                                        padding_idx=module.padding_idx,
                                                                                        sparse=module.sparse))
-        torch.cuda.synchronize()
         print(f"Adapter state dict loading took {time.time() - start:.3f}s")
 
 
