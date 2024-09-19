@@ -19,7 +19,11 @@ class StaticCache(Cache):
         self.config = config
         self.is_compiled = compiled_mode
         self.dtype = dtype
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        if device: self.device = device
+        elif torch.cuda.is_available(): self.device == torch.device('cuda')
+        else: self.device == torch.device('cpu')
+        
         self.key_cache: List[Tensor] = []
         self.value_cache: List[Tensor] = []
         cache_shape = (

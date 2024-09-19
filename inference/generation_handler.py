@@ -1,7 +1,7 @@
 import gc
 import os
 import time
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 
 import torch
 from tokenizers import Tokenizer
@@ -17,10 +17,10 @@ from .sampling import TemperatureRangeLogitsWarper, StoppingCriteriaSub
 
 
 class ModelGenerationHandler:
-    def __init__(self, path: str, device: torch.device, num_beams: int):
+    def __init__(self, path: str, device: Union[str | torch.device], num_beams: int):
         self.path = path
         self.num_beams = num_beams
-        self.device = device
+        self.device = torch.device(device) if isinstance(device, str) else device
         self.config: Optional[ModelConfig] = None
         self.tokenizer: Optional[Tokenizer] = None
         self.model: Optional[SmolLM] = None

@@ -13,11 +13,11 @@ class ModelAPI(ls.LitAPI):
         self.path = None
         self.model_handler = None
 
-    def setup(self, device):
+    def setup(self, devices: str):
         torch.set_float32_matmul_precision('high')
-        self.device = device
+        self.device = devices
         self.path = './ft-weights/'
-        if device.type == 'cuda':
+        if "cuda" in devices:
             num_beams = 2
             load_in_4bit = False
             merge_lora = True
@@ -35,8 +35,8 @@ class ModelAPI(ls.LitAPI):
         temp = request.get('temp', 1.7)
         return input_text, top_p, temp
 
-    def predict(self, inputs, **kwargs) -> Tuple[str, int]:
-        input_text, top_p, temp = inputs
+    def predict(self, x, **kwargs) -> Tuple[str, int]:
+        input_text, top_p, temp = x
         self.model_handler.set_processor(top_p, temp)
         decoded, _, total_toks, _ = self.model_handler.generate(input_text, max_new_tokens=1024)
         return decoded, total_toks

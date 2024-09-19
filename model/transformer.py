@@ -47,24 +47,24 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
         Convert the model to 8-bit quantized model (inplace)
         """
         try:
-            from torchao.quantization import int8_weight_only, quantize
+            from torchao.quantization import quantize_, int8_dynamic_activation_int8_weight
 
-            quantize(self.model, int8_weight_only())
+            quantize_(self.model, int8_dynamic_activation_int8_weight())
             print("Model quantized to 8-bit")
-        except ImportError:
-            raise ImportError("Please install torchao to use 8-bit quantization")
+        except ImportError as e:
+            raise ImportError("Please install torchao to use 8-bit quantization", e)
 
     def to_4bit(self):
         """
         Convert the model to 4-bit quantized model (inplace)
         """
         try:
-            from torchao.quantization import int4_weight_only, quantize
+            from torchao.quantization import quantize_, int4_weight_only
 
-            quantize(self.model, int4_weight_only())
+            quantize_(self.model, int4_weight_only(group_size=32))
             print("Model quantized to 4-bit")
-        except ImportError:
-            raise ImportError("Please install torchao to use 4-bit quantization")
+        except ImportError as e:
+            raise ImportError("Please install torchao to use 4-bit quantization", e)
 
     def forward(
             self,
