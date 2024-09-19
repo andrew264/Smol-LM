@@ -21,9 +21,9 @@ class StaticCache(Cache):
         self.dtype = dtype
         
         if device: self.device = device
-        elif torch.cuda.is_available(): self.device == torch.device('cuda')
-        else: self.device == torch.device('cpu')
-        
+        elif torch.cuda.is_available(): self.device = torch.device('cuda')
+        else: self.device = torch.device('cpu')
+
         self.key_cache: List[Tensor] = []
         self.value_cache: List[Tensor] = []
         cache_shape = (
