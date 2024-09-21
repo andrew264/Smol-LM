@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from transformers import Cache
 
@@ -71,14 +72,7 @@ class AttentionBlock(nn.Module):
         is_causal = attention_mask is None and seqlen > 1
 
         qkv_states = self.qkv_proj(hidden_states)
-        query_states, key_states, value_states = qkv_states.split(
-            [
-                self.hidden_size,
-                self.key_value_hidden_size,
-                self.key_value_hidden_size,
-            ],
-            dim=2,
-        )
+        query_states, key_states, value_states = qkv_states.split([self.hidden_size, self.key_value_hidden_size, self.key_value_hidden_size], dim=2,)
 
         if self.qk_layernorm:
             query_states = self.q_norm(query_states.view(-1, self.num_heads, self.head_dim))
@@ -123,7 +117,7 @@ def sdpa(query_states: Tensor,
     if attention_mask is not None:
         attention_mask = attention_mask[..., :key_states.shape[-2]]
 
-    attn_output = nn.functional.scaled_dot_product_attention(
+    attn_output = F.scaled_dot_product_attention(
         query_states,
         key_states,
         value_states,

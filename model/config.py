@@ -62,16 +62,13 @@ class ModelConfig:
         :param path: (str) The path to the json file.
         :return: (ModelConfig) The configuration class.
         """
-        with open(path, "r") as f:
-            config_dict = json.load(f)
+        with open(path, "r", encoding='utf-8') as f: config_dict = json.load(f)
         conf = cls()
-        for k, v in config_dict.items():
-            setattr(conf, k, v)
+        for k, v in config_dict.items(): setattr(conf, k, v)
         return conf
 
     def to_json(self, path: str) -> None:
-        with open(path, "w") as f:
-            json.dump(self.__dict__, f, indent=4)
+        with open(path, "w", encoding='utf-8') as f: json.dump(self.__dict__, f, indent=4)
 
     @property
     def checkpointing_layers(self) -> list[int]:
@@ -93,17 +90,13 @@ class LoRAConfig:
         :param path: (str) The path to the json file.
         :return: (LoRAConfig) The configuration class.
         """
-        with open(path, "r") as f:
-            config_dict = json.load(f)
+        with open(path, "r", encoding='utf-8') as f: config_dict = json.load(f)
         conf = cls()
-        for k, v in config_dict.items():
-            setattr(conf, k, v)
+        for k, v in config_dict.items(): setattr(conf, k, v)
         return conf
 
     def to_json(self, path: str) -> None:
-        with open(path, "w") as f:
-            json.dump(self.__dict__, f, indent=4)
+        with open(path, "w", encoding='utf-8') as f: json.dump(self.__dict__, f, indent=4)
 
     def __repr__(self) -> str:
-        return (f"LoRAConfig(rank={self.rank}, alpha={self.alpha}, "
-                f"dropout={self.dropout}, layers={self.layers})")
+        return f"LoRAConfig(rank={self.rank}, alpha={self.alpha}, dropout={self.dropout}, layers={self.layers})"

@@ -19,8 +19,7 @@ def main(path: str, tasks: list[str]):
     model = HFLM(pretrained=handler.model, backend='causal', tokenizer=tokenizer, device=handler.device)
     results = simple_evaluate(model, tasks=tasks, batch_size=1)
     print(results['results'])
-    with open(os.path.join(path, 'eval_results.json'), 'w') as f:
-        json.dump(results['results'], f, indent=2)
+    with open(os.path.join(path, 'eval_results.json'), 'w', encoding='utf-8') as f: json.dump(results['results'], f, indent=2)
 
 
 if __name__ == '__main__':

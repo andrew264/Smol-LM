@@ -52,7 +52,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             quantize_(self.model, int8_dynamic_activation_int8_weight())
             print("Model quantized to 8-bit")
         except ImportError as e:
-            raise ImportError("Please install torchao to use 8-bit quantization", e)
+            raise ImportError("Please install torchao to use 8-bit quantization") from e
 
     def to_4bit(self):
         """
@@ -64,7 +64,7 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             quantize_(self.model, int4_weight_only(group_size=32))
             print("Model quantized to 4-bit")
         except ImportError as e:
-            raise ImportError("Please install torchao to use 4-bit quantization", e)
+            raise ImportError("Please install torchao to use 4-bit quantization") from e
 
     def forward(
             self,
@@ -73,7 +73,6 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             cache_position: Optional[torch.LongTensor] = None,
             attention_mask: Optional[torch.Tensor] = None,
             past_key_values: Optional[Cache] = None,
-            labels: Optional[torch.LongTensor] = None,
             **kwargs,
     ) -> CausalLMOutputWithPast:
 
@@ -88,7 +87,6 @@ class SmolLM(nn.Module, ModuleUtilsMixin, GenerationMixin):
             input_ids,
             past_key_values: Optional[Cache] = None,
             attention_mask=None,
-            inputs_embeds=None,
             cache_position=None,
             use_cache=True,
             **kwargs,

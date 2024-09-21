@@ -30,25 +30,18 @@ class LoRALinear(nn.Module):
         del self.lora_A, self.lora_B, self.linear.weight
         bias = self.linear.bias
         return nn.Parameter(merged_weight, requires_grad=False), (
-            nn.Parameter(bias, requires_grad=False) if bias is not None else None
-        )
+            nn.Parameter(bias, requires_grad=False) if bias is not None else None)
 
     def merge_weights(self):
-        self.linear.weight = nn.Parameter(
-            self.get_merged_weights()[0]
-        )
+        self.linear.weight = nn.Parameter(self.get_merged_weights()[0])
         self.lora_A = None
         self.lora_B = None
         self._merged = True
 
-    def lora_forward(self, x):
-        x = self.lora_dropout(x)
-        x = self.scaling * F.linear(x, self.lora_A.T) @ self.lora_B
-        return x
+    def lora_forward(self, x): return self.scaling * F.linear(self.lora_dropout(x), self.lora_A.T) @ self.lora_B
 
     def forward(self, x):
-        if self._merged:
-            return self.linear(x)
+        if self._merged: return self.linear(x)
         return self.linear(x) + self.lora_forward(x)
 
 
@@ -78,18 +71,14 @@ class LoRAEmbedding(nn.Module):
         return nn.Parameter(merged_weight, requires_grad=False)
 
     def merge_weights(self):
-        self.embedding.weight = nn.Parameter(
-            self.get_merged_weights()
-        )
+        self.embedding.weight = nn.Parameter(self.get_merged_weights())
         self.lora_A = None
         self.lora_B = None
         self._merged = True
 
     def lora_forward(self, x):
-        return (self.scaling *
-                F.embedding(x, self.lora_A, padding_idx=self.padding_idx, sparse=self.sparse) @ self.lora_B)
+        return (self.scaling * F.embedding(x, self.lora_A, padding_idx=self.padding_idx, sparse=self.sparse) @ self.lora_B)
 
     def forward(self, x):
-        if self._merged:
-            return self.embedding(x)
+        if self._merged: return self.embedding(x)
         return self.embedding(x) + self.lora_forward(x)

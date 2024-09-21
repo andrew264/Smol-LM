@@ -22,8 +22,7 @@ class TemperatureRangeLogitsWarper(LogitsWarper):
         Raises:
             ValueError: If either the start or end temperature is less than 0.
         """
-        if end < 0 or start < 0:
-            raise ValueError("Temperature must be greater than 0.")
+        if end < 0 or start < 0: raise ValueError("Temperature must be greater than 0.")
         self.start = start
         self.end = end
         self.num_steps = num_steps
@@ -31,16 +30,12 @@ class TemperatureRangeLogitsWarper(LogitsWarper):
         self._current_step = 0
 
     def _get_temperature(self) -> float:
-        if self._current_step >= self.num_steps:
-            return self.end
+        if self._current_step >= self.num_steps: return self.end
         temp = self.start + self._current_step * self._step
         self._current_step += 1
         return temp
 
-    def __call__(self, input_ids: Tensor, scores: Tensor) -> Tensor:
-        temperature = self._get_temperature()
-        scores_processed = scores / temperature
-        return scores_processed
+    def __call__(self, input_ids: Tensor, scores: Tensor) -> Tensor: return scores / self._get_temperature()
 
 
 class StoppingCriteriaSub(StoppingCriteria):
@@ -56,7 +51,6 @@ class StoppingCriteriaSub(StoppingCriteria):
         batch_size = input_ids.size(0)
         for batch in input_ids:
             for stop in self.stops:
-                if torch.equal(stop, batch[-len(stop):]):
-                    stop_count += 1
+                if torch.equal(stop, batch[-len(stop):]): stop_count += 1
 
         return stop_count >= batch_size * self.ENCOUNTERS

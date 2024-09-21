@@ -69,9 +69,8 @@ class StaticCache(Cache):
 
         if self.is_compiled:
             return k_out, v_out
-        else:
-            last_position = cache_position[-1] + 1
-            return k_out[:bsz, :last_position], v_out[:bsz, :last_position]
+        last_position = cache_position[-1] + 1
+        return k_out[:bsz, :last_position], v_out[:bsz, :last_position]
 
     def reset(self):
         for layer_idx in range(len(self.key_cache)):

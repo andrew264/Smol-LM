@@ -48,14 +48,10 @@ def get_lora_plus_optimizer_group(model: nn.Module,
         "embedding": {},
     }
     for param_name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if 'embed_tokens' in param_name:
-            param_groups["embedding"][param_name] = param
-        elif 'lora_A' in param_name:
-            param_groups["groupA"][param_name] = param
-        elif 'lora_B' in param_name:
-            param_groups["groupB"][param_name] = param
+        if not param.requires_grad: continue
+        if 'embed_tokens' in param_name: param_groups["embedding"][param_name] = param
+        elif 'lora_A' in param_name: param_groups["groupA"][param_name] = param
+        elif 'lora_B' in param_name:  param_groups["groupB"][param_name] = param
 
     optimizer_grouped_parameters = [
         {"params": param_groups["groupA"].values(), "lr": lr},
@@ -69,17 +65,15 @@ class SmolLMLit(L.LightningModule):
     def __init__(self,
                  model_path: str,
                  use_lora_opt_grp: bool = False,
-                 use_scheduler: bool = False,
-                 ):
+                 use_scheduler: bool = False):
         super().__init__()
         self.save_hyperparameters()
-        if os.path.exists(model_path + 'config.json'):
-            config = ModelConfig.from_json(model_path + 'config.json')
-        else:
-            raise FileNotFoundError(f"Config file not found at {model_path + 'config.json'}")
+
+        if os.path.exists(model_path + 'config.json'): config = ModelConfig.from_json(model_path + 'config.json')
+        else: raise FileNotFoundError(f"Config file not found at {model_path + 'config.json'}")
+
         self.lora_config = None
-        if os.path.exists(model_path + 'lora.json'):
-            self.lora_config = LoRAConfig.from_json(model_path + 'lora.json')
+        if os.path.exists(model_path + 'lora.json'): self.lora_config = LoRAConfig.from_json(model_path + 'lora.json')
         self.model_path = model_path
         self.config = config
         self.tie_word_embeddings = config.tie_word_embeddings
@@ -102,78 +96,37 @@ class SmolLMLit(L.LightningModule):
         std = self.config.initializer_range
         if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
+            if module.bias is not None: module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
+            if module.padding_idx is not None: module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.Conv1d):
             module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
+            if module.bias is not None: module.bias.data.zero_()
 
     def configure_optimizers(self):
         lr = self.config.lr
 
         try:
             from bitsandbytes.optim import PagedAdamW8bit
-        except ImportError:
-            raise ImportError("Please install bitsandbytes to use this model for training.")
+        except ImportError as e:
+            raise ImportError("Please install bitsandbytes to use this model for training.") from e 
 
         if self.use_lora_opt_grp:
-            optimizer = PagedAdamW8bit(
-                params=get_lora_plus_optimizer_group(self, lr=lr),
-                betas=(0.9, 0.999),
-                weight_decay=0.0,
-            )
+            optimizer = PagedAdamW8bit(params=get_lora_plus_optimizer_group(self, lr=lr), betas=(0.9, 0.999), weight_decay=0.0,)
         else:
-            optimizer = PagedAdamW8bit(
-                params=get_optimizer_grouped_parameters(self, weight_decay=0.1),
-                lr=lr,
-                betas=(0.9, 0.95),
-            )
+            optimizer = PagedAdamW8bit(params=get_optimizer_grouped_parameters(self, weight_decay=0.1), lr=lr, betas=(0.9, 0.95),)
         if self.use_scheduler:
-            scheduler = get_cosine_schedule_with_warmup(optimizer,
-                                                        num_warmup_steps=5,
-                                                        num_training_steps=self.trainer.estimated_stepping_batches)
+            scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=5, num_training_steps=self.trainer.estimated_stepping_batches)
 
-            lr_scheduler_config = {
-                "scheduler": scheduler,
-                "interval": "step",
-                "frequency": 1,
-            }
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": lr_scheduler_config,
-            }
+            lr_scheduler_config = {"scheduler": scheduler, "interval": "step", "frequency": 1,}
+            return { "optimizer": optimizer, "lr_scheduler": lr_scheduler_config,}
         return optimizer
 
-    def to_8bit(self):
-        """
-        Convert the model to 8-bit quantized model (inplace)
-        """
-        from torchao.quantization import int8_weight_only, quantize
+    def forward(self, input_ids: Tensor = None, attention_mask: Optional[Tensor] = None,):
+        return self.lm_head(self.model(input_ids=input_ids, attention_mask=attention_mask))
 
-        quantize(self.model, int8_weight_only())
-
-    def to_4bit(self):
-        """
-        Convert the model to 4-bit quantized model (inplace)
-        """
-        from torchao.quantization import int4_weight_only, quantize
-
-        quantize(self.model, int4_weight_only())
-
-    def forward(
-            self,
-            input_ids: Tensor = None,
-            attention_mask: Optional[Tensor] = None,
-    ):
-        x = self.model(input_ids=input_ids, attention_mask=attention_mask)
-        return self.lm_head(x)
-
-    def training_step(self, batch: dict, batch_idx):
+    def training_step(self, batch: dict):
         input_ids = batch.get("input_ids")
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")
@@ -186,7 +139,7 @@ class SmolLMLit(L.LightningModule):
         self.log("train_ppl", torch.exp(loss), on_step=True, prog_bar=True, sync_dist=True)
         return loss
 
-    def validation_step(self, batch: dict, batch_idx):
+    def validation_step(self, batch: dict):
         input_ids = batch.get("input_ids")
         labels = batch.get("labels")
         attention_mask = batch.get("attention_mask")

@@ -32,18 +32,16 @@ class Block(nn.Module):
                 attention_mask: Optional[Tensor] = None,
                 cache_position: Optional[Tensor] = None, ) -> Tensor:
         if self.swin_norm:
-            h = x + self.input_layernorm(
-                self.self_attn(x, freqs=freqs, past_key_values=past_key_values, attention_mask=attention_mask, )
-            )
+            h = x + self.input_layernorm(self.self_attn(x, freqs=freqs, past_key_values=past_key_values, attention_mask=attention_mask))
             return h + self.post_attention_layernorm(self.mlp(h))
-        else:
-            h = x + self.self_attn(self.input_layernorm(x),
-                                   freqs=freqs,
-                                   past_key_values=past_key_values,
-                                   attention_mask=attention_mask,
-                                   cache_position=cache_position)
+        
+        h = x + self.self_attn(self.input_layernorm(x),
+                               freqs=freqs,
+                               past_key_values=past_key_values,
+                               attention_mask=attention_mask,
+                               cache_position=cache_position)
 
-            return h + self.mlp(self.post_attention_layernorm(h))
+        return h + self.mlp(self.post_attention_layernorm(h))
 
 
 class TransformerBlocks(nn.Module):

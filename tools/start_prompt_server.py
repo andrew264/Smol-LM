@@ -43,11 +43,7 @@ class ModelAPI(ls.LitAPI):
 
     def encode_response(self, output, **kwargs):
         output_text, length = output
-        return {
-            'response': output_text,
-            'cur_length': length,
-            'max_length': self.model_handler.config.max_position_embeddings,
-        }
+        return {'response': output_text, 'cur_length': length, 'max_length': self.model_handler.config.max_position_embeddings,}
 
 
 if __name__ == "__main__":

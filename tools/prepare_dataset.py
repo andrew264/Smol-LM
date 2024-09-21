@@ -27,8 +27,7 @@ def write_datafile(f_name: str, toks: np.ndarray):
     # ik its a bad idea to store binary files without versioning; but idc for now
     """
     print(f"writing {len(toks):,} tokens to {f_name}")
-    with open(f_name, "wb") as f:
-        f.write(toks.tobytes())
+    with open(f_name, "wb") as f: f.write(toks.tobytes())
 
 
 if __name__ == '__main__':

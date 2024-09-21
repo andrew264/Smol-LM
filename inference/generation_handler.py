@@ -39,10 +39,8 @@ class ModelGenerationHandler:
         self.tokenizer = Tokenizer.from_file(os.path.join(self.path, 'tokenizer.json'))
 
         if os.path.exists(os.path.join(self.path, 'model.safetensors')):
-            model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'),
-                                                       torch.device('cpu'))
-        else:
-            raise FileNotFoundError("Model file not found.")
+            model_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'model.safetensors'), torch.device('cpu'))
+        else: raise FileNotFoundError("Model file not found.")
 
         model = SmolLM(self.config).bfloat16()
         model.load_state_dict(model_sd, assign=True)
@@ -50,9 +48,7 @@ class ModelGenerationHandler:
 
         if os.path.exists(os.path.join(self.path, 'lora.json')):
             lora_params = LoRAConfig.from_json(os.path.join(self.path, 'lora.json'))
-
-            adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'),
-                                                         torch.device('cpu'))
+            adapter_sd = get_state_dict_from_safetensors(os.path.join(self.path, 'adapter.safetensors'), torch.device('cpu'))
             inject_lora_adapter(model, lora_params, adapter_sd, merge_lora=merge_lora)
             del adapter_sd
 
@@ -69,8 +65,7 @@ class ModelGenerationHandler:
         self.model = model
 
         self.cache = StaticCache(self.config, compiled_mode=compiled, device=self.device)
-        if compiled:
-            self._compile_model()
+        if compiled: self._compile_model()
 
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
@@ -79,15 +74,7 @@ class ModelGenerationHandler:
         self.model.generation_config = self.get_gen_config(None)
 
     def get_gen_config(self, max_new_tokens: Optional[int] = 512):
-        return GenerationConfig(
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            num_beams=self.num_beams,
-            use_cache=True,
-            pad_token_id=0,
-            bos_token_id=1,
-            eos_token_id=2,
-        )
+        return GenerationConfig(max_new_tokens=max_new_tokens, do_sample=True, num_beams=self.num_beams, use_cache=True, pad_token_id=0, bos_token_id=1, eos_token_id=2)
 
     def _get_stop_criteria(self, ):
         stopping_tokens: List[torch.Tensor] = [torch.tensor([i], device=self.device) for i in range(3)]
@@ -96,11 +83,7 @@ class ModelGenerationHandler:
         return StoppingCriteriaList([StoppingCriteriaSub(stops=stopping_tokens, encounters=1)])
 
     def set_processor(self, top_p: float = 0.95, temperature: float = 1.7):
-        self.processor = LogitsProcessorList([
-            TemperatureRangeLogitsWarper(temperature, 0.9, 24),
-            TopPLogitsWarper(top_p=top_p),
-            InfNanRemoveLogitsProcessor(),
-        ])
+        self.processor = LogitsProcessorList([TemperatureRangeLogitsWarper(temperature, 0.9, 24), TopPLogitsWarper(top_p=top_p), InfNanRemoveLogitsProcessor()])
 
     def _compile_model(self):
         print('Compiling...')
@@ -109,8 +92,7 @@ class ModelGenerationHandler:
 
         # Dummy run for compilation
         inp = "Love is a beautiful and"
-        for _ in range(2):  # Run twice cuz idl why; but this works? somehow?
-            self.generate(inp, max_new_tokens=10)
+        for _ in range(2): self.generate(inp, max_new_tokens=10)  # Run twice cuz idl why; but this works? somehow?
 
         print(f'Compiled in {time.time() - start:.3f}s')
 

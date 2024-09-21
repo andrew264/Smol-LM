@@ -28,38 +28,30 @@ def inject_lora_adapter(model: T,
     DEVICE = next(model.parameters()).device
 
     def inject_layer(target, attr_name, cls, config):
-        if hasattr(target, attr_name):
-            setattr(target, attr_name, cls(getattr(target, attr_name), config))
+        if hasattr(target, attr_name): setattr(target, attr_name, cls(getattr(target, attr_name), config))
 
-    if 'embedding' in lora_config.layers:
-        inject_layer(model.model, 'embed_tokens', EMBEDDING_CLS, lora_config)
+    if 'embedding' in lora_config.layers: inject_layer(model.model, 'embed_tokens', EMBEDDING_CLS, lora_config)
 
-    if 'lm_head' in lora_config.layers:
-        inject_layer(model, 'lm_head', LINEAR_CLS, lora_config)
+    if 'lm_head' in lora_config.layers: inject_layer(model, 'lm_head', LINEAR_CLS, lora_config)
 
     for layer in model.model.layers:
         block = layer.self_attn
 
-        if 'qkv_proj' in lora_config.layers:
-            inject_layer(block, 'qkv_proj', LINEAR_CLS, lora_config)
+        if 'qkv_proj' in lora_config.layers: inject_layer(block, 'qkv_proj', LINEAR_CLS, lora_config)
 
-        if 'o_proj' in lora_config.layers:
-            inject_layer(block, 'o_proj', LINEAR_CLS, lora_config)
+        if 'o_proj' in lora_config.layers: inject_layer(block, 'o_proj', LINEAR_CLS, lora_config)
 
         if 'mlp' in lora_config.layers:
             ffn = layer.mlp
-            for proj in ['gate_proj', 'up_proj', 'down_proj']:
-                inject_layer(ffn, proj, LINEAR_CLS, lora_config)
+            for proj in ['gate_proj', 'up_proj', 'down_proj']: inject_layer(ffn, proj, LINEAR_CLS, lora_config)
 
     model.to(DEVICE)
     print(f"LoRA injection took {time.time() - start:.3f}s")
 
     def linear_with_weight(weights: nn.Parameter, biases: Optional[nn.Parameter] = None):
-        l = nn.Linear(weights.shape[1], weights.shape[0],
-                      bias=biases is not None).to(device=weights.device, dtype=weights.dtype)
+        l = nn.Linear(weights.shape[1], weights.shape[0], bias=biases is not None).to(device=weights.device, dtype=weights.dtype)
         l.weight = nn.Parameter(weights)
-        if biases is not None:
-            l.bias = nn.Parameter(biases)
+        if biases is not None: l.bias = nn.Parameter(biases)
         return l
 
     def get_parent_and_module(name: str):
@@ -67,8 +59,7 @@ def inject_lora_adapter(model: T,
         module_name = name.split('.')[-1]
         parent = model
         for part in parent_name.split('.'):
-            if part == '':
-                continue
+            if part == '': continue
             parent = getattr(parent, part)
         return parent, module_name
 
@@ -89,6 +80,5 @@ def inject_lora_adapter(model: T,
 def get_lora_state_dict(sd: dict, dtype: torch.device = torch.bfloat16) -> dict:
     state_dict = {}
     for param_name, param in sd.items():
-        if 'lora' in param_name:
-            state_dict[param_name] = param.to(dtype=dtype)
+        if 'lora' in param_name: state_dict[param_name] = param.to(dtype=dtype)
     return state_dict

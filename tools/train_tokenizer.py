@@ -44,9 +44,7 @@ if __name__ == '__main__':
 
 
     def batch_iterator():
-        for batch in dataloader:
-            yield batch
-
+        for batch in dataloader: yield batch
 
     print("Training tokenizer...")
     start = time.time()
