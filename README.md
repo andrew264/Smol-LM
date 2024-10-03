@@ -1,4 +1,5 @@
 # Smol LM
+# The developement has been moved over to [andrew264/modelex](https://github.com/andrew264/modelex)
 
 ## A small language model for text generation in PyTorch
 
